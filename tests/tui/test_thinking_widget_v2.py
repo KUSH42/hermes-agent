@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import os
 import time
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from textual.app import App, ComposeResult
@@ -34,6 +35,12 @@ class _CompactApp(App):
 
     def compose(self) -> ComposeResult:
         yield ThinkingWidget(id="thinking")
+
+
+class _ThinkingWithMockApp(ThinkingWidget):
+    @property
+    def app(self):
+        return self._mock_app
 
 
 # ── T1: activate() no args → has --active + --mode-default classes ─────────────
@@ -435,6 +442,220 @@ def test_V4_user_message_panel_default_padding_is_2() -> None:
     assert left_padding == "2", (
         f"UserMessagePanel left padding is {left_padding!r}, expected '2'"
     )
+
+
+def _segment_colors(strip) -> list[str | None]:
+    return [None if seg.style is None else seg.style.color.triplet.hex for seg in strip._segments]  # type: ignore[attr-defined]
+
+
+def test_anim_surface_render_line_uses_multiple_segment_colors() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._frame_lines = ["⠁⠂⠃⠄"]
+    surf._frame_tick = 2
+    surf._dim_rgb = (32, 32, 32)
+    surf._peak_rgb = (220, 220, 220)
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
+        strip = surf.render_line(0)
+    colors = [color for color in _segment_colors(strip) if color is not None]
+    assert len(set(colors)) > 1
+
+
+def test_anim_surface_padding_does_not_get_peak_highlight() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._frame_lines = ["⠁⠂  "]
+    surf._frame_tick = 1
+    surf._dim_rgb = (32, 32, 32)
+    surf._peak_rgb = (220, 220, 220)
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
+        strip = surf.render_line(0)
+    tail = list(strip._segments)[-1]  # type: ignore[attr-defined]
+    assert tail.text == " "
+    assert tail.style.color is None
+
+
+def test_thinking_refresh_colors_reads_spinner_gradient_vars() -> None:
+    w = _ThinkingWithMockApp.__new__(_ThinkingWithMockApp)
+    w._mock_app = SimpleNamespace(get_css_variables=lambda: {
+        "accent": "#111111",
+        "text": "#eeeeee",
+        "thinking-spinner-dim": "#123456",
+        "thinking-spinner-peak": "#abcdef",
+    })
+    w._refresh_colors()
+    assert w._spinner_dim_hex == "#123456"
+    assert w._spinner_peak_hex == "#abcdef"
+    assert w._spinner_dim_rgb == (18, 52, 86)
+    assert w._spinner_peak_rgb == (171, 205, 239)
+
+
+def test_thinking_refresh_colors_falls_back_when_spinner_gradient_vars_missing() -> None:
+    w = _ThinkingWithMockApp.__new__(_ThinkingWithMockApp)
+    w._mock_app = SimpleNamespace(get_css_variables=lambda: {})
+    w._refresh_colors()
+    assert w._spinner_dim_hex == "#4a4a4a"
+    assert w._spinner_peak_hex == "#d8d8d8"
+    assert w._spinner_dim_rgb == (74, 74, 74)
+    assert w._spinner_peak_rgb == (216, 216, 216)
+
+
+def test_anim_surface_row_phase_offset_changes_row_wave() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._frame_lines = ["⠁⠂⠃⠄", "⠁⠂⠃⠄"]
+    surf._frame_tick = 3
+    surf._dim_rgb = (32, 32, 32)
+    surf._peak_rgb = (220, 220, 220)
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
+        first = _segment_colors(surf.render_line(0))
+        second = _segment_colors(surf.render_line(1))
+    assert first != second
+
+
+def test_anim_surface_blank_row_fast_path_skips_gradient_work() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._frame_lines = ["    "]
+    surf._frame_tick = 0
+    surf._dim_rgb = (32, 32, 32)
+    surf._peak_rgb = (220, 220, 220)
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
+        with patch.object(surf, "_render_gradient_line", wraps=surf._render_gradient_line) as mock_render:
+            strip = surf.render_line(0)
+    assert mock_render.call_count == 0
+    assert "".join(seg.text for seg in strip._segments) == "    "  # type: ignore[attr-defined]
+
+
+def test_load_config_accepts_scalar_or_list_for_short_and_long_wait_fields() -> None:
+    scalar = ThinkingWidget.__new__(ThinkingWidget)
+    scalar._cfg_loaded = False
+    with patch("hermes_cli.config.read_raw_config", return_value={
+        "tui": {
+            "thinking": {
+                "engine": "dna",
+                "effect": "breathe",
+                "long_wait_engine": "wave_function",
+                "long_wait_effect": "shimmer",
+            }
+        }
+    }):
+        scalar._load_config()
+    assert scalar._normalize_engine_pool(
+        scalar._cfg_engine, ThinkingMode.DEFAULT, default_key="dna", field_name="engine"
+    ) == ("dna",)
+    assert scalar._normalize_effect_pool(
+        scalar._cfg_effect, default_key="breathe", field_name="effect"
+    ) == ("breathe",)
+
+    pooled = ThinkingWidget.__new__(ThinkingWidget)
+    pooled._cfg_loaded = False
+    pooled._cfg_allow_intense = False
+    with patch("hermes_cli.config.read_raw_config", return_value={
+        "tui": {
+            "thinking": {
+                "engine": ["dna", "wave_function"],
+                "effect": ["breathe", "glow_settle"],
+                "long_wait_engine": ["wave_function", "neural_pulse"],
+                "long_wait_effect": ["shimmer", "cosmic"],
+            }
+        }
+    }):
+        pooled._load_config()
+    assert pooled._normalize_engine_pool(
+        pooled._cfg_engine, ThinkingMode.DEFAULT, default_key="dna", field_name="engine"
+    ) == ("dna", "wave_function")
+    assert pooled._normalize_effect_pool(
+        pooled._cfg_long_wait_effect, default_key="shimmer", field_name="long_wait_effect"
+    ) == ("shimmer", "cosmic")
+
+
+@pytest.mark.asyncio
+async def test_short_wait_choice_picked_once_on_activate() -> None:
+    async with _App().run_test(size=(140, 40)) as pilot:
+        w = pilot.app.query_one(ThinkingWidget)
+        w._cfg_engine = ["dna", "wave_function"]
+        w._cfg_effect = ["breathe", "glow_settle"]
+        w._cfg_long_wait_engine = ["wave_function"]
+        w._cfg_long_wait_effect = ["shimmer"]
+        w._cfg_loaded = True
+        with patch("hermes_cli.tui.widgets.thinking.random.choice", side_effect=lambda pool: pool[0]) as mock_choice:
+            w.activate(mode=ThinkingMode.DEFAULT)
+            await pilot.pause()
+            w._tick()
+        assert mock_choice.call_count == 2
+
+
+def test_long_wait_choice_picked_once_on_transition() -> None:
+    w = ThinkingWidget.__new__(ThinkingWidget)
+    w._cfg_tick_hz = 12.0
+    w._cfg_long_wait_after_s = 8.0
+    w._cfg_show_elapsed = False
+    w._activate_time = time.monotonic() - 10.0
+    w._substate = "WORKING"
+    w._current_mode = ThinkingMode.DEFAULT
+    w._long_wait_engine_pool = ("wave_function", "neural_pulse")
+    w._long_wait_effect_pool = ("shimmer", "cosmic")
+    w._resolved_long_wait_engine = None
+    w._resolved_long_wait_effect = None
+    w._spinner_dim_hex = "#4a4a4a"
+    w._spinner_peak_hex = "#d8d8d8"
+    w._accent_hex = "#888888"
+    w._text_hex = "#ffffff"
+    w._base_label = "Thinking…"
+    w._last_token_time = None
+    w._anim_surface = MagicMock()
+    w._anim_surface._engine_key = "dna"
+    w._label_line = MagicMock()
+    w._label_line._lock = MagicMock()
+    with patch("hermes_cli.tui.widgets.thinking.random.choice", side_effect=lambda pool: pool[0]) as mock_choice:
+        with patch("hermes_cli.stream_effects.make_stream_effect", return_value=object()):
+            w._tick()
+            w._tick()
+    assert mock_choice.call_count == 2
+
+
+def test_mode_validation_drops_deep_only_engines_from_small_mode_pool() -> None:
+    w = ThinkingWidget.__new__(ThinkingWidget)
+    w._cfg_allow_intense = False
+    pool = w._normalize_engine_pool(
+        ["vortex", "dna"],
+        ThinkingMode.COMPACT,
+        default_key="dna",
+        field_name="engine",
+    )
+    assert pool == ("dna",)
+
+
+@pytest.mark.asyncio
+async def test_explicit_activate_engine_effect_bypass_pool_randomization() -> None:
+    async with _App().run_test(size=(140, 40)) as pilot:
+        w = pilot.app.query_one(ThinkingWidget)
+        w._cfg_engine = ["wave_function", "dna"]
+        w._cfg_effect = ["glow_settle", "breathe"]
+        w._cfg_long_wait_engine = ["wave_function"]
+        w._cfg_long_wait_effect = ["shimmer"]
+        w._cfg_loaded = True
+        with patch("hermes_cli.tui.widgets.thinking.random.choice", side_effect=AssertionError("unexpected reroll")):
+            w.activate(mode=ThinkingMode.DEFAULT, engine="dna", effect="breathe")
+            await pilot.pause()
+        assert w._resolved_engine == "dna"
+        assert w._resolved_effect == "breathe"
+
+
+@pytest.mark.asyncio
+async def test_tick_does_not_revalidate_or_rerandomize_cached_pools() -> None:
+    async with _App().run_test(size=(140, 40)) as pilot:
+        w = pilot.app.query_one(ThinkingWidget)
+        w._cfg_engine = ["dna"]
+        w._cfg_effect = ["breathe"]
+        w._cfg_long_wait_engine = ["wave_function"]
+        w._cfg_long_wait_effect = ["shimmer"]
+        w._cfg_loaded = True
+        w.activate(mode=ThinkingMode.DEFAULT)
+        await pilot.pause()
+        w._substate = "WORKING"
+        w._activate_time = time.monotonic()
+        with patch.object(w, "_normalize_engine_pool", side_effect=AssertionError("should not normalize on tick")):
+            with patch.object(w, "_normalize_effect_pool", side_effect=AssertionError("should not normalize on tick")):
+                with patch("hermes_cli.tui.widgets.thinking.random.choice", side_effect=AssertionError("should not reroll on steady tick")):
+                    w._tick()
 
 
 # --- TW-A/B/C/D additions ---

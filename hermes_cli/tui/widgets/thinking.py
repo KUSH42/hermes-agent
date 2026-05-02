@@ -12,6 +12,8 @@ import logging
 import os
 import re
 import asyncio
+import math
+import random
 import threading
 import time
 from enum import StrEnum
@@ -19,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 
 from rich.segment import Segment
 from rich.style import Style
-from rich.text import Text
 from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Static
@@ -77,6 +78,8 @@ _HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 _DEFAULT_ACCENT_HEX = "#888888"
 _DEFAULT_TEXT_HEX = "#ffffff"
+_DEFAULT_SPINNER_DIM_HEX = "#4a4a4a"
+_DEFAULT_SPINNER_PEAK_HEX = "#d8d8d8"
 
 
 def _normalize_hex(value: str | None, default: str) -> str:
@@ -89,6 +92,28 @@ def _normalize_hex(value: str | None, default: str) -> str:
     if len(body) == 3:
         body = "".join(ch * 2 for ch in body)
     return f"#{body.lower()}"
+
+
+def _hex_to_rgb(value: str) -> tuple[int, int, int]:
+    normalized = _normalize_hex(value, _DEFAULT_ACCENT_HEX)
+    body = normalized.lstrip("#")
+    return int(body[0:2], 16), int(body[2:4], 16), int(body[4:6], 16)
+
+
+def _interpolate_rgb(
+    dim_rgb: tuple[int, int, int],
+    peak_rgb: tuple[int, int, int],
+    factor: float,
+) -> tuple[int, int, int]:
+    clamped = max(0.0, min(1.0, factor))
+    return tuple(
+        int(round(dim + ((peak - dim) * clamped)))
+        for dim, peak in zip(dim_rgb, peak_rgb)
+    )
+
+
+def _rgb_style(rgb: tuple[int, int, int]) -> Style:
+    return Style(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", dim=True)
 
 
 # ── ThinkingMode ──────────────────────────────────────────────────────────────
@@ -145,6 +170,10 @@ _AnimSurface {
         self._elapsed: float = 0.0
         self._last_w: int = 0
         self._accent_hex: str = "#888888"
+        self._peak_hex: str = _DEFAULT_SPINNER_PEAK_HEX
+        self._dim_rgb: tuple[int, int, int] = _hex_to_rgb(self._accent_hex)
+        self._peak_rgb: tuple[int, int, int] = _hex_to_rgb(self._peak_hex)
+        self._frame_tick: int = 0
 
     def on_mount(self) -> None:
         self._init_engine()
@@ -188,9 +217,20 @@ _AnimSurface {
         self._frame_lines = []
         self._init_engine()
 
-    def tick_anim(self, dt: float, accent_hex: str = "#888888") -> None:
+    def tick_anim(
+        self,
+        dt: float,
+        accent_hex: str = "#888888",
+        peak_hex: str | None = None,
+    ) -> None:
         """Called from ThinkingWidget._tick. Advances frame and refreshes."""
         self._accent_hex = accent_hex
+        if peak_hex is None:
+            peak_hex = getattr(self, "_peak_hex", _DEFAULT_SPINNER_PEAK_HEX)
+        self._peak_hex = peak_hex
+        self._dim_rgb = _hex_to_rgb(self._accent_hex)
+        self._peak_rgb = _hex_to_rgb(self._peak_hex)
+        self._frame_tick = getattr(self, "_frame_tick", 0) + 1
         if self._engine is None:
             return
         try:
@@ -211,16 +251,26 @@ _AnimSurface {
                 raw = self._frame_lines[y]
                 # Pad/crop to widget width
                 raw = raw.ljust(width)[:width]
-                text = Text(raw, style=f"dim {self._accent_hex}", no_wrap=True, overflow="ellipsis")
-                segments = [
-                    Segment(seg.text, seg.style or Style(), seg.control)
-                    for seg in text.render(self.app.console)
-                ]
-                return Strip(segments, text.cell_len).extend_cell_length(width).crop(0, width)
+                if not raw.strip():
+                    return Strip([Segment(" " * width, Style())], width)
+                return self._render_gradient_line(raw, y)
         except Exception:
             # thinking content parse failed; widget shows empty content
             pass
         return Strip([Segment(" " * width, Style())], width)
+
+    def _render_gradient_line(self, raw: str, row: int) -> Strip:
+        width = len(raw)
+        phase_base = (self._frame_tick * 0.75) + (row * 1.35)
+        segments: list[Segment] = []
+        for idx, ch in enumerate(raw):
+            if ch == " ":
+                segments.append(Segment(ch, Style(dim=True)))
+                continue
+            factor = (1.0 + math.sin((idx * 0.65) + phase_base)) / 2.0
+            style = _rgb_style(_interpolate_rgb(self._dim_rgb, self._peak_rgb, factor))
+            segments.append(Segment(ch, style))
+        return Strip(segments, width)
 
 
 # ── _LabelLine ────────────────────────────────────────────────────────────────
@@ -309,25 +359,36 @@ _LabelLine   { height: 1;   width: 1fr; }
     # Config cache (loaded once at first activate)
     _cfg_loaded: bool = False
     _cfg_mode: str = "default"
-    _cfg_engine: str = "dna"
-    _cfg_effect: str = "breathe"
+    _cfg_engine: str | list[str] = "dna"
+    _cfg_effect: str | list[str] = "breathe"
     _cfg_tick_hz: float = 12.0
     _cfg_long_wait_after_s: float = 8.0
     _cfg_deep_after_s: float = 120.0  # A4: DEEP only after extended wait
     _cfg_show_elapsed: bool = True
     _cfg_allow_intense: bool = False  # D-5: gate for intense engines
-    _cfg_long_wait_engine: str = "wave_function"
-    _cfg_long_wait_effect: str = "shimmer"
+    _cfg_long_wait_engine: str | list[str] = "wave_function"
+    _cfg_long_wait_effect: str | list[str] = "shimmer"
     _actual_tick_interval: float = 1.0 / 12.0
 
     # Children (created in compose)
     _anim_surface: _AnimSurface | None = None
+    _resolved_engine: str = _DEFAULT_ENGINE
     _label_line: _LabelLine | None = None
     _resolved_effect: str = _DEFAULT_EFFECT  # D-2: stored so _tick can swap on STARTED→WORKING
+    _short_engine_pool: tuple[str, ...] = (_DEFAULT_ENGINE,)
+    _short_effect_pool: tuple[str, ...] = (_DEFAULT_EFFECT,)
+    _long_wait_engine_pool: tuple[str, ...] = ("wave_function",)
+    _long_wait_effect_pool: tuple[str, ...] = ("shimmer",)
+    _resolved_long_wait_engine: str | None = None
+    _resolved_long_wait_effect: str | None = None
 
     # Color cache
     _accent_hex: str = _DEFAULT_ACCENT_HEX
     _text_hex: str = _DEFAULT_TEXT_HEX
+    _spinner_dim_hex: str = _DEFAULT_SPINNER_DIM_HEX
+    _spinner_peak_hex: str = _DEFAULT_SPINNER_PEAK_HEX
+    _spinner_dim_rgb: tuple[int, int, int] = _hex_to_rgb(_DEFAULT_SPINNER_DIM_HEX)
+    _spinner_peak_rgb: tuple[int, int, int] = _hex_to_rgb(_DEFAULT_SPINNER_PEAK_HEX)
 
     # Label text
     _base_label: str = "Thinking…"
@@ -372,15 +433,15 @@ _LabelLine   { height: 1;   width: 1fr; }
             raw = read_raw_config()
             thinking = raw.get("tui", {}).get("thinking", {})
             self._cfg_mode = str(thinking.get("mode", "default"))
-            self._cfg_engine = str(thinking.get("engine", "dna"))
-            self._cfg_effect = str(thinking.get("effect", "breathe"))
+            self._cfg_engine = thinking.get("engine", "dna")
+            self._cfg_effect = thinking.get("effect", "breathe")
             self._cfg_tick_hz = float(thinking.get("tick_hz", 12.0))
             self._cfg_long_wait_after_s = float(thinking.get("long_wait_after_s", 8.0))
             self._cfg_deep_after_s = float(thinking.get("deep_after_s", 120.0))
             self._cfg_show_elapsed = bool(thinking.get("show_elapsed", True))
             self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
-            self._cfg_long_wait_engine = str(thinking.get("long_wait_engine", "wave_function"))
-            self._cfg_long_wait_effect = str(thinking.get("long_wait_effect", "shimmer"))
+            self._cfg_long_wait_engine = thinking.get("long_wait_engine", "wave_function")
+            self._cfg_long_wait_effect = thinking.get("long_wait_effect", "shimmer")
         except Exception:
             pass  # use defaults
 
@@ -415,30 +476,86 @@ _LabelLine   { height: 1;   width: 1fr; }
                 return ThinkingMode.COMPACT
         return resolved
 
+    def _engine_whitelist(self, mode: ThinkingMode) -> frozenset[str]:
+        if mode == ThinkingMode.DEEP:
+            return _WHITELIST_DEEP_INTENSE if self._cfg_allow_intense else _WHITELIST_DEEP_AMBIENT
+        return _WHITELIST_SMALL
+
+    @staticmethod
+    def _coerce_pool(raw_value: str | list[str] | tuple[str, ...] | None) -> list[str]:
+        if isinstance(raw_value, str):
+            return [raw_value]
+        if isinstance(raw_value, (list, tuple)):
+            return [item for item in raw_value if isinstance(item, str)]
+        return []
+
+    def _normalize_pool(
+        self,
+        raw_value: str | list[str] | tuple[str, ...] | None,
+        *,
+        whitelist: frozenset[str],
+        default_key: str,
+        field_name: str,
+    ) -> tuple[str, ...]:
+        values = self._coerce_pool(raw_value)
+        dropped = [item for item in values if item not in whitelist]
+        valid = tuple(item for item in values if item in whitelist)
+        if dropped:
+            logger.debug("ThinkingWidget: dropped invalid %s entries: %s", field_name, dropped)
+        if valid:
+            return valid
+        logger.debug(
+            "ThinkingWidget: %s had no valid entries, falling back to %s",
+            field_name,
+            default_key,
+        )
+        return (default_key,)
+
+    def _normalize_engine_pool(
+        self,
+        raw_value: str | list[str] | tuple[str, ...] | None,
+        mode: ThinkingMode,
+        *,
+        default_key: str,
+        field_name: str,
+    ) -> tuple[str, ...]:
+        return self._normalize_pool(
+            raw_value,
+            whitelist=self._engine_whitelist(mode),
+            default_key=default_key,
+            field_name=field_name,
+        )
+
+    def _normalize_effect_pool(
+        self,
+        raw_value: str | list[str] | tuple[str, ...] | None,
+        *,
+        default_key: str,
+        field_name: str,
+    ) -> tuple[str, ...]:
+        return self._normalize_pool(
+            raw_value,
+            whitelist=_WHITELIST_EFFECT,
+            default_key=default_key,
+            field_name=field_name,
+        )
+
     def _resolve_engine(self, explicit: str | None, mode: ThinkingMode) -> str:
         self._load_config()
-        key = explicit or self._cfg_engine
-        if mode == ThinkingMode.DEEP:
-            whitelist = _WHITELIST_DEEP_INTENSE if self._cfg_allow_intense else _WHITELIST_DEEP_AMBIENT
-        else:
-            whitelist = _WHITELIST_SMALL
-        if key not in whitelist:
-            logger.debug(
-                "ThinkingWidget: engine %r not whitelisted for mode %s, falling back to dna",
-                key, mode,
-            )
-            key = _DEFAULT_ENGINE
-        return key
+        return self._normalize_engine_pool(
+            explicit,
+            mode,
+            default_key=_DEFAULT_ENGINE,
+            field_name="engine",
+        )[0]
 
     def _resolve_effect(self, explicit: str | None) -> str:
         self._load_config()
-        key = explicit or self._cfg_effect
-        if key not in _WHITELIST_EFFECT:
-            logger.debug(
-                "ThinkingWidget: effect %r not in whitelist, falling back to breathe", key
-            )
-            key = _DEFAULT_EFFECT
-        return key
+        return self._normalize_effect_pool(
+            explicit,
+            default_key=_DEFAULT_EFFECT,
+            field_name="effect",
+        )[0]
 
     def _refresh_colors(self) -> None:
         css_vars: dict[str, str] = {}
@@ -448,10 +565,24 @@ _LabelLine   { height: 1;   width: 1fr; }
             logger.warning("ThinkingWidget._refresh_colors: get_css_variables failed", exc_info=True)
             self._accent_hex = _DEFAULT_ACCENT_HEX
             self._text_hex = _DEFAULT_TEXT_HEX
+            self._spinner_dim_hex = _DEFAULT_SPINNER_DIM_HEX
+            self._spinner_peak_hex = _DEFAULT_SPINNER_PEAK_HEX
+            self._spinner_dim_rgb = _hex_to_rgb(self._spinner_dim_hex)
+            self._spinner_peak_rgb = _hex_to_rgb(self._spinner_peak_hex)
             return
 
         self._accent_hex = _normalize_hex(css_vars.get("accent"), _DEFAULT_ACCENT_HEX)
         self._text_hex = _normalize_hex(css_vars.get("text"), _DEFAULT_TEXT_HEX)
+        self._spinner_dim_hex = _normalize_hex(
+            css_vars.get("thinking-spinner-dim"),
+            _DEFAULT_SPINNER_DIM_HEX,
+        )
+        self._spinner_peak_hex = _normalize_hex(
+            css_vars.get("thinking-spinner-peak"),
+            _DEFAULT_SPINNER_PEAK_HEX,
+        )
+        self._spinner_dim_rgb = _hex_to_rgb(self._spinner_dim_hex)
+        self._spinner_peak_rgb = _hex_to_rgb(self._spinner_peak_hex)
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -488,8 +619,42 @@ _LabelLine   { height: 1;   width: 1fr; }
         if resolved_mode == ThinkingMode.OFF:
             return  # stay hidden
 
-        resolved_engine = self._resolve_engine(engine, resolved_mode)
-        resolved_effect = self._resolve_effect(effect)
+        self._short_engine_pool = self._normalize_engine_pool(
+            self._cfg_engine,
+            resolved_mode,
+            default_key=_DEFAULT_ENGINE,
+            field_name="engine",
+        )
+        self._short_effect_pool = self._normalize_effect_pool(
+            self._cfg_effect,
+            default_key=_DEFAULT_EFFECT,
+            field_name="effect",
+        )
+        self._long_wait_engine_pool = self._normalize_engine_pool(
+            self._cfg_long_wait_engine,
+            resolved_mode,
+            default_key="wave_function",
+            field_name="long_wait_engine",
+        )
+        self._long_wait_effect_pool = self._normalize_effect_pool(
+            self._cfg_long_wait_effect,
+            default_key="shimmer",
+            field_name="long_wait_effect",
+        )
+        self._resolved_long_wait_engine = None
+        self._resolved_long_wait_effect = None
+
+        resolved_engine = (
+            self._resolve_engine(engine, resolved_mode)
+            if engine is not None
+            else random.choice(self._short_engine_pool)
+        )
+        resolved_effect = (
+            self._resolve_effect(effect)
+            if effect is not None
+            else random.choice(self._short_effect_pool)
+        )
+        self._resolved_engine = resolved_engine
         self._resolved_effect = resolved_effect  # D-2: stored for STARTED→WORKING swap
         self._current_mode = resolved_mode
 
@@ -671,12 +836,16 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._substate_start = time.monotonic()  # A4: record when LONG_WAIT began
             # TW-A — engine swap
             if self._anim_surface is not None:
-                lw_engine = self._resolve_engine(self._cfg_long_wait_engine, self._current_mode or ThinkingMode.DEFAULT)
+                if self._resolved_long_wait_engine is None:
+                    self._resolved_long_wait_engine = random.choice(self._long_wait_engine_pool)
+                lw_engine = self._resolved_long_wait_engine
                 if lw_engine != self._anim_surface._engine_key:
                     self._anim_surface.swap_engine(lw_engine)
             # TW-C — effect swap
             if self._label_line is not None:
-                lw_effect = self._resolve_effect(self._cfg_long_wait_effect)
+                if self._resolved_long_wait_effect is None:
+                    self._resolved_long_wait_effect = random.choice(self._long_wait_effect_pool)
+                lw_effect = self._resolved_long_wait_effect
                 try:
                     from hermes_cli.stream_effects import make_stream_effect
                     self._label_line._effect = make_stream_effect(
@@ -691,7 +860,11 @@ _LabelLine   { height: 1;   width: 1fr; }
 
         # ── Drive children ─────────────────────────────────────────────────────
         if self._anim_surface is not None:
-            self._anim_surface.tick_anim(dt, self._accent_hex or "#888888")
+            self._anim_surface.tick_anim(
+                dt,
+                self._spinner_dim_hex or "#888888",
+                self._spinner_peak_hex,
+            )
 
         if self._label_line is not None:
             # STARTED: use flash effect for first cycle

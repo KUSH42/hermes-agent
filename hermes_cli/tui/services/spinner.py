@@ -35,6 +35,7 @@ class SpinnerService(AppService):
         super().__init__(app)
         # Service-owned cache — keyed by width_cells
         self._helix_frame_cache: dict[int, tuple[str, ...]] = {}
+        self._last_overlay_signature: tuple[object, ...] | None = None
 
     # --- Spinner + hint bar ---
 
@@ -43,6 +44,7 @@ class SpinnerService(AppService):
         app = self.app
         _t0 = _time.perf_counter()
         if not (app.agent_running or app.command_running):
+            self._clear_spinner_overlay()
             return
         app._shimmer_tick += 1
 
@@ -62,7 +64,6 @@ class SpinnerService(AppService):
             if overlay is None or not overlay.is_mounted:
                 overlay = app.query_one("#spinner-overlay", Static)
                 app._cached_spinner_overlay = overlay
-            overlay.display = False
             frame = self.next_spinner_frame(
                 text_after_frame=hint_suffix,
                 elapsed=elapsed,
@@ -71,27 +72,38 @@ class SpinnerService(AppService):
             spinner_display = f"{frame} {hint_suffix}" if frame and hint_suffix else (frame or hint_suffix)
             padded = f" {spinner_display}" if spinner_display else ""
             if hasattr(inp, "placeholder"):
-                if padded and getattr(app, "_animations_enabled", True):
-                    try:
-                        _cvars = (
-                            app._theme_manager.css_variables
-                            if app._theme_manager else {}
-                        )
-                        _shimmer_dim = _cvars.get("spinner-shimmer-dim", "#555555")
-                        _shimmer_peak = _cvars.get("spinner-shimmer-peak", "#d8d8d8")
-                        shimmer = shimmer_text(
-                            padded,
-                            tick=app._shimmer_tick,
-                            dim=_shimmer_dim,
-                            peak=_shimmer_peak,
-                            period=60,
-                        )
-                        inp.placeholder = Content.from_rich_text(shimmer)
-                    except Exception:
-                        _log.debug("tick_spinner: shimmer_text failed", exc_info=True)
-                        inp.placeholder = padded
-                else:
-                    inp.placeholder = padded
+                inp.placeholder = getattr(inp, "_idle_placeholder", "")
+            if not padded:
+                self._clear_spinner_overlay(overlay=overlay)
+            elif getattr(app, "_animations_enabled", True):
+                try:
+                    _cvars = (
+                        app._theme_manager.css_variables
+                        if app._theme_manager else {}
+                    )
+                    _shimmer_dim = _cvars.get("spinner-shimmer-dim", "#555555")
+                    _shimmer_peak = _cvars.get("spinner-shimmer-peak", "#d8d8d8")
+                    shimmer = shimmer_text(
+                        padded,
+                        tick=app._shimmer_tick,
+                        dim=_shimmer_dim,
+                        peak=_shimmer_peak,
+                        period=60,
+                    )
+                    signature = (
+                        "rich",
+                        shimmer.plain,
+                        tuple((span.start, span.end, str(span.style)) for span in shimmer.spans),
+                    )
+                    if signature != self._last_overlay_signature:
+                        overlay.update(Content.from_rich_text(shimmer))
+                        self._last_overlay_signature = signature
+                    overlay.display = True
+                except Exception:
+                    _log.debug("tick_spinner: shimmer_text failed", exc_info=True)
+                    self._update_plain_spinner_overlay(overlay, padded)
+            else:
+                self._update_plain_spinner_overlay(overlay, padded)
         except NoMatches:
             pass
 
@@ -104,6 +116,33 @@ class SpinnerService(AppService):
                 _dt,
                 detail=f"agent_running={app.agent_running} command_running={app.command_running}",
             )
+
+    def _update_plain_spinner_overlay(self, overlay: Static, padded: str) -> None:
+        signature = ("plain", padded)
+        if signature != self._last_overlay_signature:
+            overlay.update(padded)
+            self._last_overlay_signature = signature
+        overlay.display = True
+
+    def _clear_spinner_overlay(self, overlay: Static | None = None) -> None:
+        app = self.app
+        target = overlay
+        if target is None:
+            target = app._cached_spinner_overlay
+            if target is None or not target.is_mounted:
+                try:
+                    target = app.query_one("#spinner-overlay", Static)
+                    app._cached_spinner_overlay = target
+                except NoMatches:
+                    target = None
+        if target is not None:
+            target.display = False
+            if self._last_overlay_signature is not None:
+                target.update("")
+                self._last_overlay_signature = None
+        inp = app._cached_input_area
+        if inp is not None and getattr(inp, "is_mounted", False) and hasattr(inp, "placeholder"):
+            inp.placeholder = getattr(inp, "_idle_placeholder", "")
 
     @staticmethod
     def cell_width(text: str) -> int:

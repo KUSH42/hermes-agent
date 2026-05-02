@@ -2,6 +2,13 @@
 
 High-value pitfalls worth checking before editing tricky TUI code.
 
+## ThinkingWidget spinner surfaces and pools
+
+- **Do not render the running spinner through `HermesInput.placeholder`.** Textual's `TextArea` placeholder path applies the `text-area--placeholder` style to the whole placeholder, flattening shimmer/gradient spans. The live spinner surface belongs to `#spinner-overlay`; the input placeholder stays owned by `HermesInput._refresh_placeholder()` and `_idle_placeholder`.
+- **If you add overlay animation, cache the effective payload.** `SpinnerService` compares a signature of the rendered overlay payload before calling `overlay.update(...)`. Without this, steady-state ticks can trigger avoidable repaints even when the visible frame has not changed.
+- **ThinkingWidget config pools are normalize-once, pick-once.** `tui.thinking.{engine,effect,long_wait_engine,long_wait_effect}` accept scalar-or-list values, but validation and random choice happen only at activation or the `WORKING -> LONG_WAIT` transition. Do not revalidate or reroll inside `_tick()`.
+- **Optional skin vars still need TCSS declarations.** `thinking-spinner-dim` / `thinking-spinner-peak` are `VarSpec(..., optional_in_skin=True)` entries in `COMPONENT_VAR_DEFAULTS`, so bundled skins may omit them, but `$thinking-spinner-dim` / `$thinking-spinner-peak` still must be declared literally in `hermes.tcss` for parse-time resolution.
+
 ## TGP / Kitty Graphics stdout redirect
 
 - **`sys.stdout` is `_PrintCapture` inside Textual's event loop.** `App._process_messages()` wraps execution in `redirect_stdout(_PrintCapture)`, which routes `write()` to `app._print()` (internal log) and returns `-1` from `fileno()`. Any code that writes APC/TGP Kitty sequences to `sys.stdout` inside the event loop silently swallows them — Kitty never receives the image data, and placeholder chars render as blank.

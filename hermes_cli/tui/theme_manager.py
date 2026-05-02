@@ -317,6 +317,19 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     # Spinner shimmer colors — F1: skinnable so light-bg skins stay readable
     "spinner-shimmer-dim":  "#555555",
     "spinner-shimmer-peak": "#d8d8d8",
+    # ThinkingWidget braille-surface gradient colors
+    "thinking-spinner-dim": VarSpec(
+        "#4a4a4a",
+        description="ThinkingWidget braille surface dim color",
+        optional_in_skin=True,
+        category="animation",
+    ),
+    "thinking-spinner-peak": VarSpec(
+        "#d8d8d8",
+        description="ThinkingWidget braille surface peak color",
+        optional_in_skin=True,
+        category="animation",
+    ),
     # Second accent color — used for interactive key badges in HintBar
     "accent-interactive":   "#00bcd4",
     # PlanPanel (R1) — now-section foreground and pending-section foreground

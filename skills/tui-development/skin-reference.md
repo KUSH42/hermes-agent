@@ -139,6 +139,8 @@ component_vars:
   nameplate-decrypt-color:  "#00ff41"   # AssistantNameplate decrypt animation
   spinner-shimmer-dim:      "#555555"   # Spinner shimmer trough (keep readable on light bg)
   spinner-shimmer-peak:     "#d8d8d8"   # Spinner shimmer peak
+  thinking-spinner-dim:     "#4a4a4a"   # ThinkingWidget braille-surface gradient dim color
+  thinking-spinner-peak:    "#d8d8d8"   # ThinkingWidget braille-surface gradient peak color
   plan-now-fg:              "#00bcd4"   # PlanPanel now-section foreground (R1)
   plan-pending-fg:          "#777777"   # PlanPanel pending-section foreground (R1)
   pane-border:              "#333333"   # PaneContainer border color (R2 v2 layout)
@@ -381,7 +383,7 @@ for frame in iter_frames("decrypt", "Connecting…"):
 1. `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` — sensible hex default.
 2. `hermes.tcss` under the `/* Component Part variables */` comment block — `$var-name: <default>;` (required IF the var is `$`-referenced from `hermes.tcss` or any `DEFAULT_CSS` block; Textual needs it at parse time).
 3. `skin_engine.py` module docstring `component_vars:` block — description line.
-4. Each bundled skin YAML (`skins/{matrix,catppuccin,solarized-dark,tokyo-night}.yaml`) — key under `component_vars:`. Use `python -m hermes_cli.tui.build_skin_vars --fill-skin skins/<name>.yaml` to auto-scaffold with defaults, then hand-tune per skin.
+4. Each bundled skin YAML (`skins/{matrix,catppuccin,solarized-dark,tokyo-night}.yaml`) — key under `component_vars:` when the default is not marked `optional_in_skin=True` in `VarSpec`. Use `python -m hermes_cli.tui.build_skin_vars --fill-skin skins/<name>.yaml` to auto-scaffold with defaults, then hand-tune per skin.
 
 `tests/tui/test_css_var_single_source.py` gates CI: T1 (refs resolve), T2 ($-referenced defaults declared), T3 (bundled skins cover all keys), T4 (no orphan decls), T8 (no raw `COMPONENT_VAR_DEFAULTS[...]` access).
 

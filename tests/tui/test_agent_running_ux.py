@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -26,42 +26,126 @@ def _make_app() -> HermesApp:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — placeholder spinner (4 tests)
+# Step 1 — overlay spinner (6 tests)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_tick_spinner_sets_placeholder():
-    """_tick_spinner updates inp.placeholder instead of hiding the input."""
+async def test_tick_spinner_renders_on_overlay_not_placeholder():
+    """Running spinner renders on #spinner-overlay; input placeholder stays idle."""
+    from textual.widgets import Static
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         app.agent_running = True
         app.spinner_label = "read_file(path='src/main.py')"
         await pilot.pause()
-        # Wait for one spinner tick (interval = 0.1 s)
         await asyncio.sleep(0.15)
         await pilot.pause()
-        try:
-            inp = app.query_one("#input-area")
-            assert inp.display, "Input must remain visible during agent run"
-        except Exception:
-            pass  # TextArea fallback — no placeholder, test skipped
+        inp = app.query_one("#input-area")
+        overlay = app.query_one("#spinner-overlay", Static)
+        assert inp.placeholder == getattr(inp, "_idle_placeholder", "")
+        assert overlay.display is True
+        assert str(overlay.render()) != ""
 
 
 @pytest.mark.asyncio
-async def test_tick_spinner_overlay_always_hidden():
-    """#spinner-overlay stays display:none during agent runs."""
+async def test_tick_spinner_overlay_hides_when_idle():
+    """Idle tick hides and clears the spinner overlay."""
     from textual.widgets import Static
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         app.agent_running = True
+        app.spinner_label = "Tool: demo"
         await pilot.pause()
         await asyncio.sleep(0.15)
         await pilot.pause()
-        try:
-            overlay = app.query_one("#spinner-overlay", Static)
-            assert not overlay.display, "#spinner-overlay must always be hidden"
-        except Exception:
-            pass  # not present in TextArea fallback path
+        overlay = app.query_one("#spinner-overlay", Static)
+        assert overlay.display is True
+
+        app.agent_running = False
+        app._svc_spinner.tick_spinner()
+        await pilot.pause()
+
+        assert overlay.display is False
+        assert str(overlay.render()) == ""
+
+
+@pytest.mark.asyncio
+async def test_tick_spinner_plain_overlay_when_animations_disabled():
+    """Plain overlay text is used when shimmer animation is disabled."""
+    from textual.widgets import Static
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app._animations_enabled = False
+        app.agent_running = True
+        app.spinner_label = "Tool: plain"
+        await pilot.pause()
+        await asyncio.sleep(0.15)
+        await pilot.pause()
+
+        overlay = app.query_one("#spinner-overlay", Static)
+        assert overlay.display is True
+        rendered = str(overlay.render())
+        assert "plain" in rendered
+
+
+@pytest.mark.asyncio
+async def test_tick_spinner_preserves_idle_placeholder_contract():
+    """Spinner cleanup restores the idle placeholder contract."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        inp = app.query_one("#input-area")
+        idle_placeholder = getattr(inp, "_idle_placeholder", "")
+
+        app.agent_running = True
+        app.spinner_label = "Tool: busy"
+        await pilot.pause()
+        await asyncio.sleep(0.15)
+        await pilot.pause()
+        assert inp.placeholder == idle_placeholder
+
+        app.agent_running = False
+        app._svc_spinner.tick_spinner()
+        await pilot.pause()
+
+        assert inp.placeholder == idle_placeholder
+
+
+@pytest.mark.asyncio
+async def test_tick_spinner_no_longer_forces_overlay_hidden_each_tick():
+    """Active spinner ticks keep the overlay visible while text is non-empty."""
+    from textual.widgets import Static
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.agent_running = True
+        app.spinner_label = "Tool: busy"
+        await pilot.pause()
+        app._svc_spinner.tick_spinner()
+        app._svc_spinner.tick_spinner()
+        await pilot.pause()
+
+        overlay = app.query_one("#spinner-overlay", Static)
+        assert overlay.display is True
+
+
+@pytest.mark.asyncio
+async def test_tick_spinner_skips_overlay_update_when_frame_unchanged():
+    """Overlay update is skipped when the effective frame signature is unchanged."""
+    from textual.widgets import Static
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        app._animations_enabled = False
+        await pilot.pause()
+
+        overlay = app.query_one("#spinner-overlay", Static)
+        with patch.object(overlay, "update", wraps=overlay.update) as mock_update:
+            with patch.object(app._svc_spinner, "next_spinner_frame", return_value="frame"):
+                app.agent_running = True
+                app._tool_start_time = 0.0
+                app.spinner_label = "Tool: stable"
+                app._svc_spinner.tick_spinner()
+                app._svc_spinner.tick_spinner()
+
+        assert mock_update.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -95,7 +179,7 @@ async def test_input_enabled_during_agent_run():
 
 @pytest.mark.asyncio
 async def test_placeholder_cleared_on_agent_stop():
-    """watch_agent_running(False) clears the input placeholder."""
+    """watch_agent_running(False) restores the idle placeholder."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         app.agent_running = True
@@ -111,7 +195,7 @@ async def test_placeholder_cleared_on_agent_stop():
             inp = app.query_one("#input-area")
             placeholder = getattr(inp, "placeholder", None)
             if placeholder is not None:
-                assert placeholder == "", f"Placeholder must be empty after agent stops; got {placeholder!r}"
+                assert placeholder == getattr(inp, "_idle_placeholder", "")
         except Exception:
             pass  # TextArea fallback
 

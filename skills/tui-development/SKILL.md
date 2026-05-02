@@ -578,7 +578,7 @@ InterruptOverlay.--diff-visible + #diff-hint { display: block; }
 self.add_class("--diff-hint-visible")
 ```
 
-**New component var requires 3 edits**: (1) `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`, (2) `$name: value;` declaration in `hermes.tcss`, (3) `component_vars:` entry in all 4 bundled skins. T1/T2/T3 in `test_css_var_single_source.py` catch omissions.
+**New component var always requires 2 edits**: (1) `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`, (2) `$name: value;` declaration in `hermes.tcss` when the var is `$`-referenced at parse time. Bundled skin YAML updates are required only when the key is *not* marked `optional_in_skin=True` via `VarSpec`. T1/T2/T3 in `test_css_var_single_source.py` catch omissions.
 
 **CSS class operations require `_classes`** (set by `DOMNode.__init__`): Calling `add_class`/`remove_class` on `object.__new__(SomeWidget)` raises `AttributeError`. In production methods exercised by unit tests, wrap CSS mutations:
 ```python
@@ -2874,6 +2874,22 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 **`_normalize_hex` 3-char shorthand expansion:** `"#abc"` → `"#aabbcc"` (each char doubled). Expansion happens AFTER regex validation; the regex passes both 3-char and 6-char. Downstream `_parse_rgb` only handles 6-char — expansion is required.
 
 **Behavior on `get_css_variables()` raising:** WARNING logged (not DEBUG — failure during normal app operation could mask real Textual regression); both fields reset to `_DEFAULT_ACCENT_HEX`/`_DEFAULT_TEXT_HEX`. Prior behavior left stale values; new is always-deterministic on failure.
+
+## Changelog — 2026-05-02 — ThinkingWidget gradient randomization follow-up — 16 new targeted tests, branch `worktree-thinking-gradient-randomization`
+
+**Spec:** `/home/xush/.hermes/2026-05-02-thinking-widget-gradient-randomization-spec.md` (Status: IMPLEMENTED).
+
+**Input spinner ownership:** the running spinner must render on `#spinner-overlay`, not on `HermesInput.placeholder`. Textual's `TextArea` placeholder path restylizes the full placeholder with `.text-area--placeholder`, which destroys per-character shimmer styling. `SpinnerService.tick_spinner()` now restores `inp.placeholder = inp._idle_placeholder` on every active tick, writes animated or plain spinner content into the overlay, and hides+clears the overlay on idle/turn-end.
+
+**Overlay repaint contract:** `SpinnerService` owns `_last_overlay_signature`. Cache the effective rendered payload (`("plain", text)` or `("rich", plain, spans)`) and skip `overlay.update(...)` when the signature is unchanged. This avoids redundant layout/repaint churn on steady ticks with stable plain content.
+
+**Braille gradient path:** `_AnimSurface.render_line()` no longer builds a monolithic `Text(...)`. It now fast-paths blank/padded rows and otherwise returns a `Strip` built from per-cell `Segment`s, using cached `_dim_rgb` / `_peak_rgb` tuples and a row-offset sine wave (`row` contributes phase) so DEEP multi-row frames do not pulse in lockstep.
+
+**ThinkingWidget gradient vars:** new component vars are `thinking-spinner-dim` and `thinking-spinner-peak`. They live in `theme_manager.COMPONENT_VAR_DEFAULTS` as `VarSpec(..., optional_in_skin=True)` plus literal `$thinking-spinner-dim` / `$thinking-spinner-peak` declarations in `hermes.tcss`. Optional-in-skin means bundled skins need not be bulk-edited when a sane fallback is sufficient.
+
+**Pool normalization contract:** `tui.thinking.{engine,effect,long_wait_engine,long_wait_effect}` now accept either a scalar string or a list of strings. Normalize once per activation/phase transition, drop invalid entries with one DEBUG log per normalization pass, and fall back to the legacy singleton default if the pool goes empty.
+
+**Pick timing contract:** short-wait picks happen once in `activate()` unless explicit `activate(engine=..., effect=...)` overrides are supplied; long-wait picks happen once on the `WORKING -> LONG_WAIT` edge. `_tick()` must consume cached `_short_*_pool` / `_long_wait_*_pool` and cached resolved picks only; no per-tick revalidation or rerandomization.
 
 ## Changelog — 2026-04-28 — R4-T-H1 TTE banner race — threading.Event gate — 5 tests, commit `151530770`, branch `worktree-r4-th1-tte-banner-race`
 

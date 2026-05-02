@@ -1475,37 +1475,28 @@ class HermesApp(App):
     def watch_agent_running(self, value: bool) -> None:
         # A1: coarse phase transition on turn start/end
         self.status_phase = _Phase.REASONING if value else _Phase.IDLE
-        self._svc_spinner.drawbraille_show_hide(value)
+        self._svc_spinner.drawbraille_show_hide(value, signal_on_show="thinking" if value else None)
         if value:
-            # Signal thinking when agent starts
-            try:
-                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
-                self.query_one(_DO).signal("thinking")
-            except Exception:  # overlay absent or not yet mounted — animation skipped
-                pass
             self._svc_commands.update_anim_hint()
             self._svc_spinner.set_chevron_phase("--phase-stream")
             self._svc_spinner.set_hint_phase("stream")
+            _output: "OutputPanel | None" = None
             try:
-                output = self.query_one(OutputPanel)
-                output.reset_turn_capture()
+                _output = self.query_one(OutputPanel)
+                _output.reset_turn_capture()
                 try:
                     from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
-                    output.query_one(_TW).activate()
+                    _output.query_one(_TW).activate()
                 except (NoMatches, Exception):
-                    pass
+                    pass  # ThinkingWidget not yet mounted — activation deferred to on_mount
             except NoMatches:
                 pass
-            self._sync_workspace_polling_state()
             # RX4: lifecycle hooks for turn start
+            # Note: _sync_workspace_polling_state() is intentionally omitted here —
+            # the on_turn_start hook → _lc_dismiss_info_overlays → dismiss_all_info_overlays
+            # calls it, so a direct call here would be a duplicate on every True transition.
             self.hooks.fire("on_turn_start")
         else:
-            # Signal complete when agent stops
-            try:
-                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
-                self.query_one(_DO).signal("complete")
-            except Exception:  # overlay absent or not yet mounted — animation skipped
-                pass
             self._svc_commands.update_anim_hint()
             self._sync_workspace_polling_state()
             # Safety net: flush live buffer + stop all per-turn timers.
@@ -1517,9 +1508,9 @@ class HermesApp(App):
             try:
                 output = self.query_one(OutputPanel)
                 output.flush_live()
-                # Evict old turns at idle to prevent compositor cache thrash
-                # (Textual LRU maxsize=16 can't cope with 300+ children).
-                output.evict_old_turns()
+                # Evict old turns after the layout pass — purely cosmetic, nothing reads
+                # the result synchronously, and deferring keeps the turn-boundary repaint fast.
+                self.call_after_refresh(output.evict_old_turns)
             except NoMatches:
                 pass
             # v2 heat injection: signal turn complete
@@ -1529,14 +1520,21 @@ class HermesApp(App):
                 ov.signal("complete")
             except Exception:
                 pass
-            # Rebuild unified browse anchor list now that all blocks are mounted
+            # Rebuild unified browse anchor list now that all blocks are mounted.
+            # Deferred: CPU cost is proportional to output size; browse nav can update 1 frame later.
             if self.browse_mode:
-                self._svc_browse.rebuild_browse_anchors()
-            # Live-refresh history search index if overlay is open
+                self.call_after_refresh(self._svc_browse.rebuild_browse_anchors)
+            # Live-refresh history search index if overlay is open.
+            # Deferred: history overlay is already repainted by the time call_after_refresh fires.
             try:
                 hs = self.query_one(HistorySearchOverlay)
                 if hs.has_class("--visible"):
-                    hs.post_message(HistorySearchOverlay.TurnCompleted())
+                    def _send_turn_completed(widget: HistorySearchOverlay = hs) -> None:
+                        try:
+                            widget.post_message(HistorySearchOverlay.TurnCompleted())
+                        except Exception:  # widget unmounted between now and refresh
+                            pass
+                    self.call_after_refresh(_send_turn_completed)
             except NoMatches:
                 pass
             # RX4: fire lifecycle hooks for turn end
@@ -1589,7 +1587,9 @@ class HermesApp(App):
         # New turn starting — create a new MessagePanel with the last user input
         if value:
             try:
-                output = self.query_one(OutputPanel)
+                if _output is None:
+                    raise NoMatches  # OutputPanel not mounted — skip new_message
+                output = _output
                 # Migrate any setext/table lookahead content buffered in the
                 # previous panel's engine to the new panel.
                 #

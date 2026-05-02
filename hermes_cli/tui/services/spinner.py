@@ -335,7 +335,7 @@ class SpinnerService(AppService):
         except NoMatches:
             pass
 
-    def drawbraille_show_hide(self, running: bool) -> None:
+    def drawbraille_show_hide(self, running: bool, signal_on_show: "str | None" = None) -> None:
         """Show or hide the drawbraille overlay based on agent state + _anim_force."""
         app = self.app
         try:
@@ -346,12 +346,16 @@ class SpinnerService(AppService):
             if app._anim_force == "on":
                 cfg.enabled = True
                 overlay.show(cfg)
+                if signal_on_show:
+                    overlay.signal(signal_on_show)
                 return
             if app._anim_force == "off":
                 overlay.hide(cfg)
                 return
             if running and cfg.trigger in ("agent_running", "always"):
                 overlay.show(cfg)
+                if signal_on_show:
+                    overlay.signal(signal_on_show)
                 if cfg.dim_background:
                     try:
                         app.query_one(OutputPanel).add_class("-dim-bg")

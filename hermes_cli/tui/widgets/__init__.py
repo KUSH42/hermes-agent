@@ -974,6 +974,8 @@ class AssistantNameplate(Widget):
         self._linked_rule: "Any | None" = None
         self._active_dim_hex = "#3d3480"
         self._text_hex = "#cccccc"
+        self._decrypt_style: Style = _NP_DECRYPT_COLOR
+        self._morph_dim_style: Style = _NP_DIM_COLOR
         # C-5/C-2: derived in on_mount; fallbacks point to module constants until then
         self._active_style: Style = _NP_ACTIVE_COLOR
         self._idle_color_hex: str = "#888888"
@@ -1003,27 +1005,38 @@ class AssistantNameplate(Widget):
                 return tier_accents_raw[tier]
         return css_vars.get("nameplate-active-color", "#7b68ee")
 
+    def _derive_skin_colors(self, css_vars: dict, tier: "str | None" = None) -> None:
+        """Recompute all skin-derived color fields from *css_vars*. Safe to call post-mount."""
+        self._accent_hex = self._resolve_accent_hex(css_vars, tier)
+        self._text_hex = css_vars.get("foreground", "#cccccc")
+        self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
+        self._active_style = Style.parse(f"bold {self._accent_hex}")
+        self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
+        self._error_color_hex = css_vars.get("status-error-color", "#ef5350")
+        decrypt_hex = css_vars.get("nameplate-decrypt-color", "#00ff41")
+        self._decrypt_style = Style.parse(f"bold {decrypt_hex}")
+        morph_dim_hex = _lerp_hex(self._text_hex, "#000000", 0.72)
+        self._morph_dim_style = Style.parse(morph_dim_hex)
+
+    def refresh_skin_colors(self) -> None:
+        """Re-derive all animation colors from the current skin. Called on skin hotswap."""
+        try:
+            css_vars = self.app.get_css_variables()
+            tier = getattr(self.app, "active_tier", None)
+            self._derive_skin_colors(css_vars, tier)
+            self.refresh()
+        except Exception:
+            pass  # best-effort; widget may not be mounted
+
     def on_mount(self) -> None:
         try:
             css_vars = self.app.get_css_variables()
             _tier = getattr(self.app, "active_tier", None)
-            self._accent_hex = self._resolve_accent_hex(css_vars, _tier)
-            self._text_hex = css_vars.get("foreground", "#cccccc")
-            # dim end of pulse wave: 30% of the accent blended toward black
-            self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
-            # C-5: derive active style from live accent rather than module constant
-            self._active_style = Style.parse(f"bold {self._accent_hex}")
-            # C-2: idle color = 25% accent tint blended toward base text color
-            self._idle_color_hex: str = _lerp_hex(
-                self._text_hex, self._accent_hex, 0.25
-            )
-            self._error_color_hex = css_vars.get("status-error-color", "#ef5350")
+            self._derive_skin_colors(css_vars, _tier)
         except Exception:
-            pass
-        # C-5: active style from live accent color (not hardcoded constant)
-        self._active_style = Style.parse(f"bold {self._accent_hex}")
-        # C-2: idle color as 25% accent tint toward text color
-        self._idle_color_hex: str = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
+            # Fallback: re-derive from whatever _accent_hex/_text_hex already hold
+            self._active_style = Style.parse(f"bold {self._accent_hex}")
+            self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
         if not self._effects_enabled:
             return  # effects disabled — skip animation/timer setup
         if self.styles.display == "none":
@@ -1049,10 +1062,7 @@ class AssistantNameplate(Widget):
         """Update the active tier and recompute accent color. Triggers a repaint."""
         try:
             css_vars = self.app.get_css_variables()
-            self._accent_hex = self._resolve_accent_hex(css_vars, tier)
-            self._active_dim_hex = _lerp_hex("#000000", self._accent_hex, 0.30)
-            self._active_style = Style.parse(f"bold {self._accent_hex}")
-            self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
+            self._derive_skin_colors(css_vars, tier)
             self.refresh()
         except Exception:
             pass  # best-effort — tier change without mounted app is fine
@@ -1157,7 +1167,7 @@ class AssistantNameplate(Widget):
         if self._state == _NPState.ACTIVE_IDLE:
             return self._render_active_pulse()
         if self._state == _NPState.ERROR_FLASH:
-            return Text(self._target_name, style=_NP_ERROR_COLOR)
+            return Text(self._target_name, style=Style.parse(f"bold {self._error_color_hex}"))
         t = Text()
         for ch in self._frame:
             t.append(ch.current, style=ch.style)
@@ -1221,7 +1231,7 @@ class AssistantNameplate(Widget):
                 newly_locked += 1
             else:
                 ch.current = _random.choice(_NP_POOL)
-                ch.style = _NP_DECRYPT_COLOR
+                ch.style = self._decrypt_style
                 all_locked = False
         if newly_locked:
             locked_count = sum(1 for c in self._frame if c.locked)
@@ -1265,7 +1275,7 @@ class AssistantNameplate(Widget):
                 ch.style = dst_style
             else:
                 ch.current = _random.choice(_NP_POOL)
-                ch.style = _NP_DIM_COLOR
+                ch.style = self._morph_dim_style
                 done = False
         if done:
             if self._state == _NPState.MORPH_TO_ACTIVE:
@@ -1283,7 +1293,7 @@ class AssistantNameplate(Widget):
             for _ in range(_random.randint(1, min(3, len(self._frame)))):
                 idx = _random.randrange(len(self._frame))
                 self._frame[idx].current = _random.choice(_NP_POOL)
-                self._frame[idx].style = _NP_DECRYPT_COLOR
+                self._frame[idx].style = self._decrypt_style
         elif self._glitch_frame == 3:
             # partial restore
             for ch in self._frame:
@@ -1327,7 +1337,7 @@ class AssistantNameplate(Widget):
                 current=_random.choice(_NP_POOL),
                 locked=False,
                 lock_at=max(self._startup_t0 + 0.03, deadline),
-                style=_NP_DECRYPT_COLOR,
+                style=self._decrypt_style,
             ))
         self._tick = 0
         last_lock = max(c.lock_at for c in self._frame) if self._frame else self._startup_t0
@@ -1433,7 +1443,7 @@ class AssistantNameplate(Widget):
         if beat == _NPIdleBeat.DECRYPT:
             self._beat_decrypt_frame = [
                 _NPChar(target=ch, current=_random.choice(_NP_POOL),
-                        locked=False, lock_at=0, style=_NP_DECRYPT_COLOR)
+                        locked=False, lock_at=0, style=self._decrypt_style)
                 for ch in self._target_name
             ]
 

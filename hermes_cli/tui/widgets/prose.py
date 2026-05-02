@@ -403,16 +403,25 @@ class MathBlockWidget(Widget):
     }
     """
 
-    def __init__(self, image_path: Path, max_rows: int = 12, **kwargs: Any) -> None:
+    def __init__(self, image_path: Path, max_rows: int = 12, latex: str = "", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._image_path = image_path
         self._max_rows = max_rows
+        self._latex = latex
 
     def compose(self) -> ComposeResult:
         from hermes_cli.tui.widgets.inline_media import InlineImage
-        yield Static("∫ Math expression", classes="--math-label")
+        if self._latex:
+            try:
+                from hermes_cli.tui.math_renderer import _get_math_renderer
+                label_text = _get_math_renderer().render_unicode(self._latex)
+            except Exception:
+                label_text = self._latex
+        else:
+            label_text = "∫ Math expression"
+        yield Static(label_text, classes="--math-label")
         yield InlineImage(image=self._image_path, max_rows=self._max_rows)
 
     def copy_content(self) -> str:
-        """Return the image path as a hint (original LaTeX not retained here)."""
-        return str(self._image_path)
+        """Return the original LaTeX source, or the image path if unavailable."""
+        return self._latex or str(self._image_path)

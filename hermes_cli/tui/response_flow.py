@@ -227,7 +227,7 @@ def _resolve_log_width(log_widget: "Any") -> int:
     try:
         # Same pre-layout fallback as CopyableRichLog.write():
         # app width minus scrollbar + prose margins.
-        return max(log_widget.app.size.width - 5, 20)
+        return max(log_widget.app.size.width - 6, 20)
     except Exception:
         return 80  # app not available pre-mount — use safe default
 
@@ -247,10 +247,10 @@ def _make_rule(log_widget: "Any") -> "Text":
         except Exception:
             w = 80  # app not available pre-mount
     try:
-        app_cap = max(log_widget.app.size.width - 5, 20)
+        app_cap = max(log_widget.app.size.width - 6, 20)
         w = min(w, app_cap)
     except Exception:
-        pass  # app size unavailable; skip cap — rule may overflow by ≤5 cells
+        pass  # app size unavailable; skip cap — rule may overflow by ≤6 cells
     return Text("─" * w, style="dim")
 
 
@@ -1385,7 +1385,7 @@ class ResponseFlowEngine:
                 unicode_repr = _get_math_renderer().render_unicode(latex_copy)
                 _app2.call_from_thread(self._mount_math_unicode, unicode_repr)
             else:
-                _app2.call_from_thread(self._mount_math_image, path, max_rows)
+                _app2.call_from_thread(self._mount_math_image, path, max_rows, latex_copy)
 
         _app.run_worker(_render_worker, thread=True)
 
@@ -1395,11 +1395,11 @@ class ResponseFlowEngine:
         t = Text(f"  {unicode_repr}  ", style="italic")
         self._prose_log.write_with_source(t, unicode_repr)
 
-    def _mount_math_image(self, path: "Path", max_rows: int) -> None:
+    def _mount_math_image(self, path: "Path", max_rows: int, latex: str = "") -> None:
         """App-thread: mount MathBlockWidget for a rendered PNG."""
         try:
             from hermes_cli.tui.widgets import MathBlockWidget
-            widget = MathBlockWidget(image_path=path, max_rows=max_rows)
+            widget = MathBlockWidget(image_path=path, max_rows=max_rows, latex=latex)
             self._panel._mount_nonprose_block(widget)
         except Exception:
             _log.warning(

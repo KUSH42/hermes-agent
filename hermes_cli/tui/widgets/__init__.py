@@ -605,6 +605,7 @@ class OutputPanel(ScrollableContainer):
             engine = getattr(msg, "_response_engine", None)
             if engine is not None:
                 engine.process_line(live._buf)
+                engine._partial = ""  # prevent engine.flush() below from re-processing same partial
             else:
                 plain = _strip_ansi(live._buf)
                 if isinstance(rl, CopyableRichLog):
@@ -1077,6 +1078,19 @@ class AssistantNameplate(Widget):
     def link_to_rule(self, rule: "Any") -> None:
         """Drive *rule*.refresh() from this nameplate's animation timer."""
         self._linked_rule = rule
+
+    def set_name(self, new_name: str) -> None:
+        """Live-update the displayed agent name. Morphs from old name to new."""
+        if new_name == self._target_name:
+            return
+        old = self._target_name
+        self._target_name = new_name
+        if self._state in (_NPState.IDLE, _NPState.STARTUP):
+            self._state = _NPState.MORPH_TO_IDLE
+            self._init_morph(old, new_name)
+            self._set_timer_rate(30)
+        elif self._state == _NPState.MORPH_TO_IDLE:
+            self._init_morph(self._morph_src, new_name)
 
     def transition_to_active(self, label: str = "● thinking") -> None:
         _log.debug(

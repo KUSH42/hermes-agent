@@ -108,6 +108,75 @@ class ThemeService(AppService):
                     rp._reasoning_engine.refresh_skin(css)
                 except Exception:
                     logger.debug("ReasoningFlowEngine skin refresh failed", exc_info=True)
+        self._refresh_branding()
+
+    def _refresh_branding(self) -> None:
+        """Push skin branding fields (agent_name, prompt_symbol, startup banner) to live widgets."""
+        app = self.app
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            skin = get_active_skin()
+        except Exception:
+            logger.debug("_refresh_branding: get_active_skin failed", exc_info=True)
+            return
+
+        # 1. Nameplate agent name
+        try:
+            from hermes_cli.tui.widgets import AssistantNameplate
+            np = app.query_one(AssistantNameplate)
+            new_name = skin.get_branding("agent_name", "Hermes")
+            np.set_name(new_name)
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("_refresh_branding: nameplate update failed", exc_info=True)
+
+        # 2. Input chevron glyph (NORMAL mode only; other modes have fixed glyphs)
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            from hermes_cli.tui.input._mode import InputMode
+            hi = app.query_one(HermesInput)
+            new_glyph = skin.get_branding("prompt_symbol", "❯ ")
+            from hermes_cli.tui.input import widget as _input_widget
+            _input_widget._CHEVRON_GLYPHS[InputMode.NORMAL] = new_glyph
+            if hi.input_mode == InputMode.NORMAL:
+                hi._sync_chevron_to_mode(InputMode.NORMAL)
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("_refresh_branding: chevron update failed", exc_info=True)
+
+        # 3. Startup banner — replace with new skin's logo + hero art
+        try:
+            from hermes_cli.tui.widgets import StartupBannerWidget
+            from hermes_cli.banner import (
+                resolve_banner_logo_assets,
+                resolve_banner_hero_assets,
+                render_banner_logo_text,
+                render_banner_hero_text,
+            )
+            from rich.text import Text as _Text
+            from rich.columns import Columns as _Columns
+            from rich.console import Console as _Console
+            from io import StringIO as _StringIO
+
+            markup_logo, _ = resolve_banner_logo_assets()
+            markup_hero, _ = resolve_banner_hero_assets()
+            logo_text = render_banner_logo_text(markup_logo)
+            hero_text = render_banner_hero_text(markup_hero)
+
+            # Compose logo above hero into a single Rich Text block
+            combined = _Text()
+            combined.append_text(logo_text)
+            combined.append("\n")
+            combined.append_text(hero_text)
+
+            bw = app.query_one(StartupBannerWidget)
+            bw.set_frame(combined)
+        except NoMatches:
+            pass
+        except Exception:
+            logger.debug("_refresh_branding: startup banner update failed", exc_info=True)
 
     def _apply_override_dict(self, overrides: "dict") -> None:
         """Apply an override dict live without reloading the skin from disk."""

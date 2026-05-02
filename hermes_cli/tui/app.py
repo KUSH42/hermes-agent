@@ -521,7 +521,7 @@ class HermesApp(App):
         self._response_metrics_active: bool = False
         self._response_wall_start_time: float | None = None
         self._response_segment_start_time: float | None = None
-        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
+        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque(maxlen=500)
         self._last_stream_chunk_ts: float | None = None
 
         # Undo/retry state

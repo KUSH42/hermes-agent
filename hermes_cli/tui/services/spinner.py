@@ -93,14 +93,8 @@ class SpinnerService(AppService):
                         peak=_shimmer_peak,
                         period=60,
                     )
-                    signature = (
-                        "rich",
-                        shimmer.plain,
-                        tuple((span.start, span.end, str(span.style)) for span in shimmer.spans),
-                    )
-                    if signature != self._last_overlay_signature:
-                        overlay.update(Content.from_rich_text(shimmer))
-                        self._last_overlay_signature = signature
+                    overlay.update(Content.from_rich_text(shimmer))
+                    self._last_overlay_signature = ("rich", padded)
                     overlay.display = True
                 except Exception:
                     _log.debug("tick_spinner: shimmer_text failed", exc_info=True)
@@ -110,7 +104,6 @@ class SpinnerService(AppService):
         except NoMatches:
             pass
 
-        app._refresh_live_response_metrics()
         _dt = (_time.perf_counter() - _t0) * 1000
         if _dt > 16:
             _log_lag(f"_tick_spinner took {_dt:.1f}ms")

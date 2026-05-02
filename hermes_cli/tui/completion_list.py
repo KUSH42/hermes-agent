@@ -106,8 +106,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
     searching: reactive[bool] = reactive(False, repaint=True)
     empty_reason: reactive[str] = reactive("", repaint=True)
 
-    # Shimmer animation phase (P0-A): incremented at 8 Hz while searching.
-    _shimmer_phase: reactive[int] = reactive(0, repaint=True)
+    # Shimmer animation phase (P0-A): plain int, incremented at 8 Hz.
+    # _advance_shimmer calls self.refresh() directly — avoids reactive watcher overhead.
 
     def __init__(self) -> None:
         super().__init__()
@@ -123,6 +123,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         # _refresh_fuzzy_color() populates this at mount/theme-reload.
         self._style_path_suffix: Style = Style(dim=True)
         self._style_empty: Style = Style(bgcolor="#2A2000")
+        self._shimmer_phase: int = 0
         self._shimmer_timer: object | None = None
         self._auto_close_timer: object | None = None
         self._auto_close_delay: float = 0.0
@@ -227,6 +228,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
     def _advance_shimmer(self) -> None:
         """Timer callback — plain def, no await."""
         self._shimmer_phase = (self._shimmer_phase + 1) % (_SHIMMER_LEN * 4)
+        self.refresh()
 
     def _render_shimmer_row(self, y: int) -> Strip:
         """Render one ThinkingWidget-style block density sweep row (P0-A)."""

@@ -653,6 +653,7 @@ class TestSpinnerService:
         svc = SpinnerService.__new__(SpinnerService)
         svc.app = app
         svc._helix_frame_cache = {}
+        svc._last_overlay_signature = None
         return svc, app
 
     def test_tick_spinner_logs_shimmer_failure(self):

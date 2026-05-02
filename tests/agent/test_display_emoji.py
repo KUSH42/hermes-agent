@@ -78,7 +78,7 @@ class TestSkinConfigToolIcons:
         assert not hasattr(skin, "tool_emojis")
 
     def test_build_skin_config_reads_tool_icons(self):
-        from hermes_cli.skin_engine import _build_skin_config
+        from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config
         skin = _build_skin_config({
             "name": "custom",
             "tool_icons": {"terminal": "󰆍", "patch": " "},
@@ -86,7 +86,7 @@ class TestSkinConfigToolIcons:
         assert skin.tool_icons == {"terminal": "󰆍", "patch": " "}
 
     def test_build_skin_config_legacy_tool_emojis_merges_into_tool_icons(self):
-        from hermes_cli.skin_engine import _build_skin_config
+        from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config
         skin = _build_skin_config({
             "name": "legacy",
             "tool_emojis": {"terminal": "💻", "patch": "🔧"},

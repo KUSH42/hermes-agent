@@ -212,6 +212,7 @@ Drop a YAML file in ``~/.hermes/skins/<name>.yaml`` following the schema above.
 Activate with ``/skin <name>`` in the CLI or ``display.skin: <name>`` in config.yaml.
 """
 
+import functools
 import logging
 import os
 import re
@@ -635,458 +636,6 @@ class SkinConfig:
 
 
 # =============================================================================
-# Built-in skin definitions
-# =============================================================================
-
-_BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
-    "default": {
-        "name": "default",
-        "description": "Classic Hermes — gold and kawaii",
-        "syntax_scheme": "hermes",
-        "diff": {
-            "deletion_bg": "#781414",
-            "addition_bg": "#145a14",
-            "intra_del_bg": "#9b1c1c",
-            "intra_add_bg": "#166534",
-        },
-        "colors": {
-            "banner_border": "#CD7F32",
-            "banner_title": "#FFD700",
-            "banner_accent": "#FFBF00",
-            "banner_dim": "#B8860B",
-            "banner_text": "#FFF8DC",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#FFBF00",
-            "ui_label": "#4dd0e1",
-            "ui_ok": "#4caf50",
-            "ui_error": "#ef5350",
-            "ui_warn": "#ffa726",
-            "prompt": "#FFF8DC",
-            "input_rule": "#CD7F32",
-            "response_border": "#FFD700",
-            "session_label": "#DAA520",
-            "session_border": "#8B8682",
-            "rule_start": "#555555",
-            "rule_end": "#2A2A2A",
-        },
-        "spinner": {
-            "style": "dots",
-            # Empty = use hardcoded defaults in display.py
-        },
-        "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
-            "prompt_symbol": "❯ ",
-            "help_header": "(^_^)? Available Commands",
-        },
-        "tool_prefix": "┊",
-    },
-    "ares": {
-        "name": "ares",
-        "description": "War-god theme — crimson and bronze",
-        "syntax_scheme": "gruvbox",
-        "diff": {
-            "deletion_bg": "#6F1D1B",
-            "addition_bg": "#3F5A2A",
-            "intra_del_bg": "#8C2F26",
-            "intra_add_bg": "#557A34",
-        },
-        "colors": {
-            "banner_border": "#9F1C1C",
-            "banner_title": "#C7A96B",
-            "banner_accent": "#DD4A3A",
-            "banner_dim": "#6B1717",
-            "banner_text": "#F1E6CF",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#DD4A3A",
-            "ui_label": "#C7A96B",
-            "ui_ok": "#4caf50",
-            "ui_error": "#ef5350",
-            "ui_warn": "#ffa726",
-            "prompt": "#F1E6CF",
-            "input_rule": "#9F1C1C",
-            "response_border": "#C7A96B",
-            "session_label": "#C7A96B",
-            "session_border": "#6E584B",
-            "rule_start": "#6B1717",
-            "rule_end": "#2A1010",
-        },
-        "spinner": {
-            "style": "arrows",
-            "waiting_faces": ["(⚔)", "(⛨)", "(▲)", "(<>)", "(/)"],
-            "thinking_faces": ["(⚔)", "(⛨)", "(▲)", "(⌁)", "(<>)"],
-            "thinking_verbs": [
-                "forging", "marching", "sizing the field", "holding the line",
-                "hammering plans", "tempering steel", "plotting impact", "raising the shield",
-            ],
-            "wings": [
-                ["⟪⚔", "⚔⟫"],
-                ["⟪▲", "▲⟫"],
-                ["⟪╸", "╺⟫"],
-                ["⟪⛨", "⛨⟫"],
-            ],
-        },
-        "branding": {
-            "agent_name": "Ares Agent",
-            "welcome": "Welcome to Ares Agent! Type your message or /help for commands.",
-            "goodbye": "Farewell, warrior! ⚔",
-            "response_label": " ⚔ Ares ",
-            "prompt_symbol": "⚔ ❯ ",
-            "help_header": "(⚔) Available Commands",
-        },
-        "tool_prefix": "╎",
-        "banner_logo": """[bold #A3261F] █████╗ ██████╗ ███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #B73122]██╔══██╗██╔══██╗██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#C93C24]███████║██████╔╝█████╗  ███████╗█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#D84A28]██╔══██║██╔══██╗██╔══╝  ╚════██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#E15A2D]██║  ██║██║  ██║███████╗███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#EB6C32]╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]""",
-        "banner_hero": """[#9F1C1C]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣤⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#9F1C1C]⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣿⠟⠻⣿⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠋⠀⠀⠀⠙⢿⣷⣄⠀⠀⠀⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⢀⣾⡿⠋⠀⠀⢠⡄⠀⠀⠙⢿⣷⡀⠀⠀⠀⠀⠀[/]
-[#DD4A3A]⠀⠀⠀⠀⣰⣿⠟⠀⠀⠀⣰⣿⣿⣆⠀⠀⠀⠻⣿⣆⠀⠀⠀⠀[/]
-[#DD4A3A]⠀⠀⠀⢰⣿⠏⠀⠀⢀⣾⡿⠉⢿⣷⡀⠀⠀⠹⣿⡆⠀⠀⠀[/]
-[#9F1C1C]⠀⠀⠀⣿⡟⠀⠀⣠⣿⠟⠀⠀⠀⠻⣿⣄⠀⠀⢻⣿⠀⠀⠀[/]
-[#9F1C1C]⠀⠀⠀⣿⡇⠀⠀⠙⠋⠀⠀⚔⠀⠀⠙⠋⠀⠀⢸⣿⠀⠀⠀[/]
-[#6B1717]⠀⠀⠀⢿⣧⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⡿⠀⠀⠀[/]
-[#6B1717]⠀⠀⠀⠘⢿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⡿⠃⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠈⠻⣿⣷⣦⣤⣀⣀⣤⣤⣶⣿⠿⠋⠀⠀⠀⠀[/]
-[#C7A96B]⠀⠀⠀⠀⠀⠀⠀⠉⠛⠿⠿⠿⠿⠛⠉⠀⠀⠀⠀⠀⠀⠀[/]
-[#DD4A3A]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⚔⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[dim #6B1717]⠀⠀⠀⠀⠀⠀⠀⠀war god online⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
-    },
-    "mono": {
-        "name": "mono",
-        "description": "Monochrome — clean grayscale",
-        "syntax_scheme": "solarized-dark",
-        "diff": {
-            "deletion_bg": "#3A3030",
-            "addition_bg": "#2F3A30",
-            "intra_del_bg": "#4A3A3A",
-            "intra_add_bg": "#3A4A3A",
-            "deletion_marker_fg": "#D0D0D0",
-            "addition_marker_fg": "#F0F0F0",
-        },
-        "colors": {
-            "banner_border": "#555555",
-            "banner_title": "#e6edf3",
-            "banner_accent": "#aaaaaa",
-            "banner_dim": "#444444",
-            "banner_text": "#c9d1d9",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#aaaaaa",
-            "ui_label": "#888888",
-            "ui_ok": "#888888",
-            "ui_error": "#cccccc",
-            "ui_warn": "#999999",
-            "prompt": "#c9d1d9",
-            "input_rule": "#444444",
-            "response_border": "#aaaaaa",
-            "session_label": "#888888",
-            "session_border": "#555555",
-            "rule_start": "#444444",
-            "rule_end": "#222222",
-        },
-        "spinner": {"style": "none"},
-        "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
-            "prompt_symbol": "❯ ",
-            "help_header": "[?] Available Commands",
-        },
-        "tool_prefix": "┊",
-    },
-    "slate": {
-        "name": "slate",
-        "description": "Cool blue — developer-focused",
-        "syntax_scheme": "one-dark",
-        "diff": {
-            "deletion_bg": "#3F2630",
-            "addition_bg": "#203D36",
-            "intra_del_bg": "#5A3240",
-            "intra_add_bg": "#2A544A",
-        },
-        "colors": {
-            "banner_border": "#4169e1",
-            "banner_title": "#7eb8f6",
-            "banner_accent": "#8EA8FF",
-            "banner_dim": "#4b5563",
-            "banner_text": "#c9d1d9",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#7eb8f6",
-            "ui_label": "#8EA8FF",
-            "ui_ok": "#63D0A6",
-            "ui_error": "#F7A072",
-            "ui_warn": "#e6a855",
-            "prompt": "#c9d1d9",
-            "input_rule": "#4169e1",
-            "response_border": "#7eb8f6",
-            "session_label": "#7eb8f6",
-            "session_border": "#4b5563",
-            "rule_start": "#3a5a8a",
-            "rule_end": "#1a2a40",
-        },
-        "spinner": {"style": "pulse"},
-        "branding": {
-            "agent_name": "Hermes Agent",
-            "welcome": "Welcome to Hermes Agent! Type your message or /help for commands.",
-            "goodbye": "Goodbye! ⚕",
-            "response_label": " ⚕ Hermes ",
-            "prompt_symbol": "❯ ",
-            "help_header": "(^_^)? Available Commands",
-        },
-        "tool_prefix": "┊",
-    },
-    "poseidon": {
-        "name": "poseidon",
-        "description": "Ocean-god theme — deep blue and seafoam",
-        "syntax_scheme": "nord",
-        "diff": {
-            "deletion_bg": "#433047",
-            "addition_bg": "#244A44",
-            "intra_del_bg": "#5A4060",
-            "intra_add_bg": "#2F6259",
-        },
-        "colors": {
-            "banner_border": "#2A6FB9",
-            "banner_title": "#A9DFFF",
-            "banner_accent": "#5DB8F5",
-            "banner_dim": "#153C73",
-            "banner_text": "#EAF7FF",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#5DB8F5",
-            "ui_label": "#A9DFFF",
-            "ui_ok": "#4caf50",
-            "ui_error": "#ef5350",
-            "ui_warn": "#ffa726",
-            "prompt": "#EAF7FF",
-            "input_rule": "#2A6FB9",
-            "response_border": "#5DB8F5",
-            "session_label": "#A9DFFF",
-            "session_border": "#496884",
-            "rule_start": "#1a4a7a",
-            "rule_end": "#0d2540",
-        },
-        "spinner": {
-            "style": "bounce",
-            "waiting_faces": ["(≈)", "(Ψ)", "(∿)", "(◌)", "(◠)"],
-            "thinking_faces": ["(Ψ)", "(∿)", "(≈)", "(⌁)", "(◌)"],
-            "thinking_verbs": [
-                "charting currents", "sounding the depth", "reading foam lines",
-                "steering the trident", "tracking undertow", "plotting sea lanes",
-                "calling the swell", "measuring pressure",
-            ],
-            "wings": [
-                ["⟪≈", "≈⟫"],
-                ["⟪Ψ", "Ψ⟫"],
-                ["⟪∿", "∿⟫"],
-                ["⟪◌", "◌⟫"],
-            ],
-        },
-        "branding": {
-            "agent_name": "Poseidon Agent",
-            "welcome": "Welcome to Poseidon Agent! Type your message or /help for commands.",
-            "goodbye": "Fair winds! Ψ",
-            "response_label": " Ψ Poseidon ",
-            "prompt_symbol": "Ψ ❯ ",
-            "help_header": "(Ψ) Available Commands",
-        },
-        "tool_prefix": "│",
-        "banner_logo": """[bold #B8E8FF]██████╗  ██████╗ ███████╗███████╗██╗██████╗  ██████╗ ███╗   ██╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #97D6FF]██╔══██╗██╔═══██╗██╔════╝██╔════╝██║██╔══██╗██╔═══██╗████╗  ██║      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#75C1F6]██████╔╝██║   ██║███████╗█████╗  ██║██║  ██║██║   ██║██╔██╗ ██║█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#4FA2E0]██╔═══╝ ██║   ██║╚════██║██╔══╝  ██║██║  ██║██║   ██║██║╚██╗██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#2E7CC7]██║     ╚██████╔╝███████║███████╗██║██████╔╝╚██████╔╝██║ ╚████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#1B4F95]╚═╝      ╚═════╝ ╚══════╝╚══════╝╚═╝╚═════╝  ╚═════╝ ╚═╝  ╚═══╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]""",
-        "banner_hero": """[#2A6FB9]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#5DB8F5]⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#5DB8F5]⠀⠀⠀⠀⠀⠀⠀⢠⣿⠏⠀Ψ⠀⠹⣿⡄⠀⠀⠀⠀⠀⠀⠀[/]
-[#A9DFFF]⠀⠀⠀⠀⠀⠀⠀⣿⡟⠀⠀⠀⠀⠀⢻⣿⠀⠀⠀⠀⠀⠀⠀[/]
-[#A9DFFF]⠀⠀⠀≈≈≈≈≈⣿⡇⠀⠀⠀⠀⠀⢸⣿≈≈≈≈≈⠀⠀⠀[/]
-[#5DB8F5]⠀⠀⠀⠀⠀⠀⠀⣿⡇⠀⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⠀[/]
-[#2A6FB9]⠀⠀⠀⠀⠀⠀⠀⢿⣧⠀⠀⠀⠀⠀⣼⡿⠀⠀⠀⠀⠀⠀⠀[/]
-[#2A6FB9]⠀⠀⠀⠀⠀⠀⠀⠘⢿⣷⣄⣀⣠⣾⡿⠃⠀⠀⠀⠀⠀⠀⠀[/]
-[#153C73]⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣿⣿⡿⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#153C73]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#5DB8F5]⠀⠀⠀⠀⠀≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈⠀⠀⠀⠀⠀[/]
-[#A9DFFF]⠀⠀⠀⠀⠀⠀≈≈≈≈≈≈≈≈≈≈≈≈≈⠀⠀⠀⠀⠀⠀[/]
-[dim #153C73]⠀⠀⠀⠀⠀⠀⠀deep waters hold⠀⠀⠀⠀⠀⠀⠀[/]""",
-    },
-    "sisyphus": {
-        "name": "sisyphus",
-        "description": "Sisyphean theme — austere grayscale with persistence",
-        "syntax_scheme": "hermes",
-        "diff": {
-            "deletion_bg": "#3E3E3E",
-            "addition_bg": "#303030",
-            "intra_del_bg": "#555555",
-            "intra_add_bg": "#464646",
-            "deletion_marker_fg": "#D6D6D6",
-            "addition_marker_fg": "#F5F5F5",
-        },
-        "colors": {
-            "banner_border": "#B7B7B7",
-            "banner_title": "#F5F5F5",
-            "banner_accent": "#E7E7E7",
-            "banner_dim": "#4A4A4A",
-            "banner_text": "#D3D3D3",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#E7E7E7",
-            "ui_label": "#D3D3D3",
-            "ui_ok": "#919191",
-            "ui_error": "#E7E7E7",
-            "ui_warn": "#B7B7B7",
-            "prompt": "#F5F5F5",
-            "input_rule": "#656565",
-            "response_border": "#B7B7B7",
-            "session_label": "#919191",
-            "session_border": "#656565",
-            "rule_start": "#4A4A4A",
-            "rule_end": "#222222",
-        },
-        "spinner": {
-            "style": "grow",
-            "waiting_faces": ["(◉)", "(◌)", "(◬)", "(⬤)", "(::)"],
-            "thinking_faces": ["(◉)", "(◬)", "(◌)", "(○)", "(●)"],
-            "thinking_verbs": [
-                "finding traction", "measuring the grade", "resetting the boulder",
-                "counting the ascent", "testing leverage", "setting the shoulder",
-                "pushing uphill", "enduring the loop",
-            ],
-            "wings": [
-                ["⟪◉", "◉⟫"],
-                ["⟪◬", "◬⟫"],
-                ["⟪◌", "◌⟫"],
-                ["⟪⬤", "⬤⟫"],
-            ],
-        },
-        "branding": {
-            "agent_name": "Sisyphus Agent",
-            "welcome": "Welcome to Sisyphus Agent! Type your message or /help for commands.",
-            "goodbye": "The boulder waits. ◉",
-            "response_label": " ◉ Sisyphus ",
-            "prompt_symbol": "◉ ❯ ",
-            "help_header": "(◉) Available Commands",
-        },
-        "tool_prefix": "│",
-        "banner_logo": """[bold #F5F5F5]███████╗██╗███████╗██╗   ██╗██████╗ ██╗  ██╗██╗   ██╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #E7E7E7]██╔════╝██║██╔════╝╚██╗ ██╔╝██╔══██╗██║  ██║██║   ██║██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#D7D7D7]███████╗██║███████╗ ╚████╔╝ ██████╔╝███████║██║   ██║███████╗█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#BFBFBF]╚════██║██║╚════██║  ╚██╔╝  ██╔═══╝ ██╔══██║██║   ██║╚════██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#8F8F8F]███████║██║███████║   ██║   ██║     ██║  ██║╚██████╔╝███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#626262]╚══════╝╚═╝╚══════╝   ╚═╝   ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]""",
-        "banner_hero": """[#B7B7B7]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#D3D3D3]⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#E7E7E7]⠀⠀⠀⠀⠀⠀⣾⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⠀[/]
-[#F5F5F5]⠀⠀⠀⠀⠀⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀[/]
-[#E7E7E7]⠀⠀⠀⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⠀⠀⠀⠀⠀⠀[/]
-[#D3D3D3]⠀⠀⠀⠀⠀⠀⠘⢿⣿⣿⣿⣿⣿⡿⠃⠀⠀⠀⠀⠀⠀⠀[/]
-[#B7B7B7]⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⠿⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#919191]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#656565]⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#656565]⠀⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#4A4A4A]⠀⠀⠀⠀⠀⠀⠀⣰⣿⣿⣿⣿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#4A4A4A]⠀⠀⠀⠀⠀⣀⣴⣿⣿⣿⣿⣿⣿⣦⣀⠀⠀⠀⠀⠀⠀[/]
-[#656565]⠀⠀⠀━━━━━━━━━━━━━━━━━━━━━━━⠀⠀⠀[/]
-[dim #4A4A4A]⠀⠀⠀⠀⠀⠀⠀⠀⠀the boulder⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
-    },
-    "charizard": {
-        "name": "charizard",
-        "description": "Volcanic theme — burnt orange and ember",
-        "syntax_scheme": "monokai",
-        "diff": {
-            "deletion_bg": "#5A2317",
-            "addition_bg": "#2E4A24",
-            "intra_del_bg": "#7A2E1D",
-            "intra_add_bg": "#3F6530",
-        },
-        "colors": {
-            "banner_border": "#C75B1D",
-            "banner_title": "#FFD39A",
-            "banner_accent": "#F29C38",
-            "banner_dim": "#7A3511",
-            "banner_text": "#FFF0D4",
-            "banner_warning": "#FF8C00",
-            "banner_warning_dim": "#CD6500",
-            "banner_key": "#FFD700",
-            "ui_accent": "#F29C38",
-            "ui_label": "#FFD39A",
-            "ui_ok": "#4caf50",
-            "ui_error": "#ef5350",
-            "ui_warn": "#ffa726",
-            "prompt": "#FFF0D4",
-            "input_rule": "#C75B1D",
-            "response_border": "#F29C38",
-            "session_label": "#FFD39A",
-            "session_border": "#6C4724",
-            "rule_start": "#7A3511",
-            "rule_end": "#2A1508",
-        },
-        "spinner": {
-            "waiting_faces": ["(✦)", "(▲)", "(◇)", "(<>)", "(🔥)"],
-            "thinking_faces": ["(✦)", "(▲)", "(◇)", "(⌁)", "(🔥)"],
-            "thinking_verbs": [
-                "banking into the draft", "measuring burn", "reading the updraft",
-                "tracking ember fall", "setting wing angle", "holding the flame core",
-                "plotting a hot landing", "coiling for lift",
-            ],
-            "wings": [
-                ["⟪✦", "✦⟫"],
-                ["⟪▲", "▲⟫"],
-                ["⟪◌", "◌⟫"],
-                ["⟪◇", "◇⟫"],
-            ],
-        },
-        "branding": {
-            "agent_name": "Charizard Agent",
-            "welcome": "Welcome to Charizard Agent! Type your message or /help for commands.",
-            "goodbye": "Flame out! ✦",
-            "response_label": " ✦ Charizard ",
-            "prompt_symbol": "✦ ❯ ",
-            "help_header": "(✦) Available Commands",
-        },
-        "tool_prefix": "│",
-        "banner_logo": """[bold #FFF0D4] ██████╗██╗  ██╗ █████╗ ██████╗ ██╗███████╗ █████╗ ██████╗ ██████╗        █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #FFD39A]██╔════╝██║  ██║██╔══██╗██╔══██╗██║╚══███╔╝██╔══██╗██╔══██╗██╔══██╗      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#F29C38]██║     ███████║███████║██████╔╝██║  ███╔╝ ███████║██████╔╝██║  ██║█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#E2832B]██║     ██╔══██║██╔══██║██╔══██╗██║ ███╔╝  ██╔══██║██╔══██╗██║  ██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#C75B1D]╚██████╗██║  ██║██║  ██║██║  ██║██║███████╗██║  ██║██║  ██║██████╔╝      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#7A3511] ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]""",
-        "banner_hero": """[#FFD39A]⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⠶⠶⠶⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#F29C38]⠀⠀⠀⠀⠀⠀⣴⠟⠁⠀⠀⠀⠀⠈⠻⣦⠀⠀⠀⠀⠀⠀[/]
-[#F29C38]⠀⠀⠀⠀⠀⣼⠏⠀⠀⠀✦⠀⠀⠀⠀⠹⣧⠀⠀⠀⠀⠀[/]
-[#E2832B]⠀⠀⠀⠀⢰⡟⠀⠀⣀⣤⣤⣤⣀⠀⠀⠀⢻⡆⠀⠀⠀⠀[/]
-[#E2832B]⠀⠀⣠⡾⠛⠁⣠⣾⠟⠉⠀⠉⠻⣷⣄⠀⠈⠛⢷⣄⠀⠀[/]
-[#C75B1D]⠀⣼⠟⠀⢀⣾⠟⠁⠀⠀⠀⠀⠀⠈⠻⣷⡀⠀⠻⣧⠀[/]
-[#C75B1D]⢸⡟⠀⠀⣿⡟⠀⠀⠀🔥⠀⠀⠀⠀⢻⣿⠀⠀⢻⡇[/]
-[#7A3511]⠀⠻⣦⡀⠘⢿⣧⡀⠀⠀⠀⠀⠀⢀⣼⡿⠃⢀⣴⠟⠀[/]
-[#7A3511]⠀⠀⠈⠻⣦⣀⠙⢿⣷⣤⣤⣤⣾⡿⠋⣀⣴⠟⠁⠀⠀[/]
-[#C75B1D]⠀⠀⠀⠀⠈⠙⠛⠶⠤⠭⠭⠤⠶⠛⠋⠁⠀⠀⠀⠀[/]
-[#F29C38]⠀⠀⠀⠀⠀⠀⠀⠀⣰⡿⢿⣆⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#F29C38]⠀⠀⠀⠀⠀⠀⠀⣼⡟⠀⠀⢻⣧⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[dim #7A3511]⠀⠀⠀⠀⠀⠀⠀tail flame lit⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
-    },
-}
-
-
-# =============================================================================
 # Skin loading and management
 # =============================================================================
 
@@ -1097,6 +646,17 @@ _active_skin_name: str = "default"
 def _skins_dir() -> Path:
     """User skins directory."""
     return get_hermes_home() / "skins"
+
+
+def _bundled_skins_dir() -> Path:
+    """Path to the skins/ dir bundled inside the hermes_cli package."""
+    return Path(__file__).parent / "skins"
+
+
+@functools.lru_cache(maxsize=1)
+def _bundled_default_payload() -> "SkinPayload":
+    """Load the bundled default DESIGN.md once; used as the base for legacy YAML."""
+    return load_design_md_payload(_bundled_skins_dir() / "default" / "DESIGN.md")
 
 
 def _load_skin_from_yaml(path: Path) -> Optional[Dict[str, Any]]:
@@ -1123,15 +683,18 @@ def _validate_hex(value: str, key: str, default: str) -> str:
     return default
 
 
-def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
-    """Build a SkinConfig from a raw dict (built-in or loaded from YAML)."""
-    # Start with default values as base for missing keys
-    default = _BUILTIN_SKINS["default"]
-    colors = dict(default.get("colors", {}))
+def _build_skin_config_from_yaml(data: Dict[str, Any]) -> SkinConfig:
+    """Build a SkinConfig from a raw legacy-YAML dict.
+
+    Defaults for missing keys are sourced from the bundled `default/DESIGN.md`
+    (single source of truth, replaces the deleted `_BUILTIN_SKINS["default"]`).
+    """
+    default_payload = _bundled_default_payload()
+    colors = dict(default_payload.colors)
     colors.update(data.get("colors", {}))
-    spinner = dict(default.get("spinner", {}))
+    spinner = dict(default_payload.spinner)
     spinner.update(data.get("spinner", {}))
-    branding = dict(default.get("branding", {}))
+    branding = dict(default_payload.branding)
     branding.update(data.get("branding", {}))
 
     # --- syntax_scheme: validate against known schemes ---
@@ -1186,7 +749,7 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
         colors=colors,
         spinner=spinner,
         branding=branding,
-        tool_prefix=data.get("tool_prefix", default.get("tool_prefix", "┊")),
+        tool_prefix=data.get("tool_prefix", default_payload.tool_prefix or "┊"),
         tool_icons=data.get("tool_icons", data.get("tool_emojis", {})),
         banner_logo=data.get("banner_logo", ""),
         banner_hero=data.get("banner_hero", ""),
@@ -1199,12 +762,15 @@ def _build_skin_config(data: Dict[str, Any]) -> SkinConfig:
     )
 
 
-def _resolve_user_skin_path(name: str) -> Optional[Path]:
-    """Return the on-disk path for a user skin, preferring DESIGN.md.
+def _resolve_skin_path(name: str) -> Optional[Path]:
+    """Resolve a skin name to a DESIGN.md or .yaml file.
 
     Order (DM-B precedence):
-    1. <HERMES_HOME>/skins/<name>/DESIGN.md (if discovery enabled and present)
+    1. <HERMES_HOME>/skins/<name>/DESIGN.md  (gated by _design_md_discovery_enabled)
     2. <HERMES_HOME>/skins/<name>.yaml
+    3. <hermes_cli/skins>/<name>/DESIGN.md   (bundled — NOT gated; bundled skins
+       are unconditional since they replace the in-memory _BUILTIN_SKINS dict)
+    Returns None only when the name is not known anywhere.
     """
     skins_path = _skins_dir()
     if _design_md_discovery_enabled():
@@ -1214,7 +780,16 @@ def _resolve_user_skin_path(name: str) -> Optional[Path]:
     yaml_path = skins_path / f"{name}.yaml"
     if yaml_path.is_file():
         return yaml_path
+    bundled_dm = _bundled_skins_dir() / name / "DESIGN.md"
+    if bundled_dm.is_file():
+        return bundled_dm
     return None
+
+
+# Back-compat alias for out-of-tree consumers (plugins, in-flight branches that
+# imported the private symbol). All in-tree callers use the new name. Remove
+# in a follow-up cleanup PR after a deprecation cycle.
+_resolve_user_skin_path = _resolve_skin_path
 
 
 def _emit_yaml_deprecation_warning(path: Path, name: str, *, source_kind: str) -> None:
@@ -1232,26 +807,51 @@ def _emit_yaml_deprecation_warning(path: Path, name: str, *, source_kind: str) -
 
 
 def list_skins() -> List[Dict[str, str]]:
-    """List all available skins (built-in + user-installed).
+    """List all available skins (bundled + user-installed).
 
     Returns list of {"name": ..., "description": ..., "source": "builtin"|"user"}.
-    Includes user DESIGN.md directories when discovery is enabled.
+    Order: bundled skins first (sorted by name), then user-only skins (sorted by name).
+    A user-installed override of a bundled name keeps the bundled position but is
+    reported with source="user" (user-wins de-dup).
     """
-    result = []
-    for name, data in _BUILTIN_SKINS.items():
-        result.append({
-            "name": name,
-            "description": data.get("description", ""),
-            "source": "builtin",
-        })
+    result: List[Dict[str, str]] = []
+    seen: set = set()
 
+    # 1) Bundled DESIGN.md skins (sorted by name).
+    bundled = _bundled_skins_dir()
+    if bundled.is_dir():
+        for sub in sorted(bundled.iterdir()):
+            if not sub.is_dir():
+                continue
+            dm = sub / "DESIGN.md"
+            if not dm.is_file():
+                continue
+            try:
+                payload = load_design_md_payload(dm)
+            except SkinError as exc:
+                logger.warning("skin: failed to read bundled %s: %s", dm, exc)
+                continue
+            seen.add(payload.name)
+            # Check if user has overridden this bundled name.
+            user_path = _skins_dir() / payload.name / "DESIGN.md"
+            user_yaml = _skins_dir() / f"{payload.name}.yaml"
+            source = "user" if (
+                (_design_md_discovery_enabled() and user_path.is_file())
+                or user_yaml.is_file()
+            ) else "builtin"
+            result.append({
+                "name": payload.name,
+                "description": payload.description,
+                "source": source,
+            })
+
+    # 2) User-only skins under HERMES_HOME (not shadowing a bundled name).
     skins_path = _skins_dir()
     if not skins_path.is_dir():
         return result
 
-    seen: set = {s["name"] for s in result}
+    user_only: List[Dict[str, str]] = []
 
-    # 1) DESIGN.md directories (preferred, when discovery enabled)
     if _design_md_discovery_enabled():
         for sub in sorted(skins_path.iterdir()):
             if not sub.is_dir():
@@ -1267,13 +867,12 @@ def list_skins() -> List[Dict[str, str]]:
             if payload.name in seen:
                 continue
             seen.add(payload.name)
-            result.append({
+            user_only.append({
                 "name": payload.name,
                 "description": payload.description,
                 "source": "user",
             })
 
-    # 2) Legacy YAML user skins
     for f in sorted(skins_path.glob("*.yaml")):
         data = _load_skin_from_yaml(f)
         if not data:
@@ -1282,12 +881,13 @@ def list_skins() -> List[Dict[str, str]]:
         if skin_name in seen:
             continue
         seen.add(skin_name)
-        result.append({
+        user_only.append({
             "name": skin_name,
             "description": data.get("description", ""),
             "source": "user",
         })
 
+    result.extend(user_only)
     return result
 
 
@@ -1297,28 +897,29 @@ def load_skin(name: str) -> SkinConfig:
     Resolution order:
     1. <HERMES_HOME>/skins/<name>/DESIGN.md  (if discovery enabled)
     2. <HERMES_HOME>/skins/<name>.yaml       (emits DeprecationWarning post-Phase-4)
-    3. Built-in dict from _BUILTIN_SKINS
-    4. Built-in default
+    3. <hermes_cli/skins>/<name>/DESIGN.md   (bundled — replaces _BUILTIN_SKINS)
+    4. Bundled `default/DESIGN.md`           (last-resort fallback)
 
-    Malformed DESIGN.md raises and does **not** silently fall through to YAML
+    Malformed DESIGN.md raises SkinError and does **not** silently fall through
     (DM-B precedence rule).
     """
-    user_path = _resolve_user_skin_path(name)
-    if user_path is not None:
-        if user_path.name == "DESIGN.md":
-            payload = load_design_md_payload(user_path)
-            return skin_config_from_payload(payload)
-        # Legacy YAML path
-        _emit_yaml_deprecation_warning(user_path, name, source_kind="user")
-        data = _load_skin_from_yaml(user_path)
-        if data:
-            return _build_skin_config(data)
+    path = _resolve_skin_path(name)
+    if path is None:
+        logger.warning("Skin '%s' not found, falling back to bundled default", name)
+        path = _bundled_skins_dir() / "default" / "DESIGN.md"
 
-    if name in _BUILTIN_SKINS:
-        return _build_skin_config(_BUILTIN_SKINS[name])
+    if path.name == "DESIGN.md":
+        payload = load_design_md_payload(path)
+        return skin_config_from_payload(payload)
 
-    logger.warning("Skin '%s' not found, using default", name)
-    return _build_skin_config(_BUILTIN_SKINS["default"])
+    # Legacy YAML path
+    _emit_yaml_deprecation_warning(path, name, source_kind="user")
+    data = _load_skin_from_yaml(path)
+    if not data:
+        # YAML parse failure → fall through to bundled default
+        fallback = _bundled_skins_dir() / "default" / "DESIGN.md"
+        return skin_config_from_payload(load_design_md_payload(fallback))
+    return _build_skin_config_from_yaml(data)
 
 
 def get_active_skin() -> SkinConfig:
@@ -1416,7 +1017,14 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
 
     accent = skin.get_color("ui_accent", title)
     ok = skin.get_color("ui_ok", "#8FBC8F")
-    sb_bg = skin.get_color("statusbar_bg", "#1a1a2e")
+    # Accept both naming conventions; skin_engine historically used "statusbar_bg"
+    # but skins and tests use "status_bar_bg".
+    _sb_bg_raw = skin.get_color("status_bar_bg") or skin.get_color("statusbar_bg")
+    sb_bg = _sb_bg_raw or "#1a1a2e"
+    sb_text = skin.get_color("status_bar_text") or text
+    sb_strong = skin.get_color("status_bar_strong") or accent
+    sb_critical = skin.get_color("status_bar_critical") or error
+    vs_bg = skin.get_color("voice_status_bg") or sb_bg
 
     return {
         "input-area": prompt,
@@ -1426,13 +1034,15 @@ def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
         "hint": f"{dim} italic",
         "input-rule": input_rule,
         "image-badge": f"{label} bold",
-        "status-bar": f"bg:{sb_bg} {text}",
-        "status-bar-strong": f"bg:{sb_bg} {accent} bold",
+        "status-bar": f"bg:{sb_bg} {sb_text}",
+        "status-bar-strong": f"bg:{sb_bg} {sb_strong} bold",
         "status-bar-dim": f"bg:{sb_bg} {dim}",
         "status-bar-good": f"bg:{sb_bg} {ok} bold",
         "status-bar-warn": f"bg:{sb_bg} {warn} bold",
         "status-bar-bad": f"bg:{sb_bg} {warn} bold",
-        "status-bar-critical": f"bg:{sb_bg} {error} bold",
+        "status-bar-critical": f"bg:{sb_bg} {sb_critical} bold",
+        "voice-status": f"bg:{vs_bg} {label}",
+        "voice-status-recording": f"bg:{vs_bg} {error} bold",
         "completion-menu": f"bg:#1a1a2e {text}",
         "completion-menu.completion": f"bg:#1a1a2e {text}",
         "completion-menu.completion.current": f"bg:#333355 {title}",
@@ -1495,7 +1105,10 @@ _YAML_DEPRECATED_SINCE: str = "0.8.0"
 # alongside the skill/skin-reference doc updates). DM-K2 gate item.
 _AUTHORING_DOCS_PRIMARY_DESIGN_MD: bool = True
 
-BUNDLED_SKIN_NAMES: Tuple[str, ...] = ("matrix", "catppuccin", "solarized-dark", "tokyo-night")
+BUNDLED_SKIN_NAMES: Tuple[str, ...] = (
+    "default", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
+    "matrix", "catppuccin", "solarized-dark", "tokyo-night",
+)
 
 
 def _design_md_discovery_enabled() -> bool:
@@ -1890,7 +1503,8 @@ def _yaml_removal_unblocked(current_version: str, *, repo_root: Optional[Path] =
         reasons.append("packaging.version unavailable; cannot verify release marker")
 
     # 2) Bundled DESIGN.md complete.
-    missing = [n for n in BUNDLED_SKIN_NAMES if not (repo / "skins" / n / "DESIGN.md").exists()]
+    bundled = _bundled_skins_dir()
+    missing = [n for n in BUNDLED_SKIN_NAMES if not (bundled / n / "DESIGN.md").is_file()]
     if missing:
         reasons.append(f"bundled DESIGN.md missing for: {missing}")
 

@@ -331,25 +331,25 @@ def test_skills_hub_col_accent_reflects_skin():
 # ---------------------------------------------------------------------------
 
 def test_unknown_syntax_scheme_falls_back_to_hermes():
-    from hermes_cli.skin_engine import _build_skin_config
+    from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config
     skin = _build_skin_config({"name": "t", "syntax_scheme": "nonexistent"})
     assert skin.syntax_scheme == "hermes"
 
 
 def test_invalid_hex_in_diff_falls_back_to_default():
-    from hermes_cli.skin_engine import _build_skin_config, _DIFF_DEFAULTS
+    from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config, _DIFF_DEFAULTS
     skin = _build_skin_config({"name": "t", "diff": {"deletion_bg": "notahex"}})
     assert skin.diff["deletion_bg"] == _DIFF_DEFAULTS["deletion_bg"]
 
 
 def test_menu_cursor_string_splits_on_load():
-    from hermes_cli.skin_engine import _build_skin_config
+    from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config
     skin = _build_skin_config({"name": "t", "ui_ext": {"menu_cursor": "fg_blue bold"}})
     assert skin.ui_ext["menu_cursor"] == ["fg_blue", "bold"]
 
 
 def test_get_syntax_styles_merges_overrides():
-    from hermes_cli.skin_engine import _build_skin_config
+    from hermes_cli.skin_engine import _build_skin_config_from_yaml as _build_skin_config
     skin = _build_skin_config({
         "name": "t",
         "syntax_scheme": "monokai",
@@ -369,7 +369,8 @@ def test_callback_fires_on_skin_switch():
 
 
 def test_all_builtin_skins_have_syntax_scheme():
-    from hermes_cli.skin_engine import _BUILTIN_SKINS, SYNTAX_SCHEMES
-    for name, data in _BUILTIN_SKINS.items():
-        scheme = data.get("syntax_scheme", "hermes")
+    from hermes_cli.skin_engine import BUNDLED_SKIN_NAMES, load_skin, SYNTAX_SCHEMES
+    for name in BUNDLED_SKIN_NAMES:
+        skin = load_skin(name)
+        scheme = skin.syntax_scheme or "hermes"
         assert scheme in SYNTAX_SCHEMES, f"{name}: syntax_scheme {scheme!r} not in SYNTAX_SCHEMES"

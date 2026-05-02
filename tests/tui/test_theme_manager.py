@@ -216,7 +216,7 @@ class TestThemeManagerLoad:
             "hermes_cli.skin_engine.set_active_skin",
             return_value=MagicMock(component_vars={"cursor-color": "#111111"}),
         ) as mock_set_active_skin, patch(
-            "hermes_cli.skin_engine._resolve_user_skin_path",
+            "hermes_cli.skin_engine._resolve_skin_path",
             return_value=skin_path,
         ):
             assert tm.load_skin("aurora") is True
@@ -377,15 +377,11 @@ def test_pane_component_vars_in_defaults() -> None:
 
 
 def test_matrix_skin_has_pane_vars(tmp_path: Path) -> None:
-    """skins/matrix.yaml must contain all 4 pane-* component_vars."""
-    import yaml
-    skins_dir = Path(__file__).parent.parent.parent / "skins"
-    matrix_path = skins_dir / "matrix.yaml"
-    assert matrix_path.exists(), f"matrix.yaml not found at {matrix_path}"
-    data = yaml.safe_load(matrix_path.read_text())
-    comp = data.get("component_vars", {})
+    """hermes_cli/skins/matrix/DESIGN.md must expose all 4 pane-* component_vars."""
+    from hermes_cli.skin_engine import load_skin
+    skin = load_skin("matrix")
     for key in _PANE_VARS:
-        assert key in comp, f"'{key}' missing from matrix.yaml component_vars"
+        assert key in skin.component_vars, f"'{key}' missing from matrix skin component_vars"
 
 
 def test_pane_vars_declared_in_tcss() -> None:

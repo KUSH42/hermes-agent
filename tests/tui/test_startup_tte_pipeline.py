@@ -133,11 +133,12 @@ def test_fit_hero_line_crops_wide_chars_to_cell_budget():
 def test_placeholder_marker_not_in_bundled_heroes():
     cli_module = _load_cli_module()
     from hermes_cli.banner import HERMES_CADUCEUS
-    from hermes_cli.skin_engine import _BUILTIN_SKINS
+    from hermes_cli.skin_engine import BUNDLED_SKIN_NAMES, load_skin
 
     assert cli_module._STARTUP_BANNER_PLACEHOLDER_MARKER not in HERMES_CADUCEUS
-    for skin in _BUILTIN_SKINS.values():
-        hero = skin.get("banner_hero", "")
+    for name in BUNDLED_SKIN_NAMES:
+        skin = load_skin(name)
+        hero = skin.banner_hero or ""
         assert cli_module._STARTUP_BANNER_PLACEHOLDER_MARKER not in hero
 
 

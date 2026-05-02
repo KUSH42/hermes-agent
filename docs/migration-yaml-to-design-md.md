@@ -7,7 +7,7 @@ to the canonical DESIGN.md per-skin directory layout.
 
 | Skin source | Canonical location | Legacy location |
 |---|---|---|
-| Bundled | `skins/<name>/DESIGN.md` | `skins/<name>.yaml` |
+| Bundled | `hermes_cli/skins/<name>/DESIGN.md` | `skins/<name>.yaml` |
 | User    | `<HERMES_HOME>/skins/<name>/DESIGN.md` | `<HERMES_HOME>/skins/<name>.yaml` |
 
 ## Schema
@@ -54,7 +54,7 @@ resolved against `colors.*`. Cycles and unresolved refs raise `SkinError`.
 ## DM-J export artifacts
 
 CI runs `npx -y @google/design.md lint` and `... export --format dtcg` for
-every bundled skin. Lint findings live in `skins/<name>/lint-report.md` with
+every bundled skin. Lint findings live in `hermes_cli/skins/<name>/lint-report.md` with
 a `warning_baseline` integer in the front matter (regression gate).
-DTCG output lands at `skins/<name>/tokens.dtcg.json` and is **never** read
+DTCG output lands at `hermes_cli/skins/<name>/tokens.dtcg.json` and is **never** read
 by the Hermes runtime.

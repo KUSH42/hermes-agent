@@ -168,7 +168,9 @@ class TestDesignMdLoader:
         # The legacy wrapper must produce the same css_vars/component_vars
         # as the historical skin_loader.load_skin_full for an existing YAML.
         from hermes_cli.tui.skin_loader import load_skin_full
-        path = REPO_ROOT / "skins" / "catppuccin.yaml"
+        path = REPO_ROOT / "hermes_cli" / "skins" / "catppuccin.yaml"
+        if not path.exists():
+            pytest.skip("legacy YAML removed — DESIGN.md is the canonical source")
         css_vars, component_vars = load_skin_full(path)
         payload = load_legacy_skin_payload(path)
         assert payload.css_vars == css_vars
@@ -267,9 +269,9 @@ class TestDesignMdDiscoveryFlag:
 
 
 class TestCatppuccinDesignMd:
-    PATH = REPO_ROOT / "skins" / "catppuccin" / "DESIGN.md"
-    LINT = REPO_ROOT / "skins" / "catppuccin" / "lint-report.md"
-    YAML = REPO_ROOT / "skins" / "catppuccin.yaml"
+    PATH = REPO_ROOT / "hermes_cli" / "skins" / "catppuccin" / "DESIGN.md"
+    LINT = REPO_ROOT / "hermes_cli" / "skins" / "catppuccin" / "lint-report.md"
+    YAML = REPO_ROOT / "hermes_cli" / "skins" / "catppuccin.yaml"
 
     def test_design_md_file_exists(self):
         assert self.PATH.exists(), f"missing {self.PATH}"
@@ -283,6 +285,8 @@ class TestCatppuccinDesignMd:
         assert payload.syntax_scheme == "catppuccin"
 
     def test_design_md_payload_matches_yaml_runtime_surfaces(self):
+        if not self.YAML.exists():
+            pytest.skip("legacy YAML removed — DESIGN.md is the canonical source")
         # css_vars + component_vars must be byte-equivalent to the legacy YAML
         # (parent DM-G test_design_md_and_yaml_payloads_equivalent_except_scheme,
         # narrowed to catppuccin for Phase 2).
@@ -304,24 +308,27 @@ class TestCatppuccinDesignMd:
 class TestBundledDesignMdSkins:
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_all_four_requested_skins_have_design_md(self, name):
-        path = REPO_ROOT / "skins" / name / "DESIGN.md"
+        path = REPO_ROOT / "hermes_cli" / "skins" / name / "DESIGN.md"
         assert path.exists(), f"missing {path}"
 
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_all_bundled_design_md_have_lint_reports(self, name):
-        path = REPO_ROOT / "skins" / name / "lint-report.md"
+        path = REPO_ROOT / "hermes_cli" / "skins" / name / "lint-report.md"
         assert path.exists(), f"missing {path}"
 
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_all_bundled_design_md_schemes_are_known(self, name):
         from hermes_cli.skin_engine import SYNTAX_SCHEMES
-        payload = load_design_md_payload(REPO_ROOT / "skins" / name / "DESIGN.md")
+        payload = load_design_md_payload(REPO_ROOT / "hermes_cli" / "skins" / name / "DESIGN.md")
         assert payload.syntax_scheme in SYNTAX_SCHEMES
 
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_design_md_and_yaml_payloads_equivalent(self, name):
-        dp = load_design_md_payload(REPO_ROOT / "skins" / name / "DESIGN.md")
-        yp = load_legacy_skin_payload(REPO_ROOT / "skins" / f"{name}.yaml")
+        yaml_path = REPO_ROOT / "hermes_cli" / "skins" / f"{name}.yaml"
+        if not yaml_path.exists():
+            pytest.skip(f"legacy YAML removed for {name} — DESIGN.md is canonical")
+        dp = load_design_md_payload(REPO_ROOT / "hermes_cli" / "skins" / name / "DESIGN.md")
+        yp = load_legacy_skin_payload(yaml_path)
         assert dp.css_vars == yp.css_vars, name
         assert dp.component_vars == yp.component_vars, name
         assert dp.colors == yp.colors, name
@@ -382,10 +389,10 @@ def _user_skin_design_md(home: Path, name: str, *, body: str | None = None) -> P
 
 class TestDesignMdLocationDmB:
     def test_user_design_md_path_wins_over_yaml(self, hermes_home):
-        from hermes_cli.skin_engine import _resolve_user_skin_path
+        from hermes_cli.skin_engine import _resolve_skin_path
         _user_skin_yaml(hermes_home, "demo")
         dm = _user_skin_design_md(hermes_home, "demo")
-        resolved = _resolve_user_skin_path("demo")
+        resolved = _resolve_skin_path("demo")
         assert resolved == dm
 
     def test_invalid_design_md_blocks_adjacent_yaml_fallback(self, hermes_home):
@@ -558,7 +565,7 @@ class TestDmF1TcssGenerator:
 class TestDmF2Scanner:
     def test_scan_skin_keys_reads_design_md_component_vars(self):
         from hermes_cli.tui.build_skin_vars import scan_skin_keys
-        keys = scan_skin_keys(REPO_ROOT / "skins" / "catppuccin" / "DESIGN.md")
+        keys = scan_skin_keys(REPO_ROOT / "hermes_cli" / "skins" / "catppuccin" / "DESIGN.md")
         assert "app-bg" in keys
         assert "syntax-scheme" in keys
 
@@ -683,19 +690,19 @@ class TestDmJ2DtcgExport:
 class TestDmJ3LintReport:
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_lint_report_required_for_each_bundled_design_md(self, name):
-        path = REPO_ROOT / "skins" / name / "lint-report.md"
+        path = REPO_ROOT / "hermes_cli" / "skins" / name / "lint-report.md"
         assert path.exists()
 
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_lint_report_contains_command_and_warning_rows(self, name):
-        text = (REPO_ROOT / "skins" / name / "lint-report.md").read_text()
+        text = (REPO_ROOT / "hermes_cli" / "skins" / name / "lint-report.md").read_text()
         assert "npx" in text and "@google/design.md" in text
         assert "Warning" in text or "warning" in text
 
     @pytest.mark.parametrize("name", list(BUNDLED_SKIN_NAMES))
     def test_lint_report_front_matter_has_warning_baseline(self, name):
         import yaml
-        text = (REPO_ROOT / "skins" / name / "lint-report.md").read_text()
+        text = (REPO_ROOT / "hermes_cli" / "skins" / name / "lint-report.md").read_text()
         m = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
         assert m, f"{name}: missing front matter in lint-report.md"
         data = yaml.safe_load(m.group(1)) or {}
@@ -728,13 +735,16 @@ class TestDmK2RemovalGate:
         # Run 5 cases mirroring DM-K2's 5 gates.
         from hermes_cli import skin_engine as se
 
-        # Build a fake repo root with all gates satisfied first
+        # Build a fake bundled skins dir with all gates satisfied first
+        bundled = tmp_path / "hermes_cli" / "skins"
+        bundled.mkdir(parents=True)
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "migration-yaml-to-design-md.md").write_text("x", encoding="utf-8")
-        (tmp_path / "skins").mkdir()
         for n in se.BUNDLED_SKIN_NAMES:
-            (tmp_path / "skins" / n).mkdir()
-            (tmp_path / "skins" / n / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+            (bundled / n).mkdir()
+            (bundled / n / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+
+        monkeypatch.setattr(se, "_bundled_skins_dir", lambda: bundled)
 
         # Cases:
         # 1) version equals → fails (already covered above; assert here too)
@@ -742,10 +752,10 @@ class TestDmK2RemovalGate:
         assert ok is False and any("strict" in r for r in reasons)
 
         # 2) missing bundled DESIGN.md
-        (tmp_path / "skins" / "matrix" / "DESIGN.md").unlink()
+        (bundled / "matrix" / "DESIGN.md").unlink()
         ok, reasons = se._yaml_removal_unblocked("0.99.0", repo_root=tmp_path)
         assert ok is False and any("matrix" in r for r in reasons)
-        (tmp_path / "skins" / "matrix" / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
+        (bundled / "matrix" / "DESIGN.md").write_text("---\nname: x\n---\n", encoding="utf-8")
 
         # 3) discovery default off
         monkeypatch.setattr(se, "_DESIGN_MD_DISCOVERY_DEFAULT", False)
@@ -778,7 +788,7 @@ class TestDmK3RemovalScope:
         from hermes_cli import skin_engine as se
         if not se._DESIGN_MD_REMOVAL_ACTIVE:
             pytest.skip("removal mode not active in current branch")
-        leftover = list((REPO_ROOT / "skins").glob("*.yaml"))
+        leftover = list((REPO_ROOT / "hermes_cli" / "skins").glob("*.yaml"))
         assert leftover == [], f"expected no flat YAML files, got {leftover}"
 
     def test_pyyaml_dependency_not_removed_by_skin_spec(self):
@@ -788,4 +798,7 @@ class TestDmK3RemovalScope:
 
 
 def test_bundled_skin_names_constant():
-    assert set(BUNDLED_SKIN_NAMES) == {"matrix", "catppuccin", "solarized-dark", "tokyo-night"}
+    assert set(BUNDLED_SKIN_NAMES) == {
+        "default", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
+        "matrix", "catppuccin", "solarized-dark", "tokyo-night",
+    }

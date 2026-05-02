@@ -378,98 +378,6 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
 }
 
 
-def _builtin_skin_to_css(skin: Any) -> "tuple[dict[str, str], dict[str, str]]":
-    """Derive (css_vars, component_vars) from a built-in SkinConfig.
-
-    Built-in skins use hermes-specific color keys (ui_accent, rule_end, …)
-    instead of the standard semantic top-level keys (fg/bg/accent) that
-    file-based skins use.  This translates the old-style dict to the two
-    variable maps so built-in skins produce visible Textual TUI changes.
-    """
-    colors: dict[str, str] = getattr(skin, "colors", {}) or {}
-
-    def _hex(key: str) -> "str | None":
-        v = colors.get(key)
-        return v if isinstance(v, str) and v.startswith("#") else None
-
-    accent  = _hex("ui_accent")
-    title   = _hex("banner_title")
-    bg      = _hex("rule_end")
-    bg_mid  = _hex("rule_start")
-    fg      = _hex("banner_text") or _hex("prompt")
-    error   = _hex("ui_error")
-    warn    = _hex("ui_warn")
-    ok      = _hex("ui_ok")
-    border  = _hex("banner_border")
-    cursor  = _hex("prompt")
-
-    css_vars: dict[str, str] = {}
-    if bg:
-        css_vars.update({"background": bg, "surface": bg, "panel": bg})
-    if fg:
-        css_vars.update({"foreground": fg, "text": fg})
-    if accent:
-        css_vars.update({"primary": accent, "accent": accent})
-    if title:
-        css_vars.update({"primary-darken-2": title, "primary-darken-3": title})
-    if error:
-        css_vars["error"] = error
-    if warn:
-        css_vars["warning"] = warn
-    if ok:
-        css_vars["success"] = ok
-    if border:
-        css_vars["panel-lighten-1"] = border
-
-    cv: dict[str, str] = {}
-
-    def _cv(key: str, val: "str | None") -> None:
-        if val:
-            cv[key] = val
-
-    _cv("app-bg",                bg)
-    _cv("rule-bg-color",         bg)
-    _cv("completion-empty-bg",   bg)
-    _cv("fps-hud-bg",            bg)
-    _cv("pane-divider",          bg)
-
-    _cv("accent-interactive",    accent)
-    _cv("brand-glyph-color",     accent)
-    _cv("rule-accent-color",     accent)
-    _cv("status-running-color",  accent)
-    _cv("user-echo-bullet-color", accent)
-    _cv("chevron-file",          accent)
-    _cv("chevron-stream",        accent)
-    _cv("nameplate-active-color", accent)
-
-    _cv("rule-accent-dim-color", title)
-    _cv("fuzzy-match-color",     title)
-    _cv("chevron-base",          title or fg)
-    _cv("cursor-color",          cursor or fg)
-
-    _cv("rule-dim-color",        bg_mid)
-    _cv("nameplate-idle-color",  bg_mid)
-
-    _cv("status-error-color",    error)
-    _cv("error-critical",        error)
-    _cv("chevron-error",         error)
-
-    _cv("status-warn-color",     warn)
-    _cv("running-indicator-hi-color", warn)
-
-    _cv("chevron-done",  ok)
-    _cv("chevron-shell", ok)
-
-    _cv("panel-border",  border)
-    _cv("pane-border",   border)
-
-    syntax_scheme = getattr(skin, "syntax_scheme", None)
-    if syntax_scheme:
-        cv["syntax-scheme"] = syntax_scheme
-
-    return css_vars, cv
-
-
 class ThemeManager:
     """Centralised theme manager with Component Parts support and hot reload.
 
@@ -625,29 +533,23 @@ class ThemeManager:
         work with skin names instead of only raw paths.
         """
         from hermes_cli.skin_engine import (
-            _resolve_user_skin_path,
+            _resolve_skin_path,
             load_skin_payload,
             set_active_skin,
         )
 
-        skin = set_active_skin(name)
-        user_path = _resolve_user_skin_path(name)
+        set_active_skin(name)
+        skin_path = _resolve_skin_path(name)
 
-        if user_path is not None:
-            payload = load_skin_payload(user_path)
+        if skin_path is not None:
+            payload = load_skin_payload(skin_path)
             updated_component = _defaults_as_strs()
             updated_component.update(payload.component_vars)
             self._css_vars = dict(payload.css_vars)
             self._component_vars = updated_component
-            self._source_path = user_path
-            self._source_mtime = user_path.stat().st_mtime
+            self._source_path = skin_path
+            self._source_mtime = skin_path.stat().st_mtime
         else:
-            css_vars, derived_cv = _builtin_skin_to_css(skin)
-            updated_component = _defaults_as_strs()
-            updated_component.update(derived_cv)
-            updated_component.update(getattr(skin, "component_vars", {}) or {})
-            self._css_vars = css_vars
-            self._component_vars = updated_component
             self._source_path = None
             self._source_mtime = 0.0
 

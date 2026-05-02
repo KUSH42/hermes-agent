@@ -1107,11 +1107,11 @@ def test_show_propagates_vertical_to_anim_params():
     assert ov._anim_params.vertical is True
 
 
-def test_overlay_config_defaults_position_top_right():
-    """_overlay_config() defaults position to 'top-right'."""
+def test_overlay_config_defaults_position_bottom_right():
+    """_overlay_config() defaults position to 'bottom-right' (AP-4)."""
     with patch("hermes_cli.config.read_raw_config", return_value={}):
         cfg = _overlay_config()
-    assert cfg.position == "top-right"
+    assert cfg.position == "bottom-right"
 
 
 def test_overlay_config_defaults_vertical_true():

@@ -120,12 +120,13 @@ class ThemeService(AppService):
             logger.debug("_refresh_branding: get_active_skin failed", exc_info=True)
             return
 
-        # 1. Nameplate agent name
+        # 1. Nameplate agent name + skin colors
         try:
             from hermes_cli.tui.widgets import AssistantNameplate
             np = app.query_one(AssistantNameplate)
             new_name = skin.get_branding("agent_name", "Hermes")
             np.set_name(new_name)
+            np.refresh_skin_colors()
         except NoMatches:
             pass
         except Exception:

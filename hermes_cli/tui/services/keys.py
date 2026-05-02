@@ -9,16 +9,32 @@ from textual.css.query import NoMatches
 from rich.text import Text
 
 from hermes_cli.tui._browse_types import BrowseAnchorType
-from hermes_cli.tui._app_constants import (
-    KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS,
-    KNOWN_SKILLS as _KNOWN_SKILLS,
-)
+from hermes_cli.tui._app_constants import KNOWN_SKILLS as _KNOWN_SKILLS
 from .base import AppService
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 _log = logging.getLogger(__name__)
+
+
+def _is_known_slash_command(text: str) -> bool:
+    """Return True when ``text`` names a registered slash command.
+
+    Submit-time validation must resolve against the live command registry so
+    plugin-registered commands and newly added core commands do not drift from
+    the TUI gate.
+    """
+    cmd = text.split()[0].lower()
+    if cmd == "/loop":
+        return True
+    try:
+        from hermes_cli.commands import resolve_command
+
+        return resolve_command(cmd) is not None
+    except Exception:
+        _log.debug("slash command resolution failed for %s", cmd, exc_info=True)
+        return False
 
 
 class KeyDispatchService(AppService):
@@ -609,7 +625,7 @@ class KeyDispatchService(AppService):
 
         if isinstance(text, str) and text.startswith("/"):
             cmd = text.split()[0].lower()
-            if cmd not in _KNOWN_SLASH_COMMANDS:
+            if not _is_known_slash_command(text):
                 self.app._flash_hint(f"Unknown command: {cmd}  (F1 for help)", 3.0)
                 return
 

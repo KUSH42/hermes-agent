@@ -144,15 +144,17 @@ class TestSlashSkillRejected:
 class TestKnownSlashCleansed:
     """Three tests guarding KNOWN_SLASH_COMMANDS purity and the disjoint assertion."""
 
-    def test_known_slash_remains_pure_builtins(self):
-        """KNOWN_SLASH_COMMANDS equals the 14-element built-in set exactly."""
+    def test_known_slash_matches_registry_snapshot(self):
+        """KNOWN_SLASH_COMMANDS mirrors the non-gateway registry names plus /loop."""
+        from hermes_cli.commands import COMMAND_REGISTRY
         from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS
-        expected = frozenset([
-            "/loop", "/schedule", "/anim", "/yolo", "/verbose",
-            "/model", "/reasoning", "/skin",
-            "/help", "/queue", "/btw", "/clear", "/density",
-            "/layout",
-        ])
+        expected = {"/loop"}
+        for cmd in COMMAND_REGISTRY:
+            if cmd.gateway_only:
+                continue
+            expected.add(f"/{cmd.name}")
+            expected.update(f"/{alias}" for alias in getattr(cmd, "aliases", ()))
+        expected = frozenset(expected)
         assert KNOWN_SLASH_COMMANDS == expected, (
             f"Extra: {KNOWN_SLASH_COMMANDS - expected!r}  "
             f"Missing: {expected - KNOWN_SLASH_COMMANDS!r}"

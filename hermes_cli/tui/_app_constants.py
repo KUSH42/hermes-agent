@@ -1,19 +1,28 @@
 """Shared constants used by app.py and its mixin modules.
 
 Skill names are validated against ``KNOWN_SKILLS``, which holds bare names
-populated at runtime by ``theme.populate_skills``.  Do not add skill names to
-``KNOWN_SLASH_COMMANDS``.
+populated at runtime by ``theme.populate_skills``.  ``KNOWN_SLASH_COMMANDS``
+is a registry-derived snapshot used by tests and slash-command metadata; the
+submit-time unknown-command gate resolves against the live registry.
 """
 from __future__ import annotations
 
 from typing import Iterable
 
-KNOWN_SLASH_COMMANDS: frozenset[str] = frozenset([
-    "/loop", "/schedule", "/anim", "/yolo", "/verbose",
-    "/model", "/reasoning", "/skin",
-    "/help", "/queue", "/btw", "/clear", "/density",
-    "/layout",
-])
+from hermes_cli.commands import COMMAND_REGISTRY
+
+
+def _build_known_slash_commands() -> frozenset[str]:
+    names = {"/loop"}  # Agent-native slash command not present in COMMAND_REGISTRY.
+    for cmd in COMMAND_REGISTRY:
+        if cmd.gateway_only:
+            continue
+        names.add(f"/{cmd.name}")
+        names.update(f"/{alias}" for alias in cmd.aliases)
+    return frozenset(names)
+
+
+KNOWN_SLASH_COMMANDS: frozenset[str] = _build_known_slash_commands()
 
 # Bare-name forms of KNOWN_SLASH_COMMANDS, computed once at import.
 # Used to guard against skill names colliding with built-in commands.

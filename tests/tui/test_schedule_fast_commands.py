@@ -1,7 +1,7 @@
 """Tests for /schedule and /fast slash command handling.
 
-T01  /fast not in KNOWN_SLASH_COMMANDS
-T02  on_hermes_input_submitted drops /fast (unknown command gate)
+T01  /fast is in KNOWN_SLASH_COMMANDS
+T02  on_hermes_input_submitted forwards /fast without unknown-command gate
 T03  bare /schedule flashes usage hint, returns True (not forwarded)
 T04  /schedule <text> flashes confirmation, returns False (forwarded)
 T05  /schedule still in KNOWN_SLASH_COMMANDS
@@ -9,7 +9,7 @@ T06  resolve_command("schedule") returns a CommandDef
 T07  /schedule <text> does NOT flash "Unknown command"
 T08  on_hermes_input_submitted does not put bare /schedule on _pending_input
 T09  extra whitespace /schedule still forwards (returns False)
-T10  resolve_command("fast") returns None
+T10  resolve_command("fast") returns a CommandDef
 T11  schedule CommandDef has cli_only=False
 T12  schedule CommandDef has non-empty args_hint
 """
@@ -34,20 +34,20 @@ def _make_app() -> HermesApp:
 
 
 # ---------------------------------------------------------------------------
-# T01  /fast removed from KNOWN_SLASH_COMMANDS
+# T01  /fast included in KNOWN_SLASH_COMMANDS
 # ---------------------------------------------------------------------------
 
-def test_fast_not_in_known_slash_commands():
-    assert "/fast" not in _app_constants.KNOWN_SLASH_COMMANDS
+def test_fast_in_known_slash_commands():
+    assert "/fast" in _app_constants.KNOWN_SLASH_COMMANDS
 
 
 # ---------------------------------------------------------------------------
-# T02  on_hermes_input_submitted drops /fast — unknown command gate fires
+# T02  on_hermes_input_submitted forwards /fast — no unknown command gate
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_fast_blocked_by_gate():
-    """Submitting /fast must flash 'Unknown command' and NOT put on _pending_input."""
+async def test_fast_forwarded_without_unknown_gate():
+    """Submitting /fast must not flash unknown-command and must reach _pending_input."""
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
@@ -61,11 +61,9 @@ async def test_fast_blocked_by_gate():
             inp.action_submit()
             await pilot.pause()
 
-        # Unknown command flash must have fired
-        assert any("Unknown command" in msg for msg, _ in flash_calls), \
-            f"Expected 'Unknown command' flash; got: {flash_calls}"
-        # Message must NOT have been forwarded to agent via _pending_input.put
-        app.cli._pending_input.put.assert_not_called()
+        assert not any("Unknown command" in msg for msg, _ in flash_calls), \
+            f"Unexpected 'Unknown command' flash: {flash_calls}"
+        app.cli._pending_input.put.assert_called_once_with("/fast")
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +178,12 @@ async def test_schedule_with_extra_whitespace_forwards():
 
 
 # ---------------------------------------------------------------------------
-# T10  resolve_command("fast") returns None
+# T10  resolve_command("fast") returns a CommandDef
 # ---------------------------------------------------------------------------
 
-def test_fast_not_in_registry():
+def test_fast_in_registry():
     from hermes_cli.commands import resolve_command
-    assert resolve_command("fast") is None
+    assert resolve_command("fast") is not None
 
 
 # ---------------------------------------------------------------------------

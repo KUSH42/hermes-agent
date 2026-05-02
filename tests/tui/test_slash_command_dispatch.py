@@ -57,11 +57,12 @@ def test_registry_command_no_unknown_flash():
     """Commands in COMMAND_REGISTRY that aren't TUI-handled must not flash."""
     app = _make_app()
     # /profile, /skin, /config, /voice, /effects, /reload-mcp, /browser, /plugins,
-    # /paste, /insights, /update, /quit are in the registry but have no special
+    # /paste, /insights, /skills, /update, /quit are in the registry but have no special
     # branch in _handle_tui_command — they fall through to CLI.
     # (/verbose, /yolo, /skin, /reasoning are TUI-handled and return True; excluded here)
     for cmd in ("/voice", "/profile", "/config",
                 "/effects", "/reload-mcp", "/browser", "/plugins", "/paste",
+                "/skills",
                 "/insights", "/update", "/quit"):
         result, flashes = _call_handle(app, cmd)
         assert result is False, f"{cmd} should return False (forward to agent)"
@@ -141,13 +142,24 @@ def test_registry_aliases_no_unknown_flash():
 def test_registry_command_with_args_no_flash():
     """/model <name> and /title <text> are in registry with args — no flash."""
     app = _make_app()
-    for cmd in ("/model gpt-4o", "/reasoning high", "/skin nord", "/voice on",
+    for cmd in ("/reasoning high", "/skin nord", "/voice on",
                 "/verbose off", "/yolo on"):
         result, flashes = _call_handle(app, cmd)
         assert result is False, f"{cmd} should return False"
         assert not any("Unknown command" in f for f in flashes), (
             f"{cmd} should NOT flash Unknown command, but got: {flashes}"
         )
+
+
+def test_inline_model_switch_no_unknown_flash():
+    """/model <name> is handled inline and must not trip the unknown-command guard."""
+    app = _make_app()
+    with patch.object(app, "_apply_model_inline"):
+        result, flashes = _call_handle(app, "/model gpt-4o")
+    assert result is True
+    assert not any("Unknown command" in f for f in flashes), (
+        f"/model gpt-4o should NOT flash Unknown command, but got: {flashes}"
+    )
 
 
 # ---------------------------------------------------------------------------

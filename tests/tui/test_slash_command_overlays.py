@@ -615,6 +615,15 @@ async def test_slash_desc_panel_shows_keybind_hint():
         assert panel is not None
 
 
+def test_sessions_binding_is_ctrl_shift_h_only():
+    """Session overlay shortcut should match the discoverability surfaces."""
+    from hermes_cli.tui.app import HermesApp
+
+    bindings = {getattr(b, "key", None): getattr(b, "action", None) for b in HermesApp.BINDINGS}
+    assert bindings.get("ctrl+shift+h") == "open_sessions"
+    assert "S" not in bindings
+
+
 @pytest.mark.asyncio
 async def test_slash_desc_panel_no_keybind_shows_nothing():
     """Test 36: Highlight /usage → no stale keybind line."""
@@ -663,6 +672,32 @@ async def test_help_overlay_refreshes_after_plugin_register():
             # Cleanup: remove test command
             COMMAND_REGISTRY[:] = [c for c in COMMAND_REGISTRY if c.name != "testplugin9999"]
             from hermes_cli.commands import rebuild_lookups
+            rebuild_lookups()
+
+
+@pytest.mark.asyncio
+async def test_plugin_command_submission_not_rejected_as_unknown():
+    """Plugin slash commands must pass the submit-time unknown-command gate."""
+    from hermes_cli.commands import register_plugin_command, CommandDef, COMMAND_REGISTRY
+
+    app = _make_app()
+    async with app.run_test(size=(80, 30)) as pilot:
+        await pilot.pause()
+        test_cmd = CommandDef("testplugin9999", "Test plugin command", "Tools & Skills")
+        register_plugin_command(test_cmd)
+        app.cli._pending_input = MagicMock()
+        try:
+            with patch.object(app, "_flash_hint") as mock_flash:
+                await _submit(pilot, app, "/testplugin9999")
+                await pilot.pause()
+            assert not any(
+                "Unknown command" in str(call.args[0]) for call in mock_flash.call_args_list
+            ), f"Unexpected unknown-command flash: {mock_flash.call_args_list}"
+            app.cli._pending_input.put.assert_called_once_with("/testplugin9999")
+        finally:
+            COMMAND_REGISTRY[:] = [c for c in COMMAND_REGISTRY if c.name != "testplugin9999"]
+            from hermes_cli.commands import rebuild_lookups
+
             rebuild_lookups()
 
 
@@ -717,14 +752,14 @@ async def test_known_cli_command_no_flash_hint():
 
 @pytest.mark.asyncio
 async def test_gateway_only_commands_excluded_from_slash_completion():
-    """Test 41: _show_slash_completions("") does NOT include /approve, /deny, /status."""
+    """Test 41: _show_slash_completions("") excludes gateway-only commands."""
     from hermes_cli.tui.input_widget import HermesInput
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
         inp = app.query_one(HermesInput)
         # After mount, slash_commands should be populated without gateway_only entries
-        gateway_only_names = ["/approve", "/deny", "/status"]
+        gateway_only_names = ["/approve", "/deny", "/commands"]
         for name in gateway_only_names:
             assert name not in inp._slash_commands, \
                 f"{name} (gateway_only) should not be in TUI completion list"

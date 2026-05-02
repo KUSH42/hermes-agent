@@ -137,6 +137,11 @@ Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_b
 - **Branch pre-validation**: run `git show-ref --verify --quiet refs/heads/<branch>` before `git worktree add` for cleaner error without partial state.
 - **2s polling**: `SessionIndex.read()` in event loop is fine at 2s (tiny JSON, ~0.1ms). Move to worker only on slow filesystems.
 
+### Startup banner styling
+
+- `StartupBannerWidget` must paint `background: $app-bg` in its own `DEFAULT_CSS`. Do not rely on inherited/default terminal background for the startup banner host; otherwise the left hero/logo cell can fall back to terminal black even when the app chrome uses a themed `app-bg`.
+- Keep a mounted-style regression for this contract. `tests/tui/test_visual_properties.py::test_startup_banner_background_equals_app_background` checks the widget background against `HermesApp.styles.background`.
+
 ---
 
 ## Subsystem reference
@@ -2154,8 +2159,9 @@ top-level: `theme_manager.py`
 - Prefix-triggered picker (`trigger_source="prefix"`) auto-dismisses when `_SKILL_RE` no longer matches the input value
 - `HermesApp.on_mount()` must call both `_populate_slash_commands()` and `_populate_skills()` when `HermesInput` is enabled; otherwise the banner can list skills while `SkillPickerOverlay` still shows "No skills installed."
 - Unknown `$name` submission in TUI → flash hint "Unknown skill: $name  (Alt+$ for picker)" and return without dispatch
-- `/skills` listing legend is phase-gated: phase<2 → "Invoke with $name (or /name in CLI/gateway mode)"; phase>=2 → "$name to invoke (Alt+$ for picker)"
-- **SNS2 (2026-04-26)**: `display.skill_namespace_phase` config key (default 2); `_deprecated_slash_warned: set[str]` in `cli.py` throttles /skill-name warning to once per session; `show_help()` splits "Slash commands"/"Skills" sections at phase>=2; `extra` param removed from `ThemeService.refresh_slash_commands`; phase=3 stub rejects /skill-name (replaced by SNS3)
+- `/skills` listing legend is phase-gated: phase<2 → "Invoke with $name (legacy sessions also surfaced a slash warning)"; phase>=2 → "$name to invoke (Alt+$ for picker)"
+- **SNS2 (2026-04-26)**: `display.skill_namespace_phase` config key (default 2); `_deprecated_slash_warned: set[str]` in `cli.py` throttles legacy slash-skill warnings to once per session; `show_help()` splits "Slash commands"/"Skills" sections at phase>=2; `extra` param removed from `ThemeService.refresh_slash_commands`; phase=3 stub rejects legacy slash-skill invocation (replaced by SNS3)
+- **Slash registry sync (2026-05-02)**: `KeyDispatchService.dispatch_input_submitted()` resolves slash commands against `hermes_cli.commands.resolve_command()` at submit time instead of relying on a frozen `KNOWN_SLASH_COMMANDS` set; this keeps new core commands and plugin-registered commands aligned with the unknown-command gate. `KNOWN_SLASH_COMMANDS` remains a registry-derived snapshot for tests/metadata, with `/loop` as the only extra TUI-native command.
 - **SNS3 (2026-04-26)**: hard cutover — `_deprecated_slash_warned` state removed from `cli.py`; slash-skill dispatch branch replaced with unconditional rejection `"/{name} no longer invokes skills — use ${name} (Alt+$ for picker)"`; `_sns_phase` flag reads removed from `show_help()` (unconditionally renders `$name to invoke (Alt+$ for picker)`); `_app_constants._KNOWN_SLASH_BARE` frozenset added + disjointness assertion in `refresh_known_skills`; README.md Browse-skills row updated to `$<skill-name>`; Phase-2 forward-compat stub deleted from `test_skill_namespace_phase2.py`
 
 **Gotchas:**
@@ -2952,6 +2958,7 @@ Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWi
 - A synchronous `call_from_thread` stub must execute async callbacks via `asyncio.run(...)`; otherwise `_drain_latest()` never updates the fake widget.
 
 **Static-banner normalization rule:** `_render_startup_banner_text(print_hero=True)` must resolve the startup hero, sanitize it with `_sanitize_startup_hero_text()`, and pass it back through `hero_renderable`. Do not rely on the `build_welcome_banner(..., print_hero=True)` branch for the startup widget path; that branch reintroduces raw `U+2800` indentation and can still produce the collapsed first-column startup banner seen in real Textual/xterm sessions.
+- **Startup banner background rule:** apply `app.get_css_variables()["app-bg"]` to the final captured `Text` in `_render_startup_banner_text()`, not in `build_welcome_banner()`. The TUI startup widget renders ANSI text inside a `Static`; if the captured `Text` lacks a default background span, Rich's panel interior falls back to terminal black instead of the active app background.
 - `HermesInput.app` is read-only in tests; patch `type(widget).app` with `PropertyMock` when `_on_key()` needs access to `self.app.cli`.
 
 ## Changelog — 2026-05-01 — Startup TTE config and diagnostics — config caps + widened teardown DEBUG + once-only missing-TTE INFO — 66-test verification
@@ -3057,7 +3064,7 @@ internal clipping discipline.
 
 **Changes:**
 - `tool_blocks/_header.py`: `_REMEDIATION_BY_CATEGORY` + `_refresh_remediation_hint()` now derive collapsed error recovery copy from `panel._view_state.error_category`; `watch_collapsed()` and the `ToolCallState.ERROR` axis branch both refresh it so pre-collapsed panels repaint correctly.
-- `widgets/status_bar.py`: idle long hint now advertises `S` for sessions; `HintBar` owns `_density_tier` / `_has_ghost_suggestion` plain attrs, watches `status_density_tier` and `status_ghost_suggestion`, and appends the compact `Tab suggest` suffix in `render()` after the cached `_build_hints()` lookup.
+- `widgets/status_bar.py`: idle long hint advertises `Ctrl+Shift+H` for sessions, not plain `S`. Do not surface a bare alpha session shortcut from `HintBar` while the input is focused, because it conflicts with normal typing and easily drifts from the real app binding. `HintBar` owns `_density_tier` / `_has_ghost_suggestion` plain attrs, watches `status_density_tier` and `status_ghost_suggestion`, and appends the compact `Tab suggest` suffix in `render()` after the cached `_build_hints()` lookup.
 - `app.py`: `watch_compact()` now mirrors `DensityTier.COMPACT|DEFAULT` into `status_density_tier` before delegating to `WatchersService`, so HintBar state is current during the same turn.
 - `input/widget.py`: `_resolve_assist()` publishes ghost-suggestion presence to `app.status_ghost_suggestion` from each assist branch; `PICKER` forces `False` explicitly because that branch never writes `self.suggestion`.
 - `overlays/skill_picker.py`: footer copy is now user-facing action language (`Enter run`, `Tab paste`, `? view docs`, `Esc cancel`) via `_build_footer_text()`.

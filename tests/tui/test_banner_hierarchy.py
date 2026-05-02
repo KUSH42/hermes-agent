@@ -238,8 +238,8 @@ class TestBH2WarningTone:
 
 
 class TestBH3DismissBadge:
-    def test_dismiss_badge_on_separate_line(self):
-        """The ⚠ warning line does NOT contain 'dismiss'; the next line does."""
+    def test_no_dismiss_badge_rendered(self):
+        """The update banner no longer renders a dismiss badge line."""
         content = _capture_right_content(behind=2, show_update=True)
         lines = _lines(content)
         warn_idx = next((i for i, ln in enumerate(lines) if "⚠" in ln), None)
@@ -247,26 +247,20 @@ class TestBH3DismissBadge:
         assert "dismiss" not in lines[warn_idx], (
             f"'dismiss' must not be on the ⚠ line: {lines[warn_idx]!r}"
         )
-        # dismiss must appear on the line immediately following
-        assert warn_idx + 1 < len(lines), "No line after warning line"
-        assert "dismiss" in lines[warn_idx + 1], (
-            f"'dismiss' must appear on the line after ⚠: {lines[warn_idx + 1]!r}"
+        later_lines = lines[warn_idx + 1 :]
+        assert all("dismiss" not in line for line in later_lines), (
+            f"'dismiss' should not appear after the ⚠ line, got: {later_lines!r}"
         )
 
-    def test_dismiss_badge_format(self):
-        """Badge row contains bold 'u' with key_color and 'dismiss' with dim style."""
-        key_color = _DEFAULT_COLORS["banner_key"]
-        dim_color = _DEFAULT_COLORS["banner_dim"]
+    def test_update_banner_keeps_install_line_only(self):
+        """The line after the warning is the install/update instruction, not a badge."""
         content = _capture_right_content(behind=1, show_update=True)
         lines = _lines(content)
         warn_idx = next((i for i, ln in enumerate(lines) if "⚠" in ln), None)
         assert warn_idx is not None
-        badge_line = lines[warn_idx + 1]
-        assert key_color in badge_line, (
-            f"key_color {key_color!r} not in badge line: {badge_line!r}"
-        )
-        assert "dismiss" in badge_line, f"'dismiss' not in badge line: {badge_line!r}"
-        assert "dim" in badge_line, f"'dim' style not in badge line: {badge_line!r}"
+        next_line = lines[warn_idx + 1] if warn_idx + 1 < len(lines) else ""
+        assert "pip install --upgrade hermes" in next_line
+        assert "dismiss" not in next_line
 
     def test_install_command_in_badge_row(self):
         """Badge row contains update_cmd styled with text color, flanked by 'run' and 'to install'."""

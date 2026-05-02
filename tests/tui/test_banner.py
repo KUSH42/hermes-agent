@@ -66,11 +66,11 @@ def _read_cli_source() -> str:
 def test_tui_startup_path_has_no_welcome_print() -> None:
     """The TUI startup block no longer contains a welcome console.print call."""
     src = _read_cli_source()
-    # After _ensure_tui_startup_message() the old block started with the try/except
-    # for _welcome_skin and ended with console.print(f"[{_welcome_color}]...").
-    # Check that _welcome_color no longer appears in the TUI startup context.
-    assert "_welcome_color" not in src, (
-        "Found _welcome_color in cli.py — V3 welcome-print removal incomplete"
+    start = src.index("def _ensure_tui_startup_message")
+    end = src.index("def _render_startup_banner_text", start)
+    tui_startup_src = src[start:end]
+    assert "_welcome_color" not in tui_startup_src, (
+        "Found _welcome_color in the TUI startup helper block"
     )
 
 

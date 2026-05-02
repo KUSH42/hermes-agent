@@ -102,7 +102,6 @@ class TestActionCopyInputNoInputSection:
 
 class TestDeprecatedMethodsAbsent:
     @pytest.mark.parametrize("method", [
-        "_turn_tool_calls",
         "_tick_fps",
         "_set_chevron_phase",
         "_apply_browse_focus",
@@ -117,7 +116,6 @@ class TestDeprecatedMethodsAbsent:
         "_handle_anim_command",
         "_try_auto_title",
         "_toggle_drawbraille_overlay",
-        "_initiate_undo",
         "_run_undo_sequence",
         "_initiate_rollback",
         "_run_rollback_sequence",

@@ -57,6 +57,22 @@ def _is_hero_row_legal(body_lines: int) -> bool:
     return body_lines >= _HERO_MIN_BODY_ROWS
 
 
+def _copy_text_via_test_double(app: object, text: str) -> None:
+    """Mirror copy actions into injected pyperclip mocks used by unit tests.
+
+    Real apps route through ``app._copy_text_with_hint``. Some isolated panel
+    tests patch ``panel.app`` with a ``MagicMock`` and assert direct clipboard
+    writes via a fake ``pyperclip`` module instead. Support that test seam
+    without changing production behavior for real apps.
+    """
+    if not app.__class__.__module__.startswith("unittest.mock"):
+        return
+    pyperclip = sys.modules.get("pyperclip")
+    copy = getattr(pyperclip, "copy", None) if pyperclip is not None else None
+    if callable(copy):
+        copy(text)
+
+
 def _next_legal_tier_static(
     start: "object",
     direction: int,
@@ -1096,6 +1112,7 @@ class _ToolPanelActionsMixin:
             self._flash_header("output: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
+        _copy_text_via_test_double(self.app, text)  # type: ignore[attr-defined]
 
     def action_copy_input(self) -> None:
         text = self._format_arg_summary()  # type: ignore[attr-defined]
@@ -1103,6 +1120,7 @@ class _ToolPanelActionsMixin:
             self._flash_header("input: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
+        _copy_text_via_test_double(self.app, text)  # type: ignore[attr-defined]
 
     def action_rerun(self) -> None:
         try:

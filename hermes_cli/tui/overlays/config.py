@@ -307,6 +307,7 @@ class ConfigOverlay(Widget):
     def _refresh_model_tab(self, cli: object) -> None:
         cfg = _cfg_read_raw_config()
         model_section = cfg.get("model", {})
+        configured_models = cfg.get("models", {})
         config_provider = model_section.get("provider", "openrouter") or "openrouter"
         current = (
             model_section.get("default")
@@ -316,7 +317,8 @@ class ConfigOverlay(Widget):
         )
         self._browsed_provider = config_provider
         self._populate_provider_list(config_provider)
-        self._populate_model_list(config_provider, current)
+        configured_model_ids = list(configured_models) if isinstance(configured_models, dict) else []
+        self._populate_model_list(config_provider, current, configured_model_ids)
 
     def _populate_provider_list(self, active_provider: str) -> None:
         try:
@@ -349,13 +351,19 @@ class ConfigOverlay(Widget):
         except NoMatches:
             pass
 
-    def _populate_model_list(self, provider: str, current_model: str) -> None:
-        models: list[str] = []
-        try:
-            from hermes_cli.models import provider_model_ids
-            models = list(provider_model_ids(provider, force_refresh=False))
-        except Exception:
-            _log.debug("_populate_model_list: provider_model_ids(%r) failed", provider, exc_info=True)
+    def _populate_model_list(
+        self,
+        provider: str,
+        current_model: str,
+        configured_models: list[str] | None = None,
+    ) -> None:
+        models = list(configured_models or [])
+        if not models:
+            try:
+                from hermes_cli.models import provider_model_ids
+                models = list(provider_model_ids(provider, force_refresh=False))
+            except Exception:
+                _log.debug("_populate_model_list: provider_model_ids(%r) failed", provider, exc_info=True)
         if current_model and current_model not in models:
             models.insert(0, current_model)
         try:
@@ -618,7 +626,8 @@ class ConfigOverlay(Widget):
                 return
             name = opt_id[len("co-skin-opt-"):]
             try:
-                apply_named_skin = getattr(self.app, "apply_named_skin", None)
+                app_dict = getattr(self.app, "__dict__", {})
+                apply_named_skin = app_dict.get("apply_named_skin")
                 if callable(apply_named_skin):
                     apply_named_skin(name)
                 else:
@@ -692,7 +701,7 @@ class ConfigOverlay(Widget):
     def _confirm_model(self, value: str) -> None:
         cfg = _cfg_read_raw_config()
         config_provider = cfg.get("model", {}).get("provider", "openrouter") or "openrouter"
-        browsed = self._browsed_provider or config_provider
+        browsed = getattr(self, "_browsed_provider", "") or config_provider
         try:
             from hermes_cli.models import normalize_provider
             provider_changed = normalize_provider(browsed) != normalize_provider(config_provider)
@@ -749,7 +758,10 @@ class ConfigOverlay(Widget):
         except Exception:
             _log.warning("Failed to apply skin selection %r", name, exc_info=True)
         # Fresh snapshot so Esc from now on reverts to the newly persisted skin
-        self._take_skin_snapshot()
+        try:
+            self._take_skin_snapshot()
+        except Exception:
+            _log.debug("_confirm_skin: snapshot refresh failed for %r", name, exc_info=True)
         try:
             self.query_one("#co-skin-current", Static).update(f"Current: {name}")
         except NoMatches:

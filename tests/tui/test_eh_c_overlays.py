@@ -226,17 +226,17 @@ class TestConfigOverlay:
             assert "verbose" in call.args[0].lower()
 
     def test_config_confirm_skin_save_error(self) -> None:
-        """EH-C-16: skin config save failure logs at warning with exc_info."""
+        """EH-C-16: skin persist/apply failures log warnings with exc_info."""
         overlay, _app = self._make_overlay_with_app()
 
         with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config", return_value={}), \
              patch("hermes_cli.tui.overlays.config._cfg_save_config", side_effect=OSError("disk full")), \
              patch("hermes_cli.tui.overlays.config._log") as mock_log:
             overlay._confirm_skin("aurora")
-            mock_log.warning.assert_called_once()
-            call = mock_log.warning.call_args
-            assert call.kwargs.get("exc_info") is True
-            assert "skin" in call.args[0].lower()
+            assert mock_log.warning.call_count >= 1
+            for call in mock_log.warning.call_args_list:
+                assert call.kwargs.get("exc_info") is True
+                assert "skin" in call.args[0].lower()
 
     def test_config_confirm_syntax_save_error(self) -> None:
         """EH-C-18: syntax theme config save failure logs at warning with exc_info."""

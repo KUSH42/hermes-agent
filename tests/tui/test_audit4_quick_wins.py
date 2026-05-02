@@ -165,11 +165,11 @@ class TestFlashReducedMotion:
 class TestPaneManager:
     """PANE-01/02: Right pane forced collapsed; no-op compose deleted."""
 
-    def test_right_pane_collapsed_by_default_when_no_content(self):
+    def test_right_pane_uses_config_when_content_exists(self):
         from hermes_cli.tui.pane_manager import PaneManager, _RIGHT_PANE_HAS_CONTENT
-        assert _RIGHT_PANE_HAS_CONTENT is False
+        assert _RIGHT_PANE_HAS_CONTENT is True
         pm = PaneManager(cfg={})
-        assert pm._right_collapsed is True
+        assert pm._right_collapsed is False
 
     def test_right_pane_respects_config_when_has_content(self):
         import hermes_cli.tui.pane_manager as pm_mod

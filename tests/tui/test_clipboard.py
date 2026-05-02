@@ -207,11 +207,14 @@ class TestCopyChainOsc52:
             svc.copy_text_with_hint("hello")
         assert any("chars copied" in h for h in svc._flash_calls)
 
-    def test_copy_no_error_shown_without_xclip(self):
+    def test_copy_shows_error_without_xclip(self):
         svc = _make_theme_svc(clipboard_available=False, xclip_cmd=None)
         with patch("hermes_cli.tui.services.theme._osc52"):
             svc.copy_text_with_hint("hello")
-        svc.set_status_error.assert_not_called()
+        svc.set_status_error.assert_called_once_with(
+            "no clipboard — install xclip or xsel",
+            auto_clear_s=0,
+        )
 
     def test_copy_also_runs_xclip_if_present(self):
         svc = _make_theme_svc(clipboard_available=False, xclip_cmd=["xclip", "-sel", "c"])

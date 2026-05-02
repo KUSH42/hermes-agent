@@ -73,7 +73,7 @@ class TestCO_H1_FocusCaptured:
                 ov.show_overlay(tab="model")
                 await pilot.pause()
             assert pilot.app.focused is not None
-            assert pilot.app.focused.id == "co-model-list"
+            assert pilot.app.focused.id == "co-provider-list"
 
     @pytest.mark.asyncio
     async def test_verbose_tab_focus_on_open(self):

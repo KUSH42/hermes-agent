@@ -325,10 +325,14 @@ class ThemeService(AppService):
                 timeout=2,
                 input_bytes=text.encode(),
                 capture=False,
-                on_error=lambda exc, e: logger.warning(
-                    "xclip copy failed", exc_info=exc
+                on_success=lambda *_: None,
+                on_error=lambda exc, e: (
+                    logger.warning("xclip copy failed", exc_info=exc),
+                    self.set_status_error(f"copy failed: {exc}", auto_clear_s=0),
                 ),
             )
+        else:
+            self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
 
         # Always flash hint — OSC 52 is assumed to have worked.
         self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)

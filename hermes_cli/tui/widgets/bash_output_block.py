@@ -48,7 +48,11 @@ class BashOutputBlock(Static):
         color: $error;
     }
     BashOutputBlock.--done > #bash-header > #bash-status {
-        color: $text-muted;
+        color: $success;
+        padding-right: 1;
+    }
+    BashOutputBlock.--done.--error > #bash-header > #bash-status {
+        color: $error;
     }
     """
 

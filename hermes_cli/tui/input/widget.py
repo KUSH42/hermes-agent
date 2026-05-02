@@ -191,6 +191,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def on_mount(self) -> None:
         self._load_history()
         self._sync_height_to_content()
+        self._inject_bash_prefix_style()  # resolve skin color now that app is ready
 
     def on_resize(self, event: events.Resize) -> None:
         self._sync_height_to_content()
@@ -837,6 +838,35 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self.app.feedback.cancel("hint-bar")
         except Exception as exc:  # app._flash_hint / feedback unavailable — hint sync skipped
             _log.debug("bash mode hint sync failed: %s", exc, exc_info=True)
+
+    # --- Bash prefix highlight (colors the leading ! in shell mode) ---
+
+    def _set_theme(self, theme: str) -> None:
+        super()._set_theme(theme)
+        self._inject_bash_prefix_style()
+
+    def _inject_bash_prefix_style(self) -> None:
+        """Inject bash-prefix syntax style into the current theme copy.
+
+        Called after every _set_theme so the color tracks skin changes.
+        """
+        theme = getattr(self, "_theme", None)
+        if theme is None:
+            return
+        from rich.style import Style as RichStyle
+        color = "#A8D46E"  # fallback matches default $chevron-shell
+        try:
+            color = self.app.get_css_variables().get("chevron-shell", color)
+        except Exception:
+            pass  # app not yet mounted; fallback color is fine
+        theme.syntax_styles["bash-prefix"] = RichStyle(color=color, bold=True)
+
+    def _build_highlight_map(self) -> None:
+        super()._build_highlight_map()
+        if self.text.startswith("!") and getattr(self, "_theme", None) is not None:
+            # byte offset 0–1: the '!' is ASCII so 1 byte = 1 char
+            self._highlights[0].insert(0, (0, 1, "bash-prefix"))
+            self._line_cache.clear()
 
     # --- Rev-search abort ---
 

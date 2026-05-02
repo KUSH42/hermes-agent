@@ -107,7 +107,7 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
         return sep.join(parts)
 
     if phase == "idle":
-        _s_hint = f"[bold {k}]{KEY_CTRL_SHIFT_H}[/] [dim]session[/dim]"
+        _s_hint = f"[bold {k}]{KEY_CTRL_J}[/] [dim]session[/dim]"
         long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search"), ("/", "cmd"), ("@", "path")]) + _SEP + _s_hint
         medium = long_
         short = _fmt([("F1", None), (KEY_CTRL_F, None), ("/", None), ("@", None)])
@@ -408,8 +408,8 @@ class HintBar(Widget):
 
     def _tab_hint_suffix(self, bucket: str, k: str) -> str:
         """C2: return Tab-suggestion suffix when compact density + ghost suggestion active."""
-        if (self._density_tier == DensityTier.COMPACT.value
-                and self._has_ghost_suggestion
+        if (getattr(self, "_density_tier", DensityTier.DEFAULT.value) == DensityTier.COMPACT.value
+                and getattr(self, "_has_ghost_suggestion", False)
                 and bucket in ("long", "medium")):
             return _SEP + f"[bold {k}]Tab[/] suggest"
         return ""

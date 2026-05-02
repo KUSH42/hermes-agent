@@ -13,7 +13,7 @@ import pytest
 from hermes_cli.tui.tool_blocks._header import ToolHeader, _REMEDIATION_BY_CATEGORY
 from hermes_cli.tui.widgets.status_bar import (
     HintBar,
-    KEY_CTRL_SHIFT_H,
+    KEY_CTRL_J,
     _build_hints,
     _hint_cache,
 )
@@ -132,10 +132,10 @@ def _clear_hint_cache():
 
 
 class TestC3SessionHint:
-    def test_idle_default_hint_contains_ctrl_shift_h_session(self):
+    def test_idle_default_hint_contains_ctrl_j_session(self):
         hints = _build_hints("idle", "cyan")
         long_hint = hints["long"]
-        assert KEY_CTRL_SHIFT_H in long_hint
+        assert KEY_CTRL_J in long_hint
         assert "session" in long_hint
 
     def test_idle_minimal_hint_omits_session_shortcut(self):

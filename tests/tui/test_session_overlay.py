@@ -74,6 +74,21 @@ async def test_open_sessions_adds_visible_class():
         assert overlay.has_class("--visible")
 
 
+@pytest.mark.asyncio
+async def test_ctrl_j_binding_opens_sessions_overlay():
+    """Pressing ctrl+j opens the session overlay via the app-level binding."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        overlay = app.query_one(SessionOverlay)
+
+        with patch.object(overlay, "_load_sessions"):
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+
+        assert overlay.has_class("--visible")
+
+
 # ---------------------------------------------------------------------------
 # 3. Loading placeholder shown
 # ---------------------------------------------------------------------------

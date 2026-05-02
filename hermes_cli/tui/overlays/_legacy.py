@@ -69,7 +69,7 @@ class _SessionResumedBanner(Widget):
 
 
 class SessionOverlay(Widget):
-    """Session browser overlay. Open with /sessions or Ctrl+Shift+H."""
+    """Session browser overlay. Open with /sessions or Ctrl+J."""
 
     DEFAULT_CSS = """
     SessionOverlay {

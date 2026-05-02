@@ -282,6 +282,7 @@ class HermesApp(App):
         Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
         Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
+        Binding("ctrl+j", "open_sessions", show=False),
         Binding("ctrl+shift+h", "open_sessions", show=False),
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
@@ -2666,6 +2667,9 @@ class HermesApp(App):
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
         return self._svc_theme.apply_skin(skin_vars)
+
+    def apply_named_skin(self, name: str) -> bool:
+        return self._svc_theme.apply_named_skin(name)
 
     def _apply_override_dict(self, overrides: dict) -> None:
         return self._svc_theme._apply_override_dict(overrides)

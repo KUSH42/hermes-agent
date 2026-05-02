@@ -595,7 +595,7 @@ async def test_slash_desc_panel_shows_args_hint():
 
 @pytest.mark.asyncio
 async def test_slash_desc_panel_shows_keybind_hint():
-    """Test 35: Highlight /sessions → desc panel shows Ctrl+Shift+H keybind."""
+    """Test 35: Highlight /sessions → desc panel shows Ctrl+J keybind."""
     app = _make_app()
     async with app.run_test(size=(80, 30)) as pilot:
         await pilot.pause()
@@ -607,7 +607,7 @@ async def test_slash_desc_panel_shows_keybind_hint():
             command="/sessions",
             description="Browse and resume recent sessions",
             args_hint="",
-            keybind_hint="Ctrl+Shift+H",
+            keybind_hint="Ctrl+J",
         )
         app.highlighted_candidate = cand
         await pilot.pause()
@@ -615,13 +615,13 @@ async def test_slash_desc_panel_shows_keybind_hint():
         assert panel is not None
 
 
-def test_sessions_binding_is_ctrl_shift_h_only():
-    """Session overlay shortcut should match the discoverability surfaces."""
+def test_sessions_binding_includes_ctrl_j_alias():
+    """Session overlay shortcut should advertise and bind ctrl+j."""
     from hermes_cli.tui.app import HermesApp
 
     bindings = {getattr(b, "key", None): getattr(b, "action", None) for b in HermesApp.BINDINGS}
+    assert bindings.get("ctrl+j") == "open_sessions"
     assert bindings.get("ctrl+shift+h") == "open_sessions"
-    assert "S" not in bindings
 
 
 @pytest.mark.asyncio
@@ -787,7 +787,7 @@ async def test_populate_slash_commands_includes_keybind_hint():
         await pilot.pause()
         inp = app.query_one(HermesInput)
         assert "/sessions" in inp._slash_keybind_hints
-        assert inp._slash_keybind_hints["/sessions"] == "Ctrl+Shift+H"
+        assert inp._slash_keybind_hints["/sessions"] == "Ctrl+J"
 
 
 @pytest.mark.asyncio

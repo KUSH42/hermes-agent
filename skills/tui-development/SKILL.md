@@ -144,6 +144,7 @@ Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_b
 - `ThinkingWidget`, `_AnimSurface`, and `_LabelLine` must also paint `background: $app-bg` in their own `DEFAULT_CSS`. Leaving the thinking host or its mounted children transparent can expose terminal black behind the live spinner surface even though the rest of the transcript uses themed `app-bg`.
 - Keep the same mounted-style contract for the thinking stack. `tests/tui/test_visual_properties.py::test_thinking_widget_spinner_background_equals_app_background` checks the host and both mounted children against `HermesApp.styles.background`.
 - First-turn assistant rendering is startup-sensitive: markdown / LaTeX only become available after `MessagePanel.on_mount()` installs `ResponseFlowEngine`. `cli.py` therefore gates `agent_running=True` with `_panel_ready_event.wait(...)`; keep that wait generous enough that early stream chunks do not fall back to raw `Text.from_ansi(...)`.
+- Session overlay discoverability gotcha (2026-05-02): `ctrl+shift+h` appears dead in some terminals. Use `ctrl+j` as the advertised `open_sessions` binding and keep `ctrl+shift+h` only as a secondary alias. HintBar and `/sessions` `keybind_hint` should advertise `Ctrl+J`.
 
 ---
 
@@ -224,6 +225,10 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 
 - Mounted with `app.mount(SkillPickerOverlay(...))` as a plain `Widget`, not `push_screen()`. It must own a widget-level `dismiss()` helper; do not call screen-style dismissal APIs on it.
 - Canonical close path: remove `--modal`, `remove()` the widget when mounted, then restore `HermesInput` focus. Route `Esc`, auto-dismiss, and input-side teardown through that helper.
+
+### ConfigOverlay (`overlays/config.py`)
+
+- Skin preview and skin confirm must route through `HermesApp.apply_named_skin()` / `ThemeService.apply_named_skin()`, not raw `ThemeManager.load_skin()`. `load_skin()` only refreshes CSS; the service path also refreshes cached live skin consumers such as completion UI, tool blocks, streaming code blocks, and message/reasoning panels.
 
 ### Widget overlay close API
 

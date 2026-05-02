@@ -1327,7 +1327,7 @@ class TestTuiOnlyField:
         cmd = resolve_command("sessions")
         assert cmd is not None
         assert hasattr(cmd, "keybind_hint")
-        assert cmd.keybind_hint == "Ctrl+Shift+H"
+        assert cmd.keybind_hint == "Ctrl+J"
 
     def test_density_has_tui_only_true(self):
         cmd = resolve_command("density")

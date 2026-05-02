@@ -145,7 +145,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("density", "Toggle compact density layout", "Configuration",
                tui_only=True),
     CommandDef("sessions", "Browse and resume recent sessions", "Session",
-               tui_only=True, keybind_hint="Ctrl+Shift+H"),
+               tui_only=True, keybind_hint="Ctrl+J"),
     CommandDef("effects", "Play a terminal text animation (TerminalTextEffects)", "Configuration",
                cli_only=True, aliases=("easteregg",),
                args_hint="[effect] [text] | list",

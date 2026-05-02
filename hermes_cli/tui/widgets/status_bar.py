@@ -54,7 +54,7 @@ KEY_UP      = "↑"
 KEY_DOWN    = "↓"
 KEY_CTRL_C  = "⌃C"
 KEY_CTRL_F  = "⌃F"
-KEY_CTRL_SHIFT_H = "⌃⇧H"
+KEY_CTRL_J  = "⌃J"
 KEY_CTRL_Z  = "⌃Z"
 HINT_MAX_PRIMARY = 3  # D-1: cap on primary hint entries visible at once (AT-D1)
 
@@ -106,7 +106,7 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
         return sep.join(parts)
 
     if phase == "idle":
-        _s_hint = f"[bold {k}]{KEY_CTRL_SHIFT_H}[/] [dim]session[/dim]"
+        _s_hint = f"[bold {k}]{KEY_CTRL_J}[/] [dim]session[/dim]"
         long_ = _fmt([("F1", "help"), (KEY_CTRL_F, "search"), ("/", "cmd"), ("@", "path")]) + _SEP + _s_hint
         medium = long_
         short = _fmt([("F1", None), (KEY_CTRL_F, None), ("/", None), ("@", None)])

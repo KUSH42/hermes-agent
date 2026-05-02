@@ -144,7 +144,7 @@ class SessionOverlay(Widget):
         except Exception:
             _log.warning("_load_sessions: session DB read failed", exc_info=True)
             sessions = []
-        self.call_from_thread(self._render_rows, sessions)
+        self.app.call_from_thread(self._render_rows, sessions)
 
     def _render_rows(self, sessions: list[dict]) -> None:
         """Render session rows after worker completes (event-loop only)."""

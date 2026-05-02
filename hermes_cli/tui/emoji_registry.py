@@ -311,7 +311,7 @@ def _build_animated_emoji_widget() -> "type":
                 # frames/delays remain whatever was decoded so far; fall through
             self._frames = frames
             self._delays = delays
-            self.call_from_thread(self._start_animation)
+            self.app.call_from_thread(self._start_animation)
 
         def _start_animation(self) -> None:
             from hermes_cli.tui.kitty_graphics import get_caps, GraphicsCap

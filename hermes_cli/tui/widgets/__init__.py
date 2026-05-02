@@ -967,6 +967,7 @@ class AssistantNameplate(Widget):
         self._morph_speed = morph_speed
         self._glitch_enabled = glitch_enabled
         self._glitch_frame = 0
+        self._glitch_from_idle = False  # True when glitch was triggered from IDLE state
         self._error_frame = 0
         self._last_was_error = False
         self._error_color_hex: str = "#ef5350"
@@ -1126,6 +1127,10 @@ class AssistantNameplate(Widget):
             self._error_frame = 0
             self._set_timer_rate(30)
             return
+        # Already idle — no morph needed; avoids phantom "● thinking" flash when
+        # transition_to_active was never called (nameplate stays at name during agent runs).
+        if self._state == _NPState.IDLE:
+            return
         # gate: don't end animation before minimum duration elapsed
         remaining = self._anim_min_end - time.monotonic()
         if remaining > 0:
@@ -1142,10 +1147,47 @@ class AssistantNameplate(Widget):
     def glitch(self) -> None:
         if self._state != _NPState.ACTIVE_IDLE or not self._glitch_enabled:
             return
+        self._glitch_from_idle = False
         self._state = _NPState.GLITCH
         self._glitch_frame = 0
         self._set_timer_rate(30)
         self._anim_min_end = time.monotonic() + self._MIN_ANIM_S
+
+    def glitch_idle(self) -> None:
+        """Glitch from IDLE state — corrupts chars in decrypt-green then restores to idle style."""
+        if not self._glitch_enabled:
+            return
+        if self._state not in (_NPState.IDLE, _NPState.ACTIVE_IDLE):
+            return
+        if self._state == _NPState.IDLE:
+            if not self._frame:
+                self._init_frame_for(self._target_name, active_style=False)
+            self._stop_all_idle_timers()
+            self._glitch_from_idle = True
+        else:
+            self._glitch_from_idle = False
+        self._state = _NPState.GLITCH
+        self._glitch_frame = 0
+        self._set_timer_rate(30)
+        self._anim_min_end = time.monotonic() + self._MIN_ANIM_S
+
+    def trigger_event_beat(self, beat: "_NPIdleBeat") -> None:
+        """Immediately start an idle beat animation.
+
+        No-op if not in IDLE state or a beat is already running — natural
+        throttle for events (e.g. rapid tool calls) that fire frequently.
+        """
+        if not self._effects_enabled:
+            return
+        if self._state != _NPState.IDLE or self._idle_beat_type != _NPIdleBeat.NONE:
+            return
+        if self._idle_beat_timer is not None:
+            self._idle_beat_timer.stop()
+            self._idle_beat_timer = None
+        self._idle_beat_tick = 0
+        self._idle_beat_type = beat
+        self._init_beat(beat)
+        self._set_timer_rate(30)
 
     def set_active_label(self, label: str) -> None:
         self._active_label = label
@@ -1288,6 +1330,7 @@ class AssistantNameplate(Widget):
 
     def _tick_glitch(self) -> None:
         self._glitch_frame += 1
+        restore_style = Style.parse(self._idle_color_hex) if self._glitch_from_idle else self._active_style
         if self._glitch_frame <= 2:
             # corrupt 1-3 random positions
             for _ in range(_random.randint(1, min(3, len(self._frame)))):
@@ -1298,15 +1341,20 @@ class AssistantNameplate(Widget):
             # partial restore
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = self._active_style
+                ch.style = restore_style
         else:
-            # fully clean; resume pulse
+            # fully clean; return to appropriate idle state
             for ch in self._frame:
                 ch.current = ch.target
-                ch.style = self._active_style
+                ch.style = restore_style
             self._active_phase = 0.0  # C-4: reset so wave restarts cleanly from glitch
-            self._state = _NPState.ACTIVE_IDLE
-            self._set_timer_rate(30)
+            if self._glitch_from_idle:
+                self._glitch_from_idle = False
+                self._state = _NPState.IDLE
+                self._enter_idle_timer()
+            else:
+                self._state = _NPState.ACTIVE_IDLE
+                self._set_timer_rate(30)
 
     def _tick_error_flash(self) -> None:
         self._error_frame += 1
@@ -1516,7 +1564,7 @@ class AssistantNameplate(Widget):
         self._stop_timer()
 
     def _on_phase_change(self, phase: str) -> None:
-        """A2: gate nameplate pulse on status_phase."""
+        """A2: gate nameplate pulse on status_phase; trigger event beats in IDLE."""
         from hermes_cli.tui.agent_phase import Phase
         try:
             if phase == Phase.REASONING:
@@ -1524,9 +1572,14 @@ class AssistantNameplate(Widget):
                 if self._state == _NPState.ACTIVE_IDLE and self._timer is None:
                     self._active_phase = 0.0
                     self._set_timer_rate(30)
-            elif phase in (Phase.STREAMING, Phase.TOOL_EXEC):
-                if self._state != _NPState.STARTUP:  # don't interrupt decrypt
+            elif phase == Phase.TOOL_EXEC:
+                if self._state != _NPState.STARTUP:
                     self._pause_pulse()
+                self.trigger_event_beat(_NPIdleBeat.SHIMMER)
+            elif phase == Phase.STREAMING:
+                if self._state != _NPState.STARTUP:
+                    self._pause_pulse()
+                self.trigger_event_beat(_NPIdleBeat.PULSE)
             elif phase == Phase.IDLE:
                 pass  # transition_to_idle() drives IDLE transitions
             # Phase.ERROR handled by A3 (error-prominence spec)

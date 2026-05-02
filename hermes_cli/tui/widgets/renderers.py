@@ -34,7 +34,7 @@ from textual.widgets import RichLog, Static
 from hermes_cli.tui.tooltip import TooltipMixin
 from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 
-from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color
+from hermes_cli.tui.animation import AnimationClock, PulseMixin, lerp_color, pulse_phase_offset
 from hermes_cli.tui.messages import ReducedMotionChanged
 from .utils import (
     _ANSI_SEQ_RE,
@@ -797,16 +797,21 @@ class TitledRule(PulseMixin, Widget):
         else:
             glyph_color = glyph_idle
 
-        # Right-side state glyph — only on instances with show_state=True,
-        # only visible when the agent is running.
+        # Right-side state glyph — only on instances with show_state=True.
+        # agent_running  → 3 staggered ▶ triangles with ease fade-in/out
+        # command_running (no agent) → ⟳ spinner
         state_suffix = Text()
         if self._show_state and not self._glyph_error:
-            running = (
-                getattr(self.app, "agent_running", False)
-                or getattr(self.app, "command_running", False)
-            )
-            if running:
-                warn_color = v.get("status-warn-color", "#FFA726")
+            agent_running = getattr(self.app, "agent_running", False)
+            cmd_running = getattr(self.app, "command_running", False)
+            warn_color = v.get("status-warn-color", "#FFA726")
+            dim_color = v.get("primary-darken-3", glyph_idle)
+            if agent_running:
+                state_suffix = Text(" ")
+                for phase_offset in (0.0, 1 / 3, 2 / 3):
+                    t = pulse_phase_offset(self._pulse_tick, phase_offset, period=30)
+                    state_suffix.append("▶", style=lerp_color(dim_color, warn_color, t))
+            elif cmd_running:
                 state_suffix = Text(" ⟳", style=warn_color)
 
         # Right-side timestamp — HH:MM when created_at is set (response rules only)

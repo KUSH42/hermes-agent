@@ -1556,14 +1556,12 @@ class HermesApp(App):
                 self._interrupt_source = None
 
         # --- nameplate ---
-        try:
-            np = self.query_one("#nameplate", AssistantNameplate)
-            if value:
-                np.transition_to_active(label=self.spinner_label or "● thinking")
-            else:
-                np.transition_to_idle()
-        except NoMatches:
-            pass
+        # Only transition on agent stop — nameplate stays at name while agent runs.
+        if not value:
+            try:
+                self.query_one("#nameplate", AssistantNameplate).transition_to_idle()
+            except NoMatches:
+                pass
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -2033,12 +2031,10 @@ class HermesApp(App):
             self.status_active_file_offscreen = False  # S1-B
             if self.agent_running:
                 self._svc_spinner.set_chevron_phase("--phase-stream")
-        # nameplate: glitch + label update on non-empty spinner_label
+        # nameplate: glitch on thinking start (works from IDLE — nameplate stays at name)
         if value:
             try:
-                np = self.query_one("#nameplate", AssistantNameplate)
-                np.glitch()
-                np.set_active_label(f"▸ {value[:16]}")
+                self.query_one("#nameplate", AssistantNameplate).glitch_idle()
             except NoMatches:
                 pass
 

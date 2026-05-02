@@ -1092,23 +1092,17 @@ class _ToolPanelActionsMixin:
 
     def action_copy_output(self) -> None:
         text = self.copy_content()  # type: ignore[attr-defined]
-        if text:
-            try:
-                import pyperclip
-                pyperclip.copy(text)
-                self.app.notify("Copied output", timeout=1.5)  # type: ignore[attr-defined]
-            except Exception:  # noqa: bare-except
-                self.app.notify("Copy failed — use mouse select", timeout=3)  # type: ignore[attr-defined]
+        if not text:
+            self._flash_header("output: nothing to copy", tone="warning")
+            return
+        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
 
     def action_copy_input(self) -> None:
         text = self._format_arg_summary()  # type: ignore[attr-defined]
-        if text:
-            try:
-                import pyperclip
-                pyperclip.copy(text)
-                self.app.notify("Copied input", timeout=1.5)  # type: ignore[attr-defined]
-            except Exception:  # noqa: bare-except
-                self.app.notify("Copy failed", timeout=3)  # type: ignore[attr-defined]
+        if not text:
+            self._flash_header("input: nothing to copy", tone="warning")
+            return
+        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
 
     def action_rerun(self) -> None:
         try:

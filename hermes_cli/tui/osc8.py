@@ -8,7 +8,7 @@ This module:
 2. Injects OSC 8 hyperlinks into ANSI-escaped strings where file paths and
    URLs appear.
 
-See also: hermes_cli/tui/osc52_probe.py for OSC 52 clipboard capability detection.
+See also: hermes_cli/tui/osc52.py for OSC 52 clipboard write support.
 """
 
 from __future__ import annotations

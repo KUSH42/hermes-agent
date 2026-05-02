@@ -280,7 +280,7 @@ class _SessionRow(Static):
 
 
 class ToolPanelHelpOverlay(Widget):
-    """Binding reference for focused ToolPanel. Shown by '?', dismissed by Esc/'?'."""
+    """Binding reference for focused ToolPanel. Shown by F1, dismissed by Esc."""
 
     DEFAULT_CSS = """
     ToolPanelHelpOverlay {
@@ -303,27 +303,41 @@ class ToolPanelHelpOverlay(Widget):
     ToolPanelHelpOverlay > Static { height: auto; }
     """
 
-    _BINDINGS_TABLE = """\
-[bold]ToolPanel key reference[/bold]
+    # Section order and action membership — drives dynamic table generation.
+    # Add new actions to a section here; the key/description are read from
+    # ToolPanel.BINDINGS automatically.
+    _SECTIONS: list[tuple[str, list[str]]] = [
+        ("Navigate", [
+            "toggle_collapse",
+            "scroll_body_down", "scroll_body_up",
+            "scroll_body_page_down", "scroll_body_page_up",
+            "scroll_body_top", "scroll_body_bottom",
+            "toggle_tail_follow",
+        ]),
+        ("Copy", [
+            "copy_body", "copy_input",
+            "copy_ansi", "copy_html",
+            "copy_invocation", "copy_urls",
+            "copy_err", "copy_paths", "copy_full_path",
+        ]),
+        ("Open / Edit", [
+            "open_primary", "open_url",
+            "edit_cmd", "edit_args",
+            "retry",
+        ]),
+        ("View", [
+            "density_cycle", "density_cycle_reverse",
+            "cycle_kind", "kind_revert",
+            "expand_lines", "collapse_lines", "expand_all_lines",
+        ]),
+        ("Other", [
+            "dismiss_error_banner",
+            "show_context_menu",
+            "show_help",
+        ]),
+    ]
 
-[bold]Enter[/bold]   toggle collapse
-[bold]j / k[/bold]   scroll 1 line
-[bold]J / K[/bold]   scroll page
-[bold]< / >[/bold]   scroll top / end
-[bold]c[/bold]       copy plain text
-[bold]C[/bold]       copy ANSI colors
-[bold]H[/bold]       copy HTML
-[bold]I[/bold]       copy invocation
-[bold]u[/bold]       copy URLs
-[bold]o[/bold]       open file/URL
-[bold]p[/bold]       copy file paths
-[bold]e[/bold]       copy stderr
-[bold]E[/bold]       edit command
-[bold]O[/bold]       open URL
-[bold]r[/bold]       retry on error
-[bold]+/-/*[/bold]   expand/collapse/all lines
-[bold]?[/bold]       this help
-
+    _HEADER_CHIPS = """\
 [bold]Header chips[/bold]
 
 …STARTING    tool is initialising
@@ -339,8 +353,53 @@ TRACE        condensed view
 COMPACT      minimal view
 """
 
+    @classmethod
+    def _fmt_key(cls, key: str) -> str:
+        _SPECIAL = {
+            "enter": "Enter", "escape": "Esc",
+            "question_mark": "?", "f1": "F1",
+        }
+        if key in _SPECIAL:
+            return _SPECIAL[key]
+        if key.startswith("shift+"):
+            return f"Shift+{key[6:].upper()}"
+        return key
+
+    @classmethod
+    def _build_table(cls) -> str:
+        from hermes_cli.tui.tool_panel._core import ToolPanel  # lazy — avoids circular import
+
+        action_map: dict[str, tuple[str, str]] = {}
+        for b in ToolPanel.BINDINGS:
+            action = b.action if isinstance(b.action, str) else str(b.action)
+            key_disp = b.key_display or cls._fmt_key(b.key)
+            if action not in action_map:
+                action_map[action] = (key_disp, b.description)
+
+        lines: list[str] = ["[bold]ToolPanel key reference[/bold]", ""]
+        for section_name, actions in cls._SECTIONS:
+            rows = [
+                (key_disp, desc)
+                for action in actions
+                if (entry := action_map.get(action)) is not None
+                for key_disp, desc in (entry,)
+            ]
+            if rows:
+                lines.append(f"[bold]{section_name}[/bold]")
+                col = max(len(k) for k, _ in rows) + 2
+                for key_disp, desc in rows:
+                    lines.append(f"[bold]{key_disp}[/bold]{' ' * (col - len(key_disp))}{desc}")
+                lines.append("")
+        lines.append(cls._HEADER_CHIPS)
+        return "\n".join(lines)
+
     def compose(self) -> ComposeResult:
-        yield Static(self._BINDINGS_TABLE, markup=True)
+        try:
+            markup = self._build_table()
+        except Exception:
+            _log.warning("ToolPanelHelpOverlay: failed to build dynamic table", exc_info=True)
+            markup = "[dim]Key reference unavailable[/dim]"
+        yield Static(markup, markup=True)
 
     def show_overlay(self) -> None:
         self.border_title = "Tool keys"

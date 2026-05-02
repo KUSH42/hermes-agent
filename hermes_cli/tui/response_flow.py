@@ -87,6 +87,7 @@ _INLINE_CODE_LABEL_RE = re.compile(
 
 # Same pattern as rich_output._MD_HR_RE — standalone HR line
 _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
+_ASSIGN_LIKE_RE = re.compile(r'^\s*\w+\s*=\s*\S')
 
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
 _FOOTNOTE_DEF_RE = re.compile(r'^\s*\[\^(\d{1,4})\]:\s*(.*)')
@@ -353,7 +354,7 @@ def _looks_like_source_line(raw: str) -> bool:
         return True
     if any(tok in raw for tok in ("{", "}", "();", ");", "->", "::", "#include", "System.out.", "fmt.", "println!")):
         return True
-    if re.match(r'^\s*\w+\s*=\s*\S', raw) and "==" not in raw and len(stripped.split()) <= 6:
+    if _ASSIGN_LIKE_RE.match(raw) and "==" not in raw and len(stripped.split()) <= 6:
         return True
     return False
 

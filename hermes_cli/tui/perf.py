@@ -429,7 +429,8 @@ class FrameRateProbe:
         self._window = window
         self._log_every = log_every
         self._last_tick: float = 0.0
-        self._samples: list[float] = []
+        self._samples: deque[float] = deque(maxlen=window)
+        self._sum_ms: float = 0.0
         self._ticks: int = 0
         self._fps: float = 0.0
         self._avg_ms: float = 0.0
@@ -442,11 +443,12 @@ class FrameRateProbe:
         now = time.perf_counter()
         if self._last_tick:
             interval_ms = (now - self._last_tick) * 1000.0
+            if len(self._samples) == self._window:
+                self._sum_ms -= self._samples[0]
             self._samples.append(interval_ms)
-            if len(self._samples) > self._window:
-                self._samples.pop(0)
+            self._sum_ms += interval_ms
             if self._samples:
-                avg = sum(self._samples) / len(self._samples)
+                avg = self._sum_ms / len(self._samples)
                 self._avg_ms = avg
                 self._fps = 1000.0 / avg if avg > 0 else 0.0
         self._last_tick = now

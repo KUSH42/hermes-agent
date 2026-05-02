@@ -73,10 +73,10 @@ class IOService(AppService):
                     else:
                         app.status_phase = _Phase.IDLE
                 try:
-                    panel = app.query_one(OutputPanel)
+                    panel = app._output_panel
                     panel.flush_live()
                     panel.scroll_end_if_pinned()
-                except NoMatches:
+                except Exception:
                     pass
                 continue
             if _first_chunk_in_turn:
@@ -99,7 +99,7 @@ class IOService(AppService):
             logger.debug("[STREAM-SEQ] seq=%d size=%d", _seq, len(chunk))
             with measure("io.consume_chunk", budget_ms=8.0, silent=True):
                 try:
-                    panel = app.query_one(OutputPanel)
+                    panel = app._output_panel
                     panel.record_raw_output(chunk)
                     panel.live_line.feed(chunk)
                     try:

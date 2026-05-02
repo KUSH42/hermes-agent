@@ -108,6 +108,12 @@ class ThemeService(AppService):
                     rp._reasoning_engine.refresh_skin(css)
                 except Exception:
                     logger.debug("ReasoningFlowEngine skin refresh failed", exc_info=True)
+        from hermes_cli.tui.widgets.thinking import ThinkingWidget
+        for tw in app.query(ThinkingWidget):
+            try:
+                tw._refresh_colors()
+            except Exception:
+                logger.debug("ThinkingWidget skin refresh failed", exc_info=True)
         self._refresh_branding()
 
     def _refresh_branding(self) -> None:

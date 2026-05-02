@@ -444,11 +444,17 @@ class HintBar(Widget):
             return Text(self.hint)  # pre-existing: strips markup; fix deferred
         if self._shimmer_base is not None and self._shimmer_timer is not None:
             if _running:
+                try:
+                    _sv = self.app.get_css_variables()
+                    _sdim  = _sv.get("spinner-shimmer-dim",  "#6e6e6e")
+                    _speak = _sv.get("spinner-shimmer-peak", "#909090")
+                except Exception:
+                    _sdim, _speak = "#6e6e6e", "#909090"
                 return shimmer_text(
                     self._shimmer_base,
                     self._shimmer_tick,
-                    dim="#6e6e6e",
-                    peak="#909090",
+                    dim=_sdim,
+                    peak=_speak,
                     period=32,
                     skip_ranges=self._shimmer_skip,
                 )
@@ -1064,11 +1070,17 @@ class ImageBar(Widget):
 
     def render(self) -> "RenderResult":
         if self._shimmer_base is not None and self._shimmer_timer is not None:
+            try:
+                _sv = self.app.get_css_variables()
+                _sdim  = _sv.get("spinner-shimmer-dim",  "#6e6e6e")
+                _speak = _sv.get("spinner-shimmer-peak", "#cccccc")
+            except Exception:
+                _sdim, _speak = "#6e6e6e", "#cccccc"
             return shimmer_text(
                 self._shimmer_base,
                 self._shimmer_tick,
-                dim="#6e6e6e",
-                peak="#cccccc",
+                dim=_sdim,
+                peak=_speak,
                 period=15,
                 skip_ranges=self._shimmer_skip,
             )

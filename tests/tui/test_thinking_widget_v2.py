@@ -448,10 +448,19 @@ def _segment_colors(strip) -> list[str | None]:
     return [None if seg.style is None else seg.style.color.triplet.hex for seg in strip._segments]  # type: ignore[attr-defined]
 
 
+def _segment_backgrounds(strip) -> list[str | None]:
+    return [
+        None if seg.style is None or seg.style.bgcolor is None else seg.style.bgcolor.triplet.hex.lstrip("#")
+        for seg in strip._segments
+    ]  # type: ignore[attr-defined]
+
+
 def test_anim_surface_render_line_uses_multiple_segment_colors() -> None:
     surf = _AnimSurface.__new__(_AnimSurface)
     surf._frame_lines = ["⠁⠂⠃⠄"]
     surf._frame_tick = 2
+    surf._background_hex = "#1e1e1e"
+    surf._background_rgb = (30, 30, 30)
     surf._dim_rgb = (32, 32, 32)
     surf._peak_rgb = (220, 220, 220)
     with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
@@ -464,6 +473,8 @@ def test_anim_surface_padding_does_not_get_peak_highlight() -> None:
     surf = _AnimSurface.__new__(_AnimSurface)
     surf._frame_lines = ["⠁⠂  "]
     surf._frame_tick = 1
+    surf._background_hex = "#1e1e1e"
+    surf._background_rgb = (30, 30, 30)
     surf._dim_rgb = (32, 32, 32)
     surf._peak_rgb = (220, 220, 220)
     with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
@@ -471,6 +482,7 @@ def test_anim_surface_padding_does_not_get_peak_highlight() -> None:
     tail = list(strip._segments)[-1]  # type: ignore[attr-defined]
     assert tail.text == " "
     assert tail.style.color is None
+    assert tail.style.bgcolor.triplet.hex.lstrip("#") == "1e1e1e"
 
 
 def test_thinking_refresh_colors_reads_spinner_gradient_vars() -> None:
@@ -478,10 +490,12 @@ def test_thinking_refresh_colors_reads_spinner_gradient_vars() -> None:
     w._mock_app = SimpleNamespace(get_css_variables=lambda: {
         "accent": "#111111",
         "text": "#eeeeee",
+        "app-bg": "#202224",
         "thinking-spinner-dim": "#123456",
         "thinking-spinner-peak": "#abcdef",
     })
     w._refresh_colors()
+    assert w._app_bg_hex == "#202224"
     assert w._spinner_dim_hex == "#123456"
     assert w._spinner_peak_hex == "#abcdef"
     assert w._spinner_dim_rgb == (18, 52, 86)
@@ -492,6 +506,7 @@ def test_thinking_refresh_colors_falls_back_when_spinner_gradient_vars_missing()
     w = _ThinkingWithMockApp.__new__(_ThinkingWithMockApp)
     w._mock_app = SimpleNamespace(get_css_variables=lambda: {})
     w._refresh_colors()
+    assert w._app_bg_hex == "#1e1e1e"
     assert w._spinner_dim_hex == "#4a4a4a"
     assert w._spinner_peak_hex == "#d8d8d8"
     assert w._spinner_dim_rgb == (74, 74, 74)
@@ -502,6 +517,8 @@ def test_anim_surface_row_phase_offset_changes_row_wave() -> None:
     surf = _AnimSurface.__new__(_AnimSurface)
     surf._frame_lines = ["⠁⠂⠃⠄", "⠁⠂⠃⠄"]
     surf._frame_tick = 3
+    surf._background_hex = "#1e1e1e"
+    surf._background_rgb = (30, 30, 30)
     surf._dim_rgb = (32, 32, 32)
     surf._peak_rgb = (220, 220, 220)
     with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
@@ -514,6 +531,8 @@ def test_anim_surface_blank_row_fast_path_skips_gradient_work() -> None:
     surf = _AnimSurface.__new__(_AnimSurface)
     surf._frame_lines = ["    "]
     surf._frame_tick = 0
+    surf._background_hex = "#1e1e1e"
+    surf._background_rgb = (30, 30, 30)
     surf._dim_rgb = (32, 32, 32)
     surf._peak_rgb = (220, 220, 220)
     with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
@@ -521,6 +540,44 @@ def test_anim_surface_blank_row_fast_path_skips_gradient_work() -> None:
             strip = surf.render_line(0)
     assert mock_render.call_count == 0
     assert "".join(seg.text for seg in strip._segments) == "    "  # type: ignore[attr-defined]
+    assert set(_segment_backgrounds(strip)) == {"1e1e1e"}
+
+
+def test_anim_surface_gradient_segments_keep_app_background() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._frame_lines = ["⠁⠂⠃⠄"]
+    surf._frame_tick = 2
+    surf._background_hex = "#202224"
+    surf._background_rgb = (32, 34, 36)
+    surf._dim_rgb = (18, 52, 86)
+    surf._peak_rgb = (171, 205, 239)
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4)):
+        strip = surf.render_line(0)
+    assert set(_segment_backgrounds(strip)) == {"202224"}
+
+
+def test_tick_anim_uses_theme_gradient_and_background_colors() -> None:
+    surf = _AnimSurface.__new__(_AnimSurface)
+    surf._engine_key = "dna"
+    surf._engine = SimpleNamespace(next_frame=lambda params: "⠁⠂")
+    surf._frame_lines = []
+    surf._elapsed = 0.0
+    surf._last_w = 0
+    surf._accent_hex = "#888888"
+    surf._background_hex = "#1e1e1e"
+    surf._background_rgb = (30, 30, 30)
+    surf._peak_hex = "#d8d8d8"
+    surf._dim_rgb = (136, 136, 136)
+    surf._peak_rgb = (216, 216, 216)
+    surf._frame_tick = 0
+    with patch.object(type(surf), "size", new_callable=PropertyMock, return_value=SimpleNamespace(width=4, height=1)):
+        with patch.object(surf, "refresh"):
+            surf.tick_anim(0.1, "#123456", "#abcdef", "#202224")
+            strip = surf.render_line(0)
+    assert surf._dim_rgb == (18, 52, 86)
+    assert surf._peak_rgb == (171, 205, 239)
+    assert surf._background_rgb == (32, 34, 36)
+    assert set(_segment_backgrounds(strip)) == {"202224"}
 
 
 def test_load_config_accepts_scalar_or_list_for_short_and_long_wait_fields() -> None:

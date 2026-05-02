@@ -566,6 +566,30 @@ async def test_startup_banner_background_equals_app_background():
 
 
 @pytest.mark.asyncio
+async def test_thinking_widget_spinner_background_equals_app_background():
+    """ThinkingWidget and its mounted spinner surfaces must paint app-bg."""
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        thinking = app.query_one(ThinkingWidget)
+        thinking.activate()
+        await pilot.pause()
+
+        app_bg = _rgb(app.styles.background)
+        assert _rgb(thinking.styles.background) == app_bg, (
+            f"ThinkingWidget bg {_rgb(thinking.styles.background)} != app bg {app_bg}"
+        )
+        assert thinking._anim_surface is not None
+        assert thinking._label_line is not None
+        assert _rgb(thinking._anim_surface.styles.background) == app_bg, (
+            f"_AnimSurface bg {_rgb(thinking._anim_surface.styles.background)} != app bg {app_bg}"
+        )
+        assert _rgb(thinking._label_line.styles.background) == app_bg, (
+            f"_LabelLine bg {_rgb(thinking._label_line.styles.background)} != app bg {app_bg}"
+        )
+
+
+@pytest.mark.asyncio
 async def test_app_background_is_dark():
     """App background must be a dark colour (all channels ≤ 50)."""
     app = _make_app()

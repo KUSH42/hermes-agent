@@ -78,6 +78,7 @@ _HEX_COLOR_RE = re.compile(r"^#?(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 _DEFAULT_ACCENT_HEX = "#888888"
 _DEFAULT_TEXT_HEX = "#ffffff"
+_DEFAULT_APP_BG_HEX = "#1e1e1e"
 _DEFAULT_SPINNER_DIM_HEX = "#4a4a4a"
 _DEFAULT_SPINNER_PEAK_HEX = "#d8d8d8"
 
@@ -112,8 +113,14 @@ def _interpolate_rgb(
     )
 
 
-def _rgb_style(rgb: tuple[int, int, int]) -> Style:
-    return Style(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", dim=True)
+def _rgb_style(
+    rgb: tuple[int, int, int],
+    background_rgb: tuple[int, int, int] | None = None,
+) -> Style:
+    bgcolor = None
+    if background_rgb is not None:
+        bgcolor = f"rgb({background_rgb[0]},{background_rgb[1]},{background_rgb[2]})"
+    return Style(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", bgcolor=bgcolor, dim=True)
 
 
 # ── ThinkingMode ──────────────────────────────────────────────────────────────
@@ -162,7 +169,13 @@ _AnimSurface {
 }
 """
 
-    def __init__(self, engine_key: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        engine_key: str,
+        *,
+        background_hex: str = _DEFAULT_APP_BG_HEX,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._engine_key = engine_key
         self._engine: AnimEngine | None = None
@@ -170,12 +183,15 @@ _AnimSurface {
         self._elapsed: float = 0.0
         self._last_w: int = 0
         self._accent_hex: str = "#888888"
+        self._background_hex: str = background_hex
         self._peak_hex: str = _DEFAULT_SPINNER_PEAK_HEX
+        self._background_rgb: tuple[int, int, int] = _hex_to_rgb(self._background_hex)
         self._dim_rgb: tuple[int, int, int] = _hex_to_rgb(self._accent_hex)
         self._peak_rgb: tuple[int, int, int] = _hex_to_rgb(self._peak_hex)
         self._frame_tick: int = 0
 
     def on_mount(self) -> None:
+        self.styles.background = self._background_hex
         self._init_engine()
 
     def _init_engine(self) -> None:
@@ -222,12 +238,17 @@ _AnimSurface {
         dt: float,
         accent_hex: str = "#888888",
         peak_hex: str | None = None,
+        background_hex: str | None = None,
     ) -> None:
         """Called from ThinkingWidget._tick. Advances frame and refreshes."""
         self._accent_hex = accent_hex
         if peak_hex is None:
             peak_hex = getattr(self, "_peak_hex", _DEFAULT_SPINNER_PEAK_HEX)
         self._peak_hex = peak_hex
+        if background_hex is None:
+            background_hex = getattr(self, "_background_hex", _DEFAULT_APP_BG_HEX)
+        self._background_hex = background_hex
+        self._background_rgb = _hex_to_rgb(self._background_hex)
         self._dim_rgb = _hex_to_rgb(self._accent_hex)
         self._peak_rgb = _hex_to_rgb(self._peak_hex)
         self._frame_tick = getattr(self, "_frame_tick", 0) + 1
@@ -252,12 +273,12 @@ _AnimSurface {
                 # Pad/crop to widget width
                 raw = raw.ljust(width)[:width]
                 if not raw.strip():
-                    return Strip([Segment(" " * width, Style())], width)
+                    return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)
                 return self._render_gradient_line(raw, y)
         except Exception:
             # thinking content parse failed; widget shows empty content
             pass
-        return Strip([Segment(" " * width, Style())], width)
+        return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)
 
     def _render_gradient_line(self, raw: str, row: int) -> Strip:
         width = len(raw)
@@ -265,10 +286,13 @@ _AnimSurface {
         segments: list[Segment] = []
         for idx, ch in enumerate(raw):
             if ch == " ":
-                segments.append(Segment(ch, Style(dim=True)))
+                segments.append(Segment(ch, Style(bgcolor=self._background_hex, dim=True)))
                 continue
             factor = (1.0 + math.sin((idx * 0.65) + phase_base)) / 2.0
-            style = _rgb_style(_interpolate_rgb(self._dim_rgb, self._peak_rgb, factor))
+            style = _rgb_style(
+                _interpolate_rgb(self._dim_rgb, self._peak_rgb, factor),
+                self._background_rgb,
+            )
             segments.append(Segment(ch, style))
         return Strip(segments, width)
 
@@ -288,14 +312,22 @@ _LabelLine {
 }
 """
 
-    def __init__(self, effect_key: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        effect_key: str,
+        *,
+        background_hex: str = _DEFAULT_APP_BG_HEX,
+        **kwargs: Any,
+    ) -> None:
         _lock = kwargs.pop("_lock", None)  # E-3: extract before super() sees kwargs
         super().__init__("", **kwargs)
         self._effect_key = effect_key
         self._effect = None
         self._lock: threading.Lock = _lock or threading.Lock()  # E-3: thread-safe lock
+        self._background_hex = background_hex
 
     def on_mount(self) -> None:
+        self.styles.background = self._background_hex
         self._init_effect()
 
     def _init_effect(self) -> None:
@@ -385,6 +417,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     # Color cache
     _accent_hex: str = _DEFAULT_ACCENT_HEX
     _text_hex: str = _DEFAULT_TEXT_HEX
+    _app_bg_hex: str = _DEFAULT_APP_BG_HEX
     _spinner_dim_hex: str = _DEFAULT_SPINNER_DIM_HEX
     _spinner_peak_hex: str = _DEFAULT_SPINNER_PEAK_HEX
     _spinner_dim_rgb: tuple[int, int, int] = _hex_to_rgb(_DEFAULT_SPINNER_DIM_HEX)
@@ -416,6 +449,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     def on_mount(self) -> None:
         """Pre-warm config cache during app startup (D-7)."""
         self._load_config()
+        self._apply_background_styles()
 
     def on_unmount(self) -> None:
         self._substate = None
@@ -565,14 +599,21 @@ _LabelLine   { height: 1;   width: 1fr; }
             logger.warning("ThinkingWidget._refresh_colors: get_css_variables failed", exc_info=True)
             self._accent_hex = _DEFAULT_ACCENT_HEX
             self._text_hex = _DEFAULT_TEXT_HEX
+            self._app_bg_hex = _DEFAULT_APP_BG_HEX
             self._spinner_dim_hex = _DEFAULT_SPINNER_DIM_HEX
             self._spinner_peak_hex = _DEFAULT_SPINNER_PEAK_HEX
             self._spinner_dim_rgb = _hex_to_rgb(self._spinner_dim_hex)
             self._spinner_peak_rgb = _hex_to_rgb(self._spinner_peak_hex)
+            self._apply_background_styles()
             return
 
         self._accent_hex = _normalize_hex(css_vars.get("accent"), _DEFAULT_ACCENT_HEX)
         self._text_hex = _normalize_hex(css_vars.get("text"), _DEFAULT_TEXT_HEX)
+        app_bg = css_vars.get("app-bg")
+        if app_bg is None:
+            app_style_bg = getattr(getattr(self.app, "styles", None), "background", None)
+            app_bg = getattr(app_style_bg, "hex", None)
+        self._app_bg_hex = _normalize_hex(app_bg, _DEFAULT_APP_BG_HEX)
         self._spinner_dim_hex = _normalize_hex(
             css_vars.get("thinking-spinner-dim"),
             _DEFAULT_SPINNER_DIM_HEX,
@@ -583,6 +624,26 @@ _LabelLine   { height: 1;   width: 1fr; }
         )
         self._spinner_dim_rgb = _hex_to_rgb(self._spinner_dim_hex)
         self._spinner_peak_rgb = _hex_to_rgb(self._spinner_peak_hex)
+        self._apply_background_styles()
+
+    def _apply_background_styles(self) -> None:
+        try:
+            self.styles.background = self._app_bg_hex
+        except Exception:
+            pass  # unit tests may call _refresh_colors on __new__ instances without Textual init
+        if self._anim_surface is not None:
+            self._anim_surface._background_hex = self._app_bg_hex
+            self._anim_surface._background_rgb = _hex_to_rgb(self._app_bg_hex)
+            try:
+                self._anim_surface.styles.background = self._app_bg_hex
+            except Exception:
+                pass  # child may not be mounted yet; render path still uses cached hex/rgb
+        if self._label_line is not None:
+            self._label_line._background_hex = self._app_bg_hex
+            try:
+                self._label_line.styles.background = self._app_bg_hex
+            except Exception:
+                pass  # child may not be mounted yet; on_mount reapplies cached background
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -606,9 +667,14 @@ _LabelLine   { height: 1;   width: 1fr; }
             if self._label_line is None:
                 if self._effects_lock is None:
                     self._effects_lock = threading.Lock()
-                self._label_line = _LabelLine("breathe", _lock=self._effects_lock)
+                self._label_line = _LabelLine(
+                    "breathe",
+                    _lock=self._effects_lock,
+                    background_hex=self._app_bg_hex,
+                )
                 _schedule_awaitable(self.mount(self._label_line))
                 self._label_line.update_static("Thinking…")
+            self._apply_background_styles()
             return  # no timer started — deterministic
 
         # M8: stop any orphaned timer from a prior activate-without-deactivate cycle
@@ -666,7 +732,10 @@ _LabelLine   { height: 1;   width: 1fr; }
         if anim_rows > 0:
             # No fixed id — avoids DuplicateIds when deactivate's 150ms fade-out
             # timer hasn't fired yet and activate() is called for the next turn.
-            self._anim_surface = _AnimSurface(resolved_engine)
+            self._anim_surface = _AnimSurface(
+                resolved_engine,
+                background_hex=self._app_bg_hex,
+            )
             _schedule_awaitable(self.mount(self._anim_surface))
         else:
             self._anim_surface = None
@@ -675,8 +744,13 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._effects_lock is None:
             self._effects_lock = threading.Lock()
         # D-2/E-3: create with flash effect for STARTED phase; pass shared thread-safe lock
-        self._label_line = _LabelLine("flash", _lock=self._effects_lock)
+        self._label_line = _LabelLine(
+            "flash",
+            _lock=self._effects_lock,
+            background_hex=self._app_bg_hex,
+        )
         _schedule_awaitable(self.mount(self._label_line))
+        self._apply_background_styles()
 
         # Apply CSS classes
         mode_cls = _MODE_CSS.get(resolved_mode, "--mode-default")
@@ -864,6 +938,7 @@ _LabelLine   { height: 1;   width: 1fr; }
                 dt,
                 self._spinner_dim_hex or "#888888",
                 self._spinner_peak_hex,
+                self._app_bg_hex,
             )
 
         if self._label_line is not None:

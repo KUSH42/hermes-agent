@@ -1263,8 +1263,11 @@ class DrawbrailleOverlay(Static):
                 "custom_offset_x": ox,
                 "custom_offset_y": oy,
             })
-        except Exception:  # app service not ready — drag position not persisted, non-critical
-            pass
+        except Exception:
+            _log.debug(
+                "on_mouse_up: drag position not persisted",
+                exc_info=True,
+            )
         event.stop()
 
 

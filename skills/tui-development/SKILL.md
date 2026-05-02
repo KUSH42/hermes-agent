@@ -141,6 +141,9 @@ Call sites for streaming path: `tool_panel.py`, `execute_code_block.py`, `tool_b
 
 - `StartupBannerWidget` must paint `background: $app-bg` in its own `DEFAULT_CSS`. Do not rely on inherited/default terminal background for the startup banner host; otherwise the left hero/logo cell can fall back to terminal black even when the app chrome uses a themed `app-bg`.
 - Keep a mounted-style regression for this contract. `tests/tui/test_visual_properties.py::test_startup_banner_background_equals_app_background` checks the widget background against `HermesApp.styles.background`.
+- `ThinkingWidget`, `_AnimSurface`, and `_LabelLine` must also paint `background: $app-bg` in their own `DEFAULT_CSS`. Leaving the thinking host or its mounted children transparent can expose terminal black behind the live spinner surface even though the rest of the transcript uses themed `app-bg`.
+- Keep the same mounted-style contract for the thinking stack. `tests/tui/test_visual_properties.py::test_thinking_widget_spinner_background_equals_app_background` checks the host and both mounted children against `HermesApp.styles.background`.
+- First-turn assistant rendering is startup-sensitive: markdown / LaTeX only become available after `MessagePanel.on_mount()` installs `ResponseFlowEngine`. `cli.py` therefore gates `agent_running=True` with `_panel_ready_event.wait(...)`; keep that wait generous enough that early stream chunks do not fall back to raw `Text.from_ansi(...)`.
 
 ---
 

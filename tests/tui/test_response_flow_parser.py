@@ -220,3 +220,13 @@ class TestLooksLikeSourceLineTightened:
 
     def test_p5e_prose_sentence_starting_with_the_not_source(self) -> None:
         assert not _looks_like_source_line("the cost was set to low")
+
+    def test_p5f_inline_display_math_not_source(self) -> None:
+        assert not _looks_like_source_line(
+            r"$$\rho \left( \frac{\partial \mathbf{v}}{\partial t} + \mathbf{v} \cdot \nabla \mathbf{v} \right)$$"
+        )
+
+    def test_p5g_latex_command_line_not_source(self) -> None:
+        assert not _looks_like_source_line(
+            r"\Psi(\mathbf{r}, t) = \hat{H}\Psi(\mathbf{r}, t)"
+        )

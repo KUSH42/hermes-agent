@@ -74,6 +74,7 @@ _SOURCE_KEYWORD_RE = re.compile(
 _SOURCE_COMMAND_RE = re.compile(
     r"^(javac|java|python|python3|node|npm|yarn|pnpm|pip|pip3|pytest|cargo|go|git|make|uv|bash|sh)\b"
 )
+_LATEX_COMMAND_RE = re.compile(r"\\[A-Za-z]+(?:\*|(?:\{|\[|_|\^))?")
 _LIST_PREFIX_RE = re.compile(r"^\s*(?:[-*+•]|\d+[.)])\s+(?=\S)")
 _CODE_INTRO_LABEL_RE = re.compile(
     r"^(?:to run it|run it|output|result|results|response|command|commands|example|examples|stderr|stdout|log|logs)\s*:$",
@@ -316,6 +317,21 @@ def _normalize_ansi_for_render(text: str) -> str:
 def _looks_like_source_line(raw: str) -> bool:
     stripped = raw.strip()
     if not stripped:
+        return False
+    # TeX/LaTeX often contains braces, backslash commands, and `=` / `+`
+    # operators that look source-ish to the generic heuristic below. If we
+    # classify those lines as code, assistant math falls into numbered/code
+    # blocks instead of the prose/math path.
+    if (
+        stripped.startswith(("$$", r"\[", r"\(", r"\begin{"))
+        or (
+            "\\" in stripped
+            and (
+                _LATEX_COMMAND_RE.search(stripped) is not None
+                or any(tok in stripped for tok in ("\\frac", "\\left", "\\right", "\\mathbf", "\\math"))
+            )
+        )
+    ):
         return False
     if stripped.endswith(":"):
         return False

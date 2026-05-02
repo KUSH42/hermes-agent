@@ -11,12 +11,14 @@ Groups:
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+from hermes_cli.tui.app import HermesApp
 from hermes_cli.tui.math_renderer import MathRenderer, render_mermaid, _SYMBOL_TABLE
 from hermes_cli.tui.response_flow import (
     ResponseFlowEngine,
@@ -24,6 +26,7 @@ from hermes_cli.tui.response_flow import (
     _BLOCK_MATH_ONELINE_RE,
     _INLINE_MATH_RE,
 )
+from hermes_cli.tui.widgets import OutputPanel, StreamingCodeBlock
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +243,18 @@ class TestInlineMath:
         # With math off the raw string passes through unchanged
         assert any(r"\alpha" in w for w in written)
 
+    def test_d7_latex_line_does_not_enter_source_like_mode(self) -> None:
+        engine = _make_engine()
+        written: list[str] = []
+        engine._prose_log.write_with_source.side_effect = lambda t, p: written.append(p)
+
+        engine.process_line(r"$$\Psi(\mathbf{r}, t) = \hat{H}\Psi(\mathbf{r}, t)$$")
+        engine.flush()
+
+        assert engine._state == "NORMAL"
+        assert any(r"\Psi" not in w for w in written)
+        assert any("Ψ" in w or "mathbf" not in w for w in written)
+
 
 # ---------------------------------------------------------------------------
 # Group E — Block math detection
@@ -424,3 +439,47 @@ class TestMermaidRendering:
                 scb._on_mermaid_rendered(fake_png)
 
         assert rendered, "_render_syntax fallback should run after mount error"
+
+
+# ---------------------------------------------------------------------------
+# Group G — streamed Textual integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streamed_display_math_stays_out_of_source_like_code_blocks() -> None:
+    """A real streamed assistant turn should keep display math on the prose path."""
+    app = HermesApp(cli=MagicMock())
+    app._math_enabled = True
+    app._math_renderer = "unicode"
+    app._math_max_rows = 12
+
+    async with app.run_test(size=(100, 28)) as pilot:
+        await pilot.pause()
+        app.agent_running = True
+        await pilot.pause()
+
+        app.write_output("and the schrodinger equation for the quantum bros:\n")
+        app.write_output(r"$$\Psi(\mathbf{r}, t) = \hat{H}\Psi(\mathbf{r}, t)$$" + "\n")
+        app.write_output("bonus navier-stokes:\n")
+        app.write_output(
+            r"$$\rho \left( \frac{\partial \mathbf{v}}{\partial t} + \mathbf{v} \cdot \nabla \mathbf{v} \right) = -\nabla p$$"
+            + "\n"
+        )
+
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        app.agent_running = False
+        for _ in range(5):
+            await pilot.pause()
+
+        msg = app.query_one(OutputPanel).current_message
+        assert msg is not None
+        assert len(list(msg.query(StreamingCodeBlock))) == 0
+
+        prose = msg.all_prose_text()
+        assert "$$" not in prose
+        assert r"\Psi" not in prose
+        assert r"\frac" not in prose
+        assert "Ψ" in prose
+        assert "ρ" in prose

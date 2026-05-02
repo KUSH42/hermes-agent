@@ -14273,7 +14273,19 @@ class HermesCLI:
                         except Exception:
                             _panel_ready = None
                         if _panel_ready is not None:
-                            _panel_ready.wait(timeout=1.0)
+                            # Textual TUI correctness depends on the panel's
+                            # ResponseFlowEngine existing before the first
+                            # assistant chunk arrives. If we time out too
+                            # aggressively here, startup/first-turn output can
+                            # fall back to raw Text.from_ansi rendering, which
+                            # drops markdown structure and leaves LaTeX literal.
+                            _panel_ready_timeout_s = 5.0
+                            if not _panel_ready.wait(timeout=_panel_ready_timeout_s):
+                                logger.warning(
+                                    "TUI panel-ready wait timed out after %.1fs; "
+                                    "initial response rendering may fall back to raw text",
+                                    _panel_ready_timeout_s,
+                                )
                     else:
                         app.invalidate()  # Refresh PT status line
 

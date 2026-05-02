@@ -35,6 +35,13 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 - **Symptom**: heading lines lose their first letter in TUI output. `## Markdown Features Showcase` renders as `arkdown Features Showcase`. The bug is invisible without emoji (path goes through `write_with_source`, which re-parses the malformed ANSI) but present in every heading turn.
 - **Affected site**: `hermes_cli/tui/response_flow.py §_normalize_ansi_for_render` (fixed 2026-04-21).
 
+## LaTeX vs source-like heuristic
+
+- **Do not let `_looks_like_source_line()` treat TeX as code.** Unfenced assistant math often contains backslash commands, braces, `=` and `+`, which overlap with the generic source-snippet heuristic. If LaTeX is classified as `IN_SOURCE_LIKE`, the Textual TUI mounts a code block with line numbers instead of sending the line through inline/block math handling.
+- **Guard on TeX shape before source heuristics.** Lines starting with `$$`, `\[` , `\(`, `\begin{...}` or containing LaTeX-style backslash commands like `\frac`, `\Psi`, `\mathbf`, `\left` should return `False` from `_looks_like_source_line()`.
+- **Symptom**: assistant math renders as syntax-highlighted code with line numbers, and raw `$$...$$` / `\Psi` / `\frac` remain visible even though markdown streaming is otherwise working.
+- **Affected site**: `hermes_cli/tui/response_flow.py §_looks_like_source_line` (fixed 2026-05-02).
+
 ## `call_from_thread` must not be called from the app thread
 
 - **`call_from_thread` raises `RuntimeError` when called from the app's own event-loop thread.** Textual checks `self._thread_id == threading.get_ident()` and raises `"The call_from_thread method must run in a different thread from the app"`.
@@ -86,6 +93,8 @@ Key invariant: `_save_to_history` writes `\n+line\n…\n` (leading blank + trail
 - `StartupBannerWidget` startup art cannot rely on `U+2800 BRAILLE PATTERN BLANK` for indentation. In the Textual startup widget path some terminal/font stacks don't advance the cursor consistently for that codepoint, so the visible braille glyphs collapse into the first column. Normalize startup hero art with `cli._sanitize_startup_hero_text()` before templating or frame splicing; that helper replaces `U+2800` with plain spaces and also strips the reserved placeholder marker.
 - The same `U+2800` normalization must be applied to the static startup banner path. `HermesCLI._render_startup_banner_text(print_hero=True)` should build a sanitized `hero_renderable` instead of delegating to `build_welcome_banner(..., print_hero=True)`, or the final post-TTE/static banner can still collapse even when the splice-template path is correct.
 - `StartupBannerWidget` itself must declare `background: $app-bg`. The startup banner is rendered through a Rich capture and mounted as a standalone widget above the transcript; if the host widget is left transparent/default, terminals can show a black block behind the hero art even though the rest of the TUI uses themed `app-bg`.
+- `ThinkingWidget` and its mounted `_AnimSurface` / `_LabelLine` children must each declare `background: $app-bg` in `DEFAULT_CSS`. The thinking stack mounts separate widgets for the spinner surface and label row; if only the parent paints the background, child surfaces can still fall back to terminal black on some PTY/theme combinations.
+- **Do not let first-turn streaming outrun `MessagePanel.on_mount()`.** The Textual assistant transcript only gets markdown / LaTeX handling after `MessagePanel` installs `ResponseFlowEngine`. `cli.py` gates `agent_running=True` with `_panel_ready_event.wait(...)`; if that timeout is too short, early chunks fall back to raw `Text.from_ansi(...)`, which presents exactly as "broken line breaks + literal `$$...$$` / `\frac`". Keep this wait generous (5s as of 2026-05-02) and log timeout regressions.
 
 ## ToolsScreen async gotchas
 

@@ -4643,8 +4643,10 @@ class HermesCLI:
         """
         sanitized_hero = _sanitize_startup_hero_text(plain_hero)
         hero_lines = sanitized_hero.splitlines() or [sanitized_hero]
-        hero_width = max((len(line) for line in hero_lines), default=1)
-        placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in hero_lines]
+        from rich.cells import cell_len as _cell_len
+        hero_width = max((_cell_len(line) for line in hero_lines), default=1) + 1  # +1 padding
+        hero_height = len(hero_lines) + 1  # +1 padding row
+        placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in range(hero_height)]
         placeholder_text = "\n".join(placeholder_lines)
         template = self._render_startup_banner_text(hero_text=placeholder_text)
         template_lines = list(template.split("\n", allow_blank=True))
@@ -4666,7 +4668,7 @@ class HermesCLI:
             "hero_row": start_row,
             "hero_col": start_col,
             "hero_width": hero_width,
-            "hero_height": len(placeholder_lines),
+            "hero_height": hero_height,
         }
 
     def _ensure_startup_banner_artefacts(self, plain_hero: str) -> None:

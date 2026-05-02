@@ -108,9 +108,18 @@ class TestCS1Placeholder:
         # The logic: if placeholder is truthy, use it; else use _default_placeholder
         # We verify by checking the code path condition
         placeholder_arg = "custom"
-        _default = "Type a message · @file · /cmd · !shell"
+        _default = "Type a message · @file · /cmd · $skill · !shell"
         effective = placeholder_arg if placeholder_arg else _default
         assert effective == "custom"
+
+    def test_default_placeholder_includes_skill_affordance(self):
+        import hermes_cli.tui.input.widget as _mod
+        import inspect, re
+
+        src = inspect.getsource(_mod)
+        m = re.search(r'_default_placeholder\s*=\s*"([^"]+)"', src)
+        assert m is not None, "_default_placeholder not found in source"
+        assert "$skill" in m.group(1)
 
 
 # ---------------------------------------------------------------------------

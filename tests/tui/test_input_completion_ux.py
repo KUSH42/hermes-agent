@@ -274,6 +274,7 @@ class TestIdlePlaceholder:
         inp = HermesInput()
         assert "Type a message" in inp._idle_placeholder
         assert "/cmd" in inp._idle_placeholder
+        assert "$skill" in inp._idle_placeholder
         assert "!shell" in inp._idle_placeholder
 
     @pytest.mark.asyncio

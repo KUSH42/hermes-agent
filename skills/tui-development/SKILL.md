@@ -2156,6 +2156,7 @@ top-level: `theme_manager.py`
 - `$name` in CLI input routes through `$`-branch in `cli.py` → `normalize_skill_invocation` → `/name` skill lookup (non-rekey: internal dict stays `/`-keyed)
 - `$fragment` typed in TUI input → `CompletionContext.SKILL_INVOKE` → `_open_skill_picker` (picker is the completion surface; inline overlay suppressed)
 - `Alt+$` chord in TUI → `_open_skill_picker(seed_filter="", trigger_source="chord")`; suppressed in `InputMode.BASH`
+- Empty `HermesInput` idle placeholder now includes `$skill` alongside `@file`, `/cmd`, and `!shell`, so zero-input affordances match the live skill namespace.
 - Prefix-triggered picker (`trigger_source="prefix"`) auto-dismisses when `_SKILL_RE` no longer matches the input value
 - `HermesApp.on_mount()` must call both `_populate_slash_commands()` and `_populate_skills()` when `HermesInput` is enabled; otherwise the banner can list skills while `SkillPickerOverlay` still shows "No skills installed."
 - Unknown `$name` submission in TUI → flash hint "Unknown skill: $name  (Alt+$ for picker)" and return without dispatch

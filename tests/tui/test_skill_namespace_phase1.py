@@ -1,6 +1,7 @@
 """Tests for SNS1 Phase 1 — $skill invocation namespace."""
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -368,6 +369,37 @@ def test_picker_idempotent_remount():
     assert picker._filter == "rev"
 
 
+def test_picker_load_candidates_repopulates_from_app_when_empty():
+    """Empty HermesInput._skills triggers one lazy repopulation before showing empty state."""
+    from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
+    from hermes_cli.tui.types.skill_candidate import SkillCandidate
+
+    candidate = SkillCandidate(
+        name="review-pr",
+        description="Review a PR",
+        trigger_phrases=[],
+        do_not_trigger=[],
+    )
+    fake_input = MagicMock()
+    fake_input._skills = []
+
+    def _populate() -> None:
+        fake_input._skills = [candidate]
+
+    fake_app = MagicMock()
+    fake_app.query_one.return_value = fake_input
+    fake_app._populate_skills.side_effect = _populate
+
+    fake_overlay = MagicMock()
+    fake_overlay.app = fake_app
+    fake_overlay._candidates = []
+
+    SkillPickerOverlay._load_candidates(fake_overlay)
+
+    fake_app._populate_skills.assert_called_once_with()
+    assert fake_overlay._candidates == [candidate]
+
+
 def test_picker_alt_dollar_does_not_auto_dismiss():
     """Chord-triggered picker has _trigger == 'chord'; prefix check skips it."""
     from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
@@ -485,9 +517,38 @@ def test_picker_tab_replaces_dollar_fragment():
 
 
 def test_picker_esc_cancels():
-    """Esc triggers action_dismiss_picker which calls dismiss()."""
+    """Esc triggers action_dismiss_picker through the widget dismiss path."""
     from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
-    assert hasattr(SkillPickerOverlay, "action_dismiss_picker")
+    picker = SkillPickerOverlay.__new__(SkillPickerOverlay)
+    picker.dismiss = MagicMock()
+
+    picker.action_dismiss_picker()
+
+    picker.dismiss.assert_called_once_with()
+
+
+def test_picker_dismiss_removes_widget_and_restores_focus():
+    """Widget-mounted picker dismisses via remove() and restores HermesInput focus."""
+    from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
+
+    class _Isolated(SkillPickerOverlay):
+        pass
+
+    picker = _Isolated.__new__(_Isolated)
+    picker.remove_class = MagicMock()
+    picker.remove = MagicMock()
+    _Isolated.is_mounted = property(lambda self: True)  # type: ignore[assignment]
+
+    input_mock = MagicMock()
+    app_mock = MagicMock()
+    app_mock.query_one.return_value = input_mock
+    _Isolated.app = property(lambda self: app_mock)  # type: ignore[assignment]
+
+    picker.dismiss()
+
+    picker.remove_class.assert_called_once_with("--modal")
+    picker.remove.assert_called_once_with()
+    input_mock.focus.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +695,36 @@ def test_populate_skills_no_input_widget():
     with patch("hermes_cli.tui.services.theme.logger") as mock_log:
         svc.populate_skills()
         mock_log.debug.assert_called()
+
+
+def test_on_mount_populates_skills_with_slash_commands():
+    """HermesApp.on_mount wires both slash commands and skill candidates for the picker."""
+    source = Path("hermes_cli/tui/app.py").read_text()
+    tree = ast.parse(source)
+
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "HermesApp":
+            for item in node.body:
+                if isinstance(item, ast.FunctionDef) and item.name == "on_mount":
+                    on_mount = item
+                    break
+            else:
+                continue
+            break
+    else:
+        pytest.fail("HermesApp.on_mount not found")
+
+    calls = [
+        stmt.value.func.attr
+        for stmt in ast.walk(on_mount)
+        if isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Attribute)
+        and isinstance(stmt.value.func.value, ast.Name)
+        and stmt.value.func.value.id == "self"
+    ]
+    assert "_populate_slash_commands" in calls
+    assert "_populate_skills" in calls
 
 
 def test_dollar_dispatch_in_gateway_mode():

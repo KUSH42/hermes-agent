@@ -212,6 +212,17 @@ Single widget handles 7 interrupt kinds (CLARIFY/APPROVAL/SUDO/SECRET/UNDO/NEW_S
 - Textual 8.x has no CSS `+` or `~` sibling combinators — use Python class toggles instead.
 - `AnimConfigPanel.on_blur` must bail when `InterruptOverlay.has_class("--visible")` or focus trap re-steals focus every tick.
 
+### SkillPickerOverlay (`overlays/skill_picker.py`)
+
+- Mounted with `app.mount(SkillPickerOverlay(...))` as a plain `Widget`, not `push_screen()`. It must own a widget-level `dismiss()` helper; do not call screen-style dismissal APIs on it.
+- Canonical close path: remove `--modal`, `remove()` the widget when mounted, then restore `HermesInput` focus. Route `Esc`, auto-dismiss, and input-side teardown through that helper.
+
+### Widget overlay close API
+
+- For pre-mounted Textual `Widget` overlays, expose a public `dismiss()` helper even when bindings route through `action_dismiss()`.
+- Standard contract: `dismiss()` is a thin wrapper that delegates to `action_dismiss()`. This gives external callers a stable close API without changing Textual action bindings.
+- Use the wrapper for generic overlay-teardown code when the concrete widget type may vary. Reserve screen-style dismissal APIs for actual `Screen`/`ModalScreen` classes only.
+
 ### ResponseFlowEngine (`hermes_cli/tui/response_flow.py`)
 
 - `_init_fields()` initialises all 26 app-independent instance fields. Both `ResponseFlowEngine` and `ReasoningFlowEngine` call it first in `__init__`. **New fields go in `_init_fields()` only** — `ReasoningFlowEngine` inherits automatically.
@@ -2141,6 +2152,7 @@ top-level: `theme_manager.py`
 - `$fragment` typed in TUI input → `CompletionContext.SKILL_INVOKE` → `_open_skill_picker` (picker is the completion surface; inline overlay suppressed)
 - `Alt+$` chord in TUI → `_open_skill_picker(seed_filter="", trigger_source="chord")`; suppressed in `InputMode.BASH`
 - Prefix-triggered picker (`trigger_source="prefix"`) auto-dismisses when `_SKILL_RE` no longer matches the input value
+- `HermesApp.on_mount()` must call both `_populate_slash_commands()` and `_populate_skills()` when `HermesInput` is enabled; otherwise the banner can list skills while `SkillPickerOverlay` still shows "No skills installed."
 - Unknown `$name` submission in TUI → flash hint "Unknown skill: $name  (Alt+$ for picker)" and return without dispatch
 - `/skills` listing legend is phase-gated: phase<2 → "Invoke with $name (or /name in CLI/gateway mode)"; phase>=2 → "$name to invoke (Alt+$ for picker)"
 - **SNS2 (2026-04-26)**: `display.skill_namespace_phase` config key (default 2); `_deprecated_slash_warned: set[str]` in `cli.py` throttles /skill-name warning to once per session; `show_help()` splits "Slash commands"/"Skills" sections at phase>=2; `extra` param removed from `ThemeService.refresh_slash_commands`; phase=3 stub rejects /skill-name (replaced by SNS3)
@@ -2150,6 +2162,7 @@ top-level: `theme_manager.py`
 - `Alt+$` key encoding is terminal-dependent: may arrive as `alt+4`, `alt+dollar_sign`, or `alt+$`. Use `event.character == "$" and key.startswith("alt+")` for reliable detection.
 - `SkillPickerOverlay._trigger` ("prefix"/"chord") controls auto-dismiss: prefix-triggered calls `dismiss()` when `_SKILL_RE` misses on input change; chord-triggered requires explicit Esc/Enter/Tab.
 - `ThemeService.populate_skills()` guards `NoMatches` on `HermesInput` query with `_log.debug(...)` — intentional swallow for headless/gateway mode where no HermesInput mounts.
+- `SkillPickerOverlay._load_candidates()` should repopulate once through `app._populate_skills()` when `HermesInput._skills` is empty. This covers stale startup ordering and keeps the overlay from rendering a false empty state.
 - `SkillCandidate` is a **frozen** dataclass — do not attempt `candidate.name = ...` in tests; construct via `SkillCandidate(name=..., ...)` directly or via `from_skill_info()`.
 - `_classify_source()` checks path fragments: "claude-code" → "claude", "plugins/" or ".claude/plugins" → "plugin", ".claude/skills" → "user", else → "hermes". Order matters; check for "claude-code" before ".claude".
 - Fuzzy `$`-typo suggestions in `cli.py` use `typed[1:][:3]` prefix (3 chars) — not 4. Using 4 caused `"reve"` to miss `"review"` (starts with `"revi"`).

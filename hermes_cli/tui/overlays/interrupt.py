@@ -296,6 +296,10 @@ class InterruptOverlay(Widget, can_focus=True):
             except Exception:
                 self._activate(nxt)
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:  # BINDINGS
         self.dismiss_current("__cancel__")
 

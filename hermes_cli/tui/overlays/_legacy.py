@@ -228,6 +228,10 @@ class SessionOverlay(Widget):
         except Exception:
             _log.warning("SessionOverlay.action_new_session: handle_tui_command failed", exc_info=True)
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self.remove_class("--visible", "--modal")
         try:
@@ -345,6 +349,10 @@ COMPACT      minimal view
     def hide_overlay(self) -> None:
         self.remove_class("--visible")
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
         try:
@@ -450,4 +458,3 @@ A sequence where each number is the sum of the two preceding ones.
 - Formula: `F(n) = F(n-1) + F(n-2)`
 """,
 }
-

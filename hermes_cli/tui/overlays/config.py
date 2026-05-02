@@ -273,6 +273,10 @@ class ConfigOverlay(Widget):
 
     # ── Bindings ──────────────────────────────────────────────────────────
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self._revert_skin_preview_if_any()
         _dismiss_overlay_and_focus_input(self)

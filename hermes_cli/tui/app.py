@@ -845,6 +845,7 @@ class HermesApp(App):
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()
+            self._populate_skills()
         # Initialize hint bar to idle phase — shows key-badge hints immediately
         self._svc_spinner.set_hint_phase("idle")
         # Apply InlineImageBar enabled state from config

@@ -206,6 +206,7 @@ fall through to the `set_interval` branch automatically.
 - If an overlay needs printable key handling, disable the input while it is
   active so input does not consume those keys first.
 - **Composer assist state has one owner now: `HermesInput._resolve_assist(...)`.** Completion overlay, skill picker, and plain mode must converge through `AssistKind` (`NONE`, `OVERLAY`, `SKILL_PICKER`). Do not clear one assist surface directly from another subsystem.
+- **Skill picker data has a separate startup path from the banner.** The banner can render from `get_available_skills()` even when `HermesInput._skills` was never populated. Keep `HermesApp.on_mount()` calling `_populate_skills()`, and let `SkillPickerOverlay._load_candidates()` repopulate once if the cache is still empty.
 - Hidden focused widgets can still swallow scroll or key events. Dismiss paths
   may need explicit focus handoff.
 - Overlay stacking is centralized in `app.py`. Avoid one-off dismiss logic in

@@ -377,6 +377,10 @@ class KeymapOverlay(Widget):
         except NoMatches:
             pass
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
         try:
@@ -484,6 +488,10 @@ class HistorySearchOverlay(Widget):
             self.query_one("#history-search-input", Input).focus()
         except NoMatches:
             pass
+
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""

@@ -167,6 +167,11 @@ class SkillPickerOverlay(Widget):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             inp = self.app.query_one(_HI)
             self._candidates = list(getattr(inp, "_skills", []))
+            if not self._candidates:
+                repopulate = getattr(self.app, "_populate_skills", None)
+                if callable(repopulate):
+                    repopulate()
+                    self._candidates = list(getattr(inp, "_skills", []))
         except Exception:
             self._candidates = []
             _log.debug("Could not load skill candidates from HermesInput", exc_info=True)
@@ -301,6 +306,17 @@ class SkillPickerOverlay(Widget):
             event.stop()
             self._open_skill_md()
 
+    def dismiss(self) -> None:
+        """Close the mounted picker widget and restore input focus."""
+        self.remove_class("--modal")
+        if self.is_mounted:
+            self.remove()
+        try:
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            self.app.query_one(_HI).focus()
+        except (NoMatches, Exception):
+            pass
+
     def _dispatch_selected(self) -> None:
         """Enter: submit $name and close."""
         candidate = self._selected_candidate()
@@ -363,10 +379,4 @@ class SkillPickerOverlay(Widget):
 
     def action_dismiss_picker(self) -> None:
         """Esc: dismiss without dispatch; input retains whatever fragment it had."""
-        self.remove_class("--modal")
         self.dismiss()
-        try:
-            from hermes_cli.tui.input_widget import HermesInput as _HI
-            self.app.query_one(_HI).focus()
-        except (NoMatches, Exception):
-            pass

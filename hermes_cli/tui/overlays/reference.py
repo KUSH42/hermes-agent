@@ -82,6 +82,10 @@ class ReferenceModal(Widget):
     def hide_overlay(self) -> None:
         self.remove_class("--visible", "--modal")
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self.hide_overlay()
         try:

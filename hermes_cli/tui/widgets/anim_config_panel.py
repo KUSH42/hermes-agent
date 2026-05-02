@@ -350,6 +350,10 @@ class AnimConfigPanel(Widget):
 
     # ── key actions ────────────────────────────────────────────────────────
 
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
+        self.action_dismiss()
+
     def action_dismiss(self) -> None:
         self.remove_class("--visible")
         try:
@@ -809,6 +813,10 @@ class AnimGalleryOverlay(Widget):
                 pass
         except IndexError:
             pass
+        self.action_dismiss()
+
+    def dismiss(self) -> None:
+        """Public close helper for widget overlays."""
         self.action_dismiss()
 
     def action_dismiss(self) -> None:

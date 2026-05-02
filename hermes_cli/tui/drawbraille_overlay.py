@@ -145,6 +145,7 @@ class DrawbrailleOverlayCfg:
     rail_output_margin: bool = False
     custom_offset_x: int = -1
     custom_offset_y: int = -1
+    compact_size: str = "small"
 
     def __post_init__(self) -> None:
         if self.multi_color is None:
@@ -214,6 +215,7 @@ def _cfg_from_mapping(d: dict) -> DrawbrailleOverlayCfg:
         rail_output_margin=bool(d.get("rail_output_margin", False)),
         custom_offset_x=int(d.get("custom_offset_x", -1)),
         custom_offset_y=int(d.get("custom_offset_y", -1)),
+        compact_size=str(d.get("compact_size", "small")),
     )
 
 
@@ -684,6 +686,17 @@ class DrawbrailleOverlay(Static):
 
     # ── show / hide ────────────────────────────────────────────────────────
 
+    def _effective_size(self, cfg: DrawbrailleOverlayCfg) -> str:
+        """Return the size name to use for this session, applying compact override if appropriate."""
+        try:
+            if self.app.compact and cfg.size == "medium":
+                return cfg.compact_size  # "small" by default
+        except (RuntimeError, AttributeError):
+            # RuntimeError: NoActiveAppError when no active app context (test harness) — compact check skipped
+            # AttributeError: app not a HermesApp / compact attr absent on test stub — skip override
+            pass
+        return cfg.size
+
     def show(self, cfg: DrawbrailleOverlayCfg) -> None:
         """Make overlay visible and start animation.  Idempotent."""
         self._ensure_orchestrator()
@@ -701,7 +714,7 @@ class DrawbrailleOverlay(Static):
         self.gradient = cfg.gradient
         self.color_b = cfg.color_secondary
         self.dim_bg = cfg.dim_background
-        self.size_name = cfg.size
+        self.size_name = self._effective_size(cfg)
         self.vertical = cfg.vertical
         self.position = cfg.position
         self.show_border = cfg.show_border

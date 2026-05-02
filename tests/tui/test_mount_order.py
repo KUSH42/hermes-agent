@@ -2,7 +2,7 @@
 """Integration tests for DOM mount order and layout fixes in the Hermes TUI.
 
 These tests verify that OutputPanel keeps live-output duo
-(``ThinkingWidget``, ``LiveLineWidget``) at bottom, while
+(``LiveLineWidget``, ``ThinkingWidget``) at bottom, while
 per-turn content mounts ahead of that duo. Tool blocks now live inside their
 turn's ``MessagePanel`` timeline, not as direct ``OutputPanel`` children.
 """
@@ -55,9 +55,9 @@ async def test_output_panel_initial_compose_order():
         assert LiveLineWidget in types
         tw_idx = types.index(ThinkingWidget)
         ll_idx = types.index(LiveLineWidget)
-        assert tw_idx < ll_idx, (
-            f"Expected ThinkingWidget < LiveLineWidget, "
-            f"got indices {tw_idx}, {ll_idx}"
+        assert ll_idx < tw_idx, (
+            f"Expected LiveLineWidget < ThinkingWidget, "
+            f"got indices {ll_idx}, {tw_idx}"
         )
 
 
@@ -98,7 +98,7 @@ async def test_echo_user_message_goes_before_duo():
 
 @pytest.mark.asyncio
 async def test_live_duo_always_last_after_messages():
-    """ThinkingWidget, LiveLineWidget must always be the last two children."""
+    """LiveLineWidget, ThinkingWidget must always be the last two children."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -117,11 +117,11 @@ async def test_live_duo_always_last_after_messages():
         children = list(output.children)
         n = len(children)
         assert n >= 2, "OutputPanel must have at least 2 children"
-        assert isinstance(children[-1], LiveLineWidget), (
-            f"Last child must be LiveLineWidget, got {type(children[-1])}"
+        assert isinstance(children[-1], ThinkingWidget), (
+            f"Last child must be ThinkingWidget, got {type(children[-1])}"
         )
-        assert isinstance(children[-2], ThinkingWidget), (
-            f"Second-to-last child must be ThinkingWidget, got {type(children[-2])}"
+        assert isinstance(children[-2], LiveLineWidget), (
+            f"Second-to-last child must be LiveLineWidget, got {type(children[-2])}"
         )
 
 
@@ -237,7 +237,7 @@ async def test_completed_stb_stays_above_next_turn():
 
 @pytest.mark.asyncio
 async def test_multi_turn_order():
-    """Two turns: UE-1, MP-1, UE-2, MP-2, ThinkingWidget, LiveLineWidget."""
+    """Two turns: UE-1, MP-1, UE-2, MP-2, LiveLineWidget, ThinkingWidget."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await _pause(pilot)
@@ -271,8 +271,8 @@ async def test_multi_turn_order():
         assert i(mp1) < i(ue2), "MP-1 must precede UE-2"
         assert i(ue2) < i(mp2), "UE-2 must precede MP-2"
         # Duo must be after all content
-        assert i(mp2) < i(tw), "MP-2 must precede ThinkingWidget"
-        assert i(tw) < i(ll), "ThinkingWidget must precede LiveLineWidget"
+        assert i(mp2) < i(ll), "MP-2 must precede LiveLineWidget"
+        assert i(ll) < i(tw), "LiveLineWidget must precede ThinkingWidget"
 
 
 @pytest.mark.asyncio
@@ -336,15 +336,15 @@ async def test_thinking_widget_activates_without_layout_shift():
         children = list(output.children)
         n = len(children)
         assert n >= 2
-        assert isinstance(children[-1], LiveLineWidget), (
-            f"Last child must still be LiveLineWidget, got {type(children[-1])}"
+        assert isinstance(children[-1], ThinkingWidget), (
+            f"Last child must still be ThinkingWidget, got {type(children[-1])}"
         )
-        assert isinstance(children[-2], ThinkingWidget), (
-            f"Second-to-last must still be ThinkingWidget, got {type(children[-2])}"
+        assert isinstance(children[-2], LiveLineWidget), (
+            f"Second-to-last must still be LiveLineWidget, got {type(children[-2])}"
         )
-        # ThinkingWidget is before LiveLineWidget
+        # LiveLineWidget stays immediately above the thinking sentinel.
         ll = output.live_line
         i = children.index
-        assert i(tw) < i(ll), (
-            "ThinkingWidget must precede LiveLineWidget"
+        assert i(ll) < i(tw), (
+            "LiveLineWidget must precede ThinkingWidget"
         )

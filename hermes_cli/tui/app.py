@@ -263,8 +263,8 @@ class HermesApp(App):
     CSS_PATH = "hermes.tcss"
 
     # Layer declaration — required before any widget uses ``layer: overlay``
-    # in CSS.  Draw order: default → overlay.
-    LAYERS = ("default", "overlay")
+    # or ``layer: interrupt`` in CSS.  Draw order: default → overlay → interrupt.
+    LAYERS = ("default", "overlay", "interrupt")
 
     def get_default_screen(self) -> Screen:
         """Use custom Screen that prevents focus stealing on right-click."""
@@ -1065,12 +1065,15 @@ class HermesApp(App):
         self._svc_bash._exec_sync(cmd, block)
 
     def _mount_bash_block(self, cmd: str) -> "Any":
-        """Mount a BashOutputBlock into OutputPanel before the ThinkingWidget sentinel."""
+        """Mount a BashOutputBlock into OutputPanel before the live-output duo."""
         from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
-        from hermes_cli.tui.widgets.thinking import ThinkingWidget
         block = BashOutputBlock(cmd)
         output = self._output_panel
-        output.mount(block, before=output.query_one(ThinkingWidget))
+        anchor = output._live_anchor()
+        if anchor is not None:
+            output.mount(block, before=anchor)
+        else:
+            output.mount(block)
         return block
 
     # --- Workspace tracker ---
@@ -1369,7 +1372,11 @@ class HermesApp(App):
             logger.debug(
                 "echo_user_message: mounting UMP (children_before=%d)", len(panel.children)
             )
-            panel.mount(ump, before=panel.query_one(ThinkingWidget))
+            anchor = panel._live_anchor()
+            if anchor is not None:
+                panel.mount(ump, before=anchor)
+            else:
+                panel.mount(ump)
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.

@@ -2869,6 +2869,12 @@ widget._mock_app.get_css_variables.return_value = {...}
 ```
 Direct `widget.app = mock` raises `AttributeError: property 'app' of 'ThinkingWidget' object has no setter`. DO NOT use `PropertyMock` on `type(widget)` — leaks across pytest session. Use isolated subclass cached at module scope.
 
+## Changelog — 2026-05-02 — OutputPanel live-output suffix reorder
+
+- `OutputPanel`'s live-output suffix invariant is now `[LiveLineWidget, ThinkingWidget]`, not `[ThinkingWidget, LiveLineWidget]`. The thinking placeholder must be the bottom-most widget in the active assistant panel so streamed/typewriter text stays directly above it.
+- New content should mount before `OutputPanel._live_anchor()`. Mounting directly `before=output.query_one(ThinkingWidget)` is only safe when the thinking widget is also the first member of the suffix duo, which is no longer true.
+- Update mount-order assertions accordingly: last child `ThinkingWidget`, second-to-last `LiveLineWidget`, and all message/user/tool content must mount before `LiveLineWidget`.
+
 **`caplog` logger name for `thinking.py`:** `"hermes_cli.tui.widgets.thinking"`. Use `caplog.set_level(logging.WARNING, logger=...)` + check `caplog.records` for warnings. `caplog.at_context(...)` is not a reliable alias — prefer `set_level`.
 
 **`_normalize_hex` 3-char shorthand expansion:** `"#abc"` → `"#aabbcc"` (each char doubled). Expansion happens AFTER regex validation; the regex passes both 3-char and 6-char. Downstream `_parse_rgb` only handles 6-char — expansion is required.

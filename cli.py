@@ -4857,65 +4857,8 @@ class HermesCLI:
             def get_height(self, rules, width):
                 return self._line_count
 
-        # --- Phase 1: pre-render all frames into a list ---
-        logger.info(
-            "TTE: pre-rendering frames effect=%s max_frames=%d max_wall_s=%.1f",
-            cfg.effect_name, MAX_FRAMES, MAX_WALL_S,
-        )
+        # Compute render width before starting the producer thread.
         from textual.content import Content as _Content
-        anim_frames: list = []
-        _pre_start = time.monotonic()
-        try:
-            for i, raw_frame in enumerate(
-                iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
-            ):
-                if not getattr(app, "is_running", True):
-                    break
-                if STARTUP_TTE_SKIP.is_set():
-                    break
-                if i >= MAX_FRAMES or (time.monotonic() - _pre_start) >= MAX_WALL_S:
-                    break
-                rich_frame = (
-                    self._splice_startup_banner_frame(template, raw_frame)
-                    if template is not None
-                    else Text.from_ansi(raw_frame)
-                )
-                rich_frame.no_wrap = True
-                rich_frame.overflow = "ignore"
-                # Pre-convert Text→Content in the background thread so the event
-                # loop receives a Visual that widget.update() passes through
-                # visualize() with an O(1) isinstance check instead of calling
-                # Content.from_rich_text() (~2.5ms/frame) on every _tick.
-                try:
-                    anim_frames.append(_Content.from_rich_text(rich_frame, console=None))
-                except Exception:
-                    anim_frames.append(rich_frame)
-        except Exception as exc:
-            self._handle_tte_producer_exc(exc)
-
-        rendered_any = bool(anim_frames)
-        logger.info(
-            "TTE: pre-render done frames=%d elapsed=%.2fs rendered_any=%s",
-            len(anim_frames), time.monotonic() - _pre_start, rendered_any,
-        )
-
-        if not rendered_any:
-            return False
-
-        # Append static frame as final entry so animation always ends on a clean still.
-        static = _build_static()
-        try:
-            static = _Content.from_rich_text(static, console=None)
-        except Exception:
-            pass
-        anim_frames.append(static)
-
-        # --- Phase 1.5: pre-render Content → Strip lists in background thread ---
-        # Each Content.render_strips() call runs _wrap_and_format() creating O(lines×spans)
-        # Segment objects.  At 60fps the allocation rate drives Python Gen-2 GC at ~1Hz,
-        # producing the visible 1Hz stutter even after Content pre-conversion.
-        # We pre-render every frame to a _CachedStripsVisual before installing the timer;
-        # the event loop then calls render_strips() → O(1) list return, zero allocation.
         _render_w = int(getattr(app, "_startup_output_panel_width", 0) or 0)
         if not _render_w:
             try:
@@ -4923,41 +4866,123 @@ class HermesCLI:
                 _render_w = _shutil.get_terminal_size(fallback=(80, 24)).columns
             except Exception:
                 _render_w = 80
-        if _render_w > 0:
-            _pre15_start = time.monotonic()
-            _base_style = _TxtStyle()
-            _pre15_ok = 0
-            for _i15, _frame15 in enumerate(anim_frames):
-                if isinstance(_frame15, _Content):
+        _base_style = _TxtStyle()
+
+        # Number of frames to pre-render before starting playback.  Small enough
+        # that the first frame appears quickly; large enough to absorb jitter.
+        _PREFETCH_FRAMES = 15
+
+        # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
+        # Frames are appended to anim_frames as they are generated; playback
+        # starts after _PREFETCH_FRAMES frames are ready rather than waiting
+        # for all frames.  Phase 1.5 (Content→CachedStripsVisual) is inlined
+        # per-frame to eliminate the separate batch pass and its associated
+        # startup latency (was 1-3 extra seconds before first frame appeared).
+        anim_frames: list = []
+        _pre_start = time.monotonic()
+        prefetch_ready = _threading.Event()
+        producer_done = _threading.Event()
+        rendered_any_flag: list = [False]  # [True] once first anim frame appended
+
+        def _produce() -> None:
+            try:
+                for i, raw_frame in enumerate(
+                    iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
+                ):
+                    if not getattr(app, "is_running", True):
+                        break
+                    if STARTUP_TTE_SKIP.is_set():
+                        break
+                    if i >= MAX_FRAMES or (time.monotonic() - _pre_start) >= MAX_WALL_S:
+                        break
+                    rich_frame = (
+                        self._splice_startup_banner_frame(template, raw_frame)
+                        if template is not None
+                        else Text.from_ansi(raw_frame)
+                    )
+                    rich_frame.no_wrap = True
+                    rich_frame.overflow = "ignore"
+                    # Phase 1: Text → Content
                     try:
-                        _lines15 = _frame15._wrap_and_format(
-                            _render_w, no_wrap=True, overflow="fold"
-                        )
-                        _strips15 = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines15]
-                        anim_frames[_i15] = _CachedStripsVisual(_strips15, _render_w, source=_frame15)
-                        _pre15_ok += 1
+                        content = _Content.from_rich_text(rich_frame, console=None)
                     except Exception:
-                        pass  # leave as Content — acceptable but not optimal
-            logger.info(
-                "TTE: pre-rendered %d/%d frames to strips in %.3fs (width=%d)",
-                _pre15_ok, len(anim_frames), time.monotonic() - _pre15_start, _render_w,
-            )
+                        content = rich_frame  # type: ignore[assignment]
+                    # Phase 1.5 inlined: Content → CachedStripsVisual (zero GC at render time)
+                    frame: object = content
+                    if _render_w > 0 and isinstance(content, _Content):
+                        try:
+                            _lines = content._wrap_and_format(
+                                _render_w, no_wrap=True, overflow="fold"
+                            )
+                            _strips = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines]
+                            frame = _CachedStripsVisual(_strips, _render_w, source=content)
+                        except Exception:
+                            pass  # content fallback is fine
+                    anim_frames.append(frame)
+                    if not rendered_any_flag[0]:
+                        rendered_any_flag[0] = True
+                    if len(anim_frames) == _PREFETCH_FRAMES:
+                        prefetch_ready.set()
+            except Exception as exc:
+                self._handle_tte_producer_exc(exc)
+            finally:
+                # Append static frame last so animation always ends on a clean still.
+                _static = _build_static()
+                try:
+                    _static_c = _Content.from_rich_text(_static, console=None)
+                    if _render_w > 0:
+                        try:
+                            _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
+                            _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
+                            _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore[assignment]
+                        except Exception:
+                            pass
+                    anim_frames.append(_static_c)
+                except Exception:
+                    anim_frames.append(_static)
+                producer_done.set()
+                prefetch_ready.set()  # unblock waiter if never hit _PREFETCH_FRAMES
+
+        logger.info(
+            "TTE: streaming producer starting effect=%s max_frames=%d max_wall_s=%.1f",
+            cfg.effect_name, MAX_FRAMES, MAX_WALL_S,
+        )
+        producer_thread = _threading.Thread(
+            target=_produce, daemon=True, name="hermes-tte-producer"
+        )
+        producer_thread.start()
+
+        # Wait for the first batch before handing off to the event loop.
+        if not prefetch_ready.wait(timeout=MAX_WALL_S):
+            logger.warning("TTE: prefetch timed out after %.1fs; aborting", MAX_WALL_S)
+            return False
+
+        if not rendered_any_flag[0]:
+            return False
+
+        logger.info(
+            "TTE: prefetch ready frames=%d elapsed=%.2fs",
+            len(anim_frames), time.monotonic() - _pre_start,
+        )
 
         # --- Phase 2: loop-driven playback ---
+        # _tick runs on the event loop; the producer thread may still be appending
+        # frames concurrently.  When _tick catches up to the producer it yields
+        # (no-op tick) rather than stopping, until producer_done is set.
         idx = [0]
         playback_done = _threading.Event()
         timer_ref: list = []
 
-        _widget_cache: list = []  # [0] = cached StartupBannerWidget or None sentinel
+        _widget_cache: list = []  # [0] = cached StartupBannerWidget
 
         def _tick() -> None:
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
-            exhausted = idx[0] >= len(anim_frames)
             skipping = STARTUP_TTE_SKIP.is_set()
-            if exhausted or skipping:
-                # On skip: jump to last frame (static) so the final state is always clean.
-                if skipping and not exhausted:
+            exhausted = idx[0] >= len(anim_frames)
+            if skipping:
+                # Jump to last available frame (static if producer finished).
+                if not exhausted:
                     final = anim_frames[-1]
                     try:
                         w = _widget_cache[0] if _widget_cache else app.query_one(StartupBannerWidget)
@@ -4967,6 +4992,14 @@ class HermesCLI:
                 if timer_ref:
                     timer_ref[0].stop()
                 playback_done.set()
+                return
+            if exhausted:
+                if producer_done.is_set():
+                    # Producer finished and we've displayed every frame.
+                    if timer_ref:
+                        timer_ref[0].stop()
+                    playback_done.set()
+                # else: producer still running; yield this tick and wait for more frames.
                 return
             frame = anim_frames[idx[0]]
             idx[0] += 1
@@ -4991,10 +5024,10 @@ class HermesCLI:
         app.call_from_thread(_install_timer)
         playback_done.wait(timeout=MAX_WALL_S + 5.0)
 
-        if rendered_any:
+        if rendered_any_flag[0]:
             self._first_input_seen.wait(timeout=0.25)
 
-        return rendered_any
+        return rendered_any_flag[0]
 
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.

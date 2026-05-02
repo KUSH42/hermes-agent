@@ -154,7 +154,7 @@ class TestSS2WorkingHardStall:
 
 class TestSS3ThinkingAnchor:
     def test_thinking_sentinel_position_preserved(self):
-        """Sentinel pattern: children inserted before=ThinkingWidget, so it stays last."""
+        """Sentinel pattern: live content mounts before the duo, so ThinkingWidget stays last."""
         from hermes_cli.tui.widgets.thinking import ThinkingWidget
         # This is enforced by app.py usage pattern; test documents the contract.
         assert ThinkingWidget is not None

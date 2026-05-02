@@ -140,19 +140,25 @@ class TestDecryptReveal:
         for ch in np._frame:
             assert ch.current == ch.target
 
-    def test_decrypt_completes_within_max_ticks(self):
+    def test_decrypt_completes_within_max_duration(self):
         np = _make_np_effects()
-        # _DECRYPT_TICKS=150, "Hermes"=6 chars → step=30, max lock_at≈150+jitter
-        # Use deterministic jitter=0 and generous ceiling
-        with patch("hermes_cli.tui.widgets._random.randint", return_value=0):
-            np._init_decrypt()  # re-init with deterministic lock_at values
-        max_ticks = 155  # ceil(150) + buffer
-        for tick in range(max_ticks):
-            np._tick = tick + 1
-            np._tick_startup()
-            if np._state == _NPState.IDLE:
-                break
-        assert np._state == _NPState.IDLE, f"Still in STARTUP after {max_ticks} ticks"
+        # _DECRYPT_DURATION_S=5.0, "Hermes"=7 chars → step≈0.833s
+        # Simulate wall-clock time passing by mocking time.monotonic
+        import time as _time
+        t0 = 1000.0  # arbitrary base
+        mock_now = [t0]
+        with patch("hermes_cli.tui.widgets.time") as mock_time:
+            mock_time.monotonic = lambda: mock_now[0]
+            with patch("hermes_cli.tui.widgets._random.uniform", return_value=0.0):
+                np._init_decrypt()
+            # Advance time in 50ms steps up to 6 seconds
+            max_steps = int(6.0 / 0.05)
+            for step_i in range(max_steps):
+                mock_now[0] = t0 + (step_i + 1) * 0.05
+                np._tick_startup()
+                if np._state == _NPState.IDLE:
+                    break
+            assert np._state == _NPState.IDLE, f"Still in STARTUP after 6s of simulated time"
 
 
 # ---------------------------------------------------------------------------

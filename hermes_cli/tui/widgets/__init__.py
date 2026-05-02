@@ -32,6 +32,8 @@ import logging
 import math
 import random as _random
 import threading as _threading
+
+_log = logging.getLogger(__name__)
 import time
 from dataclasses import dataclass
 from dataclasses import field as _dc_field
@@ -433,7 +435,7 @@ class OutputPanel(ScrollableContainer):
             # best-effort UI update; widget may not be mounted
             pass
         # W-11: mount the scroll-state badge before the live-output duo so the
-        # [ThinkingWidget, LiveLineWidget] suffix invariant is preserved.
+        # [LiveLineWidget, ThinkingWidget] suffix invariant is preserved.
         badge = OutputPanelScrollBadge()
         anchor = self._live_anchor()
         if anchor is not None:
@@ -478,8 +480,8 @@ class OutputPanel(ScrollableContainer):
         # all message content. Empty on init; startup thread fills it via
         # call_from_thread → set_frame without any runtime mount.
         yield StartupBannerWidget(id="startup-banner")
-        yield ThinkingWidget(id="thinking")
         yield LiveLineWidget(id="live-line")
+        yield ThinkingWidget(id="thinking")
 
     @property
     def live_line(self) -> LiveLineWidget:
@@ -494,11 +496,11 @@ class OutputPanel(ScrollableContainer):
     def _live_anchor(self) -> "Widget | None":
         """Return the first-present live-output member, or None if neither composed.
 
-        Order: ThinkingWidget then LiveLineWidget. Returning the *first present*
+        Order: LiveLineWidget then ThinkingWidget. Returning the *first present*
         member means new mounts land before both, preserving the suffix invariant
-        [ThinkingWidget, LiveLineWidget].
+        [LiveLineWidget, ThinkingWidget].
         """
-        for cls in (ThinkingWidget, LiveLineWidget):
+        for cls in (LiveLineWidget, ThinkingWidget):
             try:
                 return self.query_one(cls)
             except NoMatches:
@@ -528,7 +530,7 @@ class OutputPanel(ScrollableContainer):
                 )
                 self.mount(panel, after=last_ump)
             except NoMatches:
-                # No UMP yet — fall back to before ThinkingWidget/LiveLineWidget.
+                # No UMP yet — fall back to before LiveLineWidget/ThinkingWidget.
                 anchor = self._live_anchor()
                 _LOG.debug(
                     "new_message: no UMP found, mounting MP before anchor=%s children_count=%d",
@@ -895,7 +897,7 @@ class _NPChar:
     target: str
     current: str
     locked: bool
-    lock_at: int
+    lock_at: float
     style: Style
 
 
@@ -947,6 +949,7 @@ class AssistantNameplate(Widget):
         self._state = _NPState.STARTUP
         self._frame: list[_NPChar] = []
         self._tick = 0
+        self._startup_t0 = 0.0  # wall-clock start of decrypt animation
         self._timer = None
         self._effects_enabled = effects_enabled
         if idle_effect == "breathe":
@@ -1022,7 +1025,9 @@ class AssistantNameplate(Widget):
         if not self._effects_enabled:
             return  # effects disabled — skip animation/timer setup
         if self.styles.display == "none":
+            _log.debug("nameplate on_mount: skipped (display:none)")
             return  # hidden — skip animation setup; widget is paint-ready if display is later restored
+        _log.debug("nameplate on_mount: starting decrypt animation for %r", self._target_name)
         self._init_decrypt()
         self._timer = self.set_interval(1 / 30, self._advance)
         # A2: watch status_phase to pause/resume pulse
@@ -1073,6 +1078,10 @@ class AssistantNameplate(Widget):
         self._linked_rule = rule
 
     def transition_to_active(self, label: str = "● thinking") -> None:
+        _log.debug(
+            "nameplate transition_to_active: prev_state=%s label=%r",
+            self._state.value, label,
+        )
         self._active_label = label
         if self._state == _NPState.MORPH_TO_IDLE:
             self._snap_to_idle()
@@ -1082,6 +1091,10 @@ class AssistantNameplate(Widget):
         self._anim_min_end = time.monotonic() + self._MIN_ANIM_S
 
     def transition_to_idle(self) -> None:
+        _log.debug(
+            "nameplate transition_to_idle: prev_state=%s",
+            self._state.value,
+        )
         if self._last_was_error:
             self._last_was_error = False
             self._state = _NPState.ERROR_FLASH
@@ -1179,19 +1192,30 @@ class AssistantNameplate(Widget):
                 pass
 
     def _tick_startup(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._startup_t0
         all_locked = True
+        newly_locked = 0
         for ch in self._frame:
             if ch.locked:
                 continue
-            if self._tick >= ch.lock_at:
+            if now >= ch.lock_at:
                 ch.current = ch.target
                 ch.locked = True
                 ch.style = Style.parse(self._idle_color_hex)
+                newly_locked += 1
             else:
                 ch.current = _random.choice(_NP_POOL)
                 ch.style = _NP_DECRYPT_COLOR
                 all_locked = False
+        if newly_locked:
+            locked_count = sum(1 for c in self._frame if c.locked)
+            _log.debug(
+                "nameplate decrypt tick: elapsed=%.3fs newly_locked=%d total=%d/%d",
+                elapsed, newly_locked, locked_count, len(self._frame),
+            )
         if all_locked and self._frame:
+            _log.debug("nameplate decrypt DONE: total_elapsed=%.3fs", elapsed)
             self._state = _NPState.IDLE
             self._enter_idle_timer()
 
@@ -1269,7 +1293,7 @@ class AssistantNameplate(Widget):
 
     # --- helpers ---
 
-    _DECRYPT_TICKS = 150  # 5s @ 30fps — startup splash only
+    _DECRYPT_DURATION_S = 5.0  # wall-clock seconds — startup splash only
     _MORPH_TICKS = 8      # ~267ms @ 30fps — active/idle transitions
     _BEAT_PULSE_TICKS    = 30
     _BEAT_SHIMMER_TICKS  = 30
@@ -1278,18 +1302,24 @@ class AssistantNameplate(Widget):
 
     def _init_decrypt(self) -> None:
         self._frame = []
+        self._startup_t0 = time.monotonic()
         n = max(1, len(self._target_name))
-        step = self._DECRYPT_TICKS / max(1, n - 1)
+        step = self._DECRYPT_DURATION_S / max(1, n - 1)
         for i, ch in enumerate(self._target_name):
-            lock_at = int(round(i * step)) + _random.randint(-1, 1)
+            deadline = self._startup_t0 + i * step + _random.uniform(-step * 0.5, step * 0.5)
             self._frame.append(_NPChar(
                 target=ch,
                 current=_random.choice(_NP_POOL),
                 locked=False,
-                lock_at=max(1, lock_at),
+                lock_at=max(self._startup_t0 + 0.03, deadline),
                 style=_NP_DECRYPT_COLOR,
             ))
         self._tick = 0
+        last_lock = max(c.lock_at for c in self._frame) if self._frame else self._startup_t0
+        _log.debug(
+            "nameplate decrypt init: name=%r n=%d step=%.3fs duration=%.1fs last_lock_in=%.3fs",
+            self._target_name, n, step, self._DECRYPT_DURATION_S, last_lock - self._startup_t0,
+        )
 
     def _init_morph(self, src: str, dst: str) -> None:
         self._morph_src = src

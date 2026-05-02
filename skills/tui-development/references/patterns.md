@@ -211,8 +211,8 @@ Concrete patterns:
 
 ## Output stack rules
 
-- New visible output mounts before `output.query_one(ThinkingWidget)`.
-- Do not place content between `ThinkingWidget` and `LiveLineWidget`.
+- New visible output mounts before the live-output duo anchor (`OutputPanel._live_anchor()`).
+- The suffix invariant is `[LiveLineWidget, ThinkingWidget]`; do not place content between them.
 - Inner content widgets should use hidden overflow. OutputPanel owns vertical
   scrolling.
 - `watch_agent_running(False)` is the canonical turn teardown path. Do not use

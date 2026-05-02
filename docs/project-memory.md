@@ -2,6 +2,9 @@
 
 Memory index links use canonical absolute targets under `~/.hermes` when available; `project_*.md`, `feedback_*.md`, and `reference_*.md` are stable alias names there.
 
+## ThinkingWidget Gradient + Animation Pools Spec (2026-05-02)
+- [ThinkingWidget gradient + randomized animation pools spec](/home/xush/.hermes/2026-05-02-thinking-widget-gradient-randomization-spec.md) — DRAFT follow-up spec for the April 22 ThinkingWidget redesign; moves the animated input spinner off `TextArea.placeholder` onto `#spinner-overlay`, adds a real per-cell gradient to the braille `_AnimSurface`, and extends `tui.thinking.{engine,effect,long_wait_engine,long_wait_effect}` to accept scalar-or-list config values with one validated random pick per phase
+
 ## Startup TTE Pipeline Correctness (2026-05-01)
 - [Startup TTE pipeline correctness](/home/xush/.hermes/2026-05-01-startup-tte-pipeline-correctness.md) — IMPLEMENTED on `feat/textual-migration` descendant worktree; startup banner now waits on `OUTPUT_PANEL_WIDTH_READY` before caching splice artefacts, uses cached splice/static paths to avoid preflight/frame-0 jump and redundant banner rebuilds, reserves PUA marker `\uE000` for hero placeholders, clips hero rows by terminal cells, exits producer when `app.is_running` is false, and exposes startup skip through `StartupBannerWidget` (`Esc`/`s`) plus first printable composer key; targeted verification file `tests/tui/test_startup_tte_pipeline.py` (13 tests)
 

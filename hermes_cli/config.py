@@ -913,7 +913,7 @@ DEFAULT_CONFIG = {
             "hold_ms": 400,
             "render_mode": "dissolve",
             "color": "#00ff66",
-            "total_duration_s": 3.0,
+            "total_duration_s": 5.0,
         },
         "nameplate_effects": True,           # master switch for AssistantNameplate animations
         "nameplate_idle_effect": "shimmer",  # idle animation: any VALID_EFFECTS value
@@ -2964,7 +2964,7 @@ class SdfSplashConfig:
     hold_ms: int = 400
     render_mode: str = "dissolve"
     color: str = "#00ff66"
-    total_duration_s: float = 3.0
+    total_duration_s: float = 5.0
 
 
 @dataclass

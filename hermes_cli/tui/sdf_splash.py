@@ -26,7 +26,7 @@ def run_sdf_splash(cfg: object) -> None:
     morph_ms = float(getattr(cfg, "morph_ms", 600))
     render_mode = getattr(cfg, "render_mode", "dissolve")
     color = getattr(cfg, "color", "#00ff66")
-    total_duration_s = float(getattr(cfg, "total_duration_s", 3.0))
+    total_duration_s = float(getattr(cfg, "total_duration_s", 5.0))
 
     tw, th = shutil.get_terminal_size((80, 24))
     canvas_w, canvas_h = tw, max(th - 2, 4)

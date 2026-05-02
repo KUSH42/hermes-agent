@@ -28,8 +28,8 @@ HermesApp
 │   │   ├── InlineImage / AnimatedEmojiWidget  (custom emoji image widgets)
 │   │   ├── InlineProseLog               (prose + inline image compositor)
 │   │   └── CopyableRichLog / CopyableBlock (prose blocks)
-│   ├── ThinkingWidget                   (animated thinking indicator — always last-1)
-│   └── LiveLineWidget                   (streaming token line — always last)
+│   ├── LiveLineWidget                   (streaming token line — always last-1)
+│   └── ThinkingWidget                   (animated thinking indicator — always last)
 ├── StatusBar / VoiceStatusBar / FPSCounter / HintBar / AnimatedCounter
 ├── DrawbrailleOverlay / AnimConfigPanel    (braille animation overlay)
 ├── CompletionOverlay → VirtualCompletionList + PreviewPanel

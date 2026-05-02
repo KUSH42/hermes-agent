@@ -78,7 +78,7 @@ class DrawbrailleOverlayCfg:
     animation: str = "dna"
     trigger: str = "agent_running"
     fps: int = 15
-    position: str = "center"
+    position: str = "bottom-right"
     size: str = "medium"
     vertical: bool = False
     color: str = "$accent"
@@ -159,7 +159,7 @@ def _cfg_from_mapping(d: dict) -> DrawbrailleOverlayCfg:
         animation=str(d.get("animation", "dna")),
         trigger=str(d.get("trigger", "agent_running")),
         fps=int(d.get("fps", 15)),
-        position=str(d.get("position", "top-right")),
+        position=str(d.get("position", "bottom-right")),
         size=str(d.get("size", "medium")),
         vertical=bool(d.get("vertical", True)),
         color=str(d.get("color", "$accent")),

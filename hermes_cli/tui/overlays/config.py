@@ -554,13 +554,15 @@ class ConfigOverlay(Widget):
             if not opt_id.startswith("co-skin-opt-"):
                 return
             name = opt_id[len("co-skin-opt-"):]
-            tm = getattr(self.app, "_theme_manager", None)
-            if tm is None:
-                return
-            if not hasattr(tm, "load_skin"):
-                return
             try:
-                tm.load_skin(name)
+                apply_named_skin = getattr(self.app, "apply_named_skin", None)
+                if callable(apply_named_skin):
+                    apply_named_skin(name)
+                else:
+                    tm = getattr(self.app, "_theme_manager", None)
+                    if tm is None or not hasattr(tm, "load_skin"):
+                        return
+                    tm.load_skin(name)
             except Exception:
                 _log.debug("skin preview load_skin(%r) failed", name, exc_info=True)
             event.stop()
@@ -654,12 +656,16 @@ class ConfigOverlay(Widget):
             _cfg_save_config(cfg)
         except Exception:
             _log.warning("Failed to persist skin selection %r", name, exc_info=True)
-        tm = getattr(self.app, "_theme_manager", None)
-        if tm is not None and hasattr(tm, "load_skin"):
-            try:
-                tm.load_skin(name)
-            except Exception:
-                pass
+        try:
+            apply_named_skin = getattr(self.app, "apply_named_skin", None)
+            if callable(apply_named_skin):
+                apply_named_skin(name)
+            else:
+                tm = getattr(self.app, "_theme_manager", None)
+                if tm is not None and hasattr(tm, "load_skin"):
+                    tm.load_skin(name)
+        except Exception:
+            _log.warning("Failed to apply skin selection %r", name, exc_info=True)
         # Fresh snapshot so Esc from now on reverts to the newly persisted skin
         self._take_skin_snapshot()
         try:

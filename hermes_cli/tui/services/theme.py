@@ -45,13 +45,24 @@ class ThemeService(AppService):
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
         """Apply a skin as CSS variable overrides. Safe to call via call_from_thread."""
-        from hermes_cli.tui.widgets import _hint_cache, StatusBar, StreamingCodeBlock
-        from hermes_cli.tui.tool_blocks import ToolBlock
         app = self.app
         if isinstance(skin_vars, dict):
             app._theme_manager.load_dict(skin_vars)
         else:
             app._theme_manager.load([skin_vars])
+        self._refresh_runtime_skin_consumers()
+
+    def apply_named_skin(self, name: str) -> bool:
+        """Apply a registered skin name and refresh all live skin consumers."""
+        ok = self.app._theme_manager.load_skin(name)
+        if ok:
+            self._refresh_runtime_skin_consumers()
+        return ok
+
+    def _refresh_runtime_skin_consumers(self) -> None:
+        from hermes_cli.tui.widgets import _hint_cache, StatusBar, StreamingCodeBlock
+        from hermes_cli.tui.tool_blocks import ToolBlock
+        app = self.app
         app._theme_manager.apply()
         _hint_cache.clear()
         try:

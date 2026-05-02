@@ -134,6 +134,7 @@ def test_theme_service_has_key_methods():
         "flash_hint",
         "copy_text_with_hint",
         "apply_skin",
+        "apply_named_skin",
         "set_status_error",
         "get_selected_text",
         "populate_slash_commands",

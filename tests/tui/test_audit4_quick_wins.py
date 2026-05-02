@@ -205,9 +205,9 @@ class TestSkinPreview:
         from hermes_cli.tui.overlays.config import ConfigOverlay
         ov = self._make_overlay()
         mock_tm = MagicMock()
-        mock_tm.load_skin = MagicMock()
         mock_app = MagicMock()
         mock_app._theme_manager = mock_tm
+        mock_app.apply_named_skin = MagicMock()
         ov._confirm_skin = MagicMock()
 
         mock_opt = MagicMock()
@@ -221,7 +221,7 @@ class TestSkinPreview:
 
         with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
             ConfigOverlay.on_option_list_option_highlighted(ov, event)
-        mock_tm.load_skin.assert_called_once_with("catppuccin")
+        mock_app.apply_named_skin.assert_called_once_with("catppuccin")
         ov._confirm_skin.assert_not_called()
 
     def test_highlight_on_other_list_is_ignored(self):
@@ -230,6 +230,7 @@ class TestSkinPreview:
         mock_tm = MagicMock()
         mock_app = MagicMock()
         mock_app._theme_manager = mock_tm
+        mock_app.apply_named_skin = MagicMock()
 
         mock_opt = MagicMock()
         mock_opt.id = "co-model-opt-claude-3"
@@ -242,7 +243,7 @@ class TestSkinPreview:
 
         with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
             ConfigOverlay.on_option_list_option_highlighted(ov, event)
-        mock_tm.load_skin.assert_not_called()
+        mock_app.apply_named_skin.assert_not_called()
 
     def test_select_still_persists_skin(self):
         from hermes_cli.tui.overlays.config import ConfigOverlay
@@ -260,12 +261,12 @@ class TestSkinPreview:
         from hermes_cli.tui.overlays.config import ConfigOverlay
         ov = self._make_overlay()
         mock_tm = MagicMock()
-        mock_tm.load_skin = MagicMock()
         mock_tm._css_vars = {"accent": "#blue"}
         mock_tm._component_vars = {}
         mock_tm.refresh_css = MagicMock()
         mock_app = MagicMock()
         mock_app._theme_manager = mock_tm
+        mock_app.apply_named_skin = MagicMock()
         ov._snap_css_vars = {"accent": "#original"}
         ov._snap_component_vars = {}
 
@@ -280,7 +281,7 @@ class TestSkinPreview:
         event.stop = MagicMock()
         with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):
             ConfigOverlay.on_option_list_option_highlighted(ov, event)
-        mock_tm.load_skin.assert_called_once()
+        mock_app.apply_named_skin.assert_called_once_with("matrix")
 
         # esc reverts — _cfg_save_config should NOT be called
         with patch.object(type(ov), "app", new_callable=PropertyMock, return_value=mock_app):

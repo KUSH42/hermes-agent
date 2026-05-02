@@ -4894,17 +4894,126 @@ class HermesCLI:
         producer_done = _threading.Event()
         rendered_any_flag: list = [False]  # [True] once first anim frame appended
 
+        # Outside the try block so all four are always bound regardless of import success.
+        _effect_name_norm = cfg.effect_name.strip().lower()
+        _raw_for_cache: list[str] = []    # ANSI strings only; not the processed frames
+        _app_stopped_early: bool = False  # set when not-app.is_running guard fires
+        _produce_raised: bool = False     # True if _produce()'s except clause fired; suppresses write-back of partial frame list
+
+        # Step A — Compute cache key early
+        try:
+            from hermes_cli.tui._tte_cache import (
+                gc_tte_cache,
+                load_tte_frames,
+                save_tte_frames,
+                tte_cache_key,
+            )
+            try:
+                from hermes_cli.skin_engine import get_active_skin
+                _skin = get_active_skin()
+                _skin_colors = (
+                    _skin.get_color("banner_title",  "#FFD700"),
+                    _skin.get_color("banner_accent", "#FFBF00"),
+                    _skin.get_color("banner_dim",    "#CD7F32"),
+                )
+            except Exception:
+                logger.debug("TTE cache: could not load skin colors; key will use defaults", exc_info=True)
+                # Fallbacks match tte_runner.py (not skin_engine.py defaults) so that
+                # degraded-skin cache keys remain consistent with the frames generated.
+                _skin_colors = ("#FFD700", "#FFBF00", "#CD7F32")
+            _cache_key = tte_cache_key(
+                _effect_name_norm, plain_hero, _render_w, _skin_colors, cfg.params
+            )
+        except Exception:
+            logger.debug("TTE cache: module unavailable, disabling cache", exc_info=True)
+            _cache_key = None
+
+        # Step B — Cache-hit fast path, and cache-miss producer path
+        if _cache_key is not None:
+            _cached_ansi = load_tte_frames(_cache_key)
+        else:
+            _cached_ansi = None
+
+        _cache_hit = _cached_ansi is not None
+
+        if _cache_hit:
+            logger.info(
+                "TTE: cache hit effect=%s key=%s frames=%d",
+                _effect_name_norm, _cache_key, len(_cached_ansi),
+            )
+            # Phase 1 + 1.5 inline — fast, no thread needed.
+            # MAX_FRAMES and MAX_WALL_S are both bound from cfg.max_frames/max_wall_s earlier
+            # in the function; already in scope at positions 5–6.
+            # max_wall_s is NOT applied on a cache hit — only the MAX_FRAMES slice applies.
+            # No app.is_running guard in this loop — the loop completes in ≤12 ms regardless,
+            # so an app-stop races the loop and is harmless. This is intentional.
+            for raw_frame in _cached_ansi[:MAX_FRAMES]:
+                rich_frame = (
+                    self._splice_startup_banner_frame(template, raw_frame)
+                    if template is not None
+                    else Text.from_ansi(raw_frame)
+                )
+                rich_frame.no_wrap = True
+                rich_frame.overflow = "ignore"
+                try:
+                    content = _Content.from_rich_text(rich_frame, console=None)
+                except Exception:
+                    # EH-OK: content fallback renders correctly; isinstance(_Content) guard
+                    # below skips Phase 1.5, mirroring the producer-path no-op except.
+                    content = rich_frame  # type: ignore[assignment]
+                frame: object = content
+                if _render_w > 0 and isinstance(content, _Content):
+                    try:
+                        _lines = content._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
+                        _strips = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines]
+                        frame = _CachedStripsVisual(_strips, _render_w, source=content)
+                    except Exception:
+                        # EH-OK: content fallback renders correctly without Phase 1.5;
+                        # matches existing no-op except at producer-path line ~4929
+                        pass
+                anim_frames.append(frame)
+            # Append static terminal frame.
+            # _build_static() is an existing closure defined before this insertion point.
+            _static = _build_static()
+            try:
+                _static_c = _Content.from_rich_text(_static, console=None)
+                if _render_w > 0:
+                    try:
+                        _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
+                        _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
+                        _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore
+                    except Exception:
+                        pass  # EH-OK: content fallback renders correctly without Phase 1.5
+                anim_frames.append(_static_c)
+            except Exception:
+                anim_frames.append(_static)  # raw Text is acceptable if Content fails
+            rendered_any_flag[0] = True
+            producer_done.set()
+            prefetch_ready.set()
+            # fall through to Phase 2 playback — same path as the producer-thread case
+        else:
+            logger.debug("TTE: cache miss effect=%s key=%s", _effect_name_norm, _cache_key)
+            # ↓ existing "TTE: streaming producer starting" log moved here (was unconditional)
+            logger.info(
+                "TTE: streaming producer starting effect=%s max_frames=%d max_wall_s=%.1f",
+                _effect_name_norm, MAX_FRAMES, MAX_WALL_S,
+            )
+
         def _produce() -> None:
+            nonlocal _app_stopped_early   # propagates assignment out to write-back guard
+            nonlocal _produce_raised      # propagates assignment out to write-back guard
             try:
                 for i, raw_frame in enumerate(
                     iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
                 ):
                     if not getattr(app, "is_running", True):
+                        _app_stopped_early = True
                         break
                     if STARTUP_TTE_SKIP.is_set():
                         break
                     if i >= MAX_FRAMES or (time.monotonic() - _pre_start) >= MAX_WALL_S:
                         break
+                    _raw_for_cache.append(raw_frame)
                     rich_frame = (
                         self._splice_startup_banner_frame(template, raw_frame)
                         if template is not None
@@ -4934,6 +5043,7 @@ class HermesCLI:
                     if len(anim_frames) == _PREFETCH_FRAMES:
                         prefetch_ready.set()
             except Exception as exc:
+                _produce_raised = True  # set before _handle_tte_producer_exc in case it re-raises later
                 self._handle_tte_producer_exc(exc)
             finally:
                 # Append static frame last so animation always ends on a clean still.
@@ -4952,28 +5062,44 @@ class HermesCLI:
                     anim_frames.append(_static)
                 producer_done.set()
                 prefetch_ready.set()  # unblock waiter if never hit _PREFETCH_FRAMES
+                if (_raw_for_cache
+                        and _cache_key is not None
+                        and not STARTUP_TTE_SKIP.is_set()
+                        and not _app_stopped_early
+                        and not _produce_raised):
+                    def _write_and_gc() -> None:
+                        save_tte_frames(_cache_key, _raw_for_cache)
+                        gc_tte_cache()   # runs after write so the new file is counted in the cap
 
-        logger.info(
-            "TTE: streaming producer starting effect=%s max_frames=%d max_wall_s=%.1f",
-            cfg.effect_name, MAX_FRAMES, MAX_WALL_S,
-        )
+                    _threading.Thread(
+                        target=_write_and_gc,
+                        daemon=True,
+                        name="hermes-tte-cache-writer",
+                    ).start()
+                    logger.info(
+                        "TTE: cache write-back scheduled effect=%s key=%s frames=%d",
+                        _effect_name_norm, _cache_key, len(_raw_for_cache),
+                    )
+
         producer_thread = _threading.Thread(
             target=_produce, daemon=True, name="hermes-tte-producer"
         )
-        producer_thread.start()
+        if not _cache_hit:
+            producer_thread.start()
 
         # Wait for the first batch before handing off to the event loop.
-        if not prefetch_ready.wait(timeout=MAX_WALL_S):
-            logger.warning("TTE: prefetch timed out after %.1fs; aborting", MAX_WALL_S)
-            return False
+        if not _cache_hit:
+            if not prefetch_ready.wait(timeout=MAX_WALL_S):
+                logger.warning("TTE: prefetch timed out after %.1fs; aborting", MAX_WALL_S)
+                return False
 
-        if not rendered_any_flag[0]:
-            return False
+            if not rendered_any_flag[0]:
+                return False
 
-        logger.info(
-            "TTE: prefetch ready frames=%d elapsed=%.2fs",
-            len(anim_frames), time.monotonic() - _pre_start,
-        )
+            logger.info(
+                "TTE: prefetch ready frames=%d elapsed=%.2fs",
+                len(anim_frames), time.monotonic() - _pre_start,
+            )
 
         # --- Phase 2: loop-driven playback ---
         # _tick runs on the event loop; the producer thread may still be appending

@@ -5056,60 +5056,13 @@ class HermesCLI:
 
         if _cache_hit:
             logger.info(
-                "TTE: cache hit effect=%s key=%s frames=%d",
+                "TTE: cache hit effect=%s key=%s frames=%d (deferred to post-ensure)",
                 _effect_name_norm, _cache_key, len(_cached_ansi),
             )
-            # Phase 1 + 1.5 inline — fast, no thread needed.
-            # MAX_FRAMES and MAX_WALL_S are both bound from cfg.max_frames/max_wall_s earlier
-            # in the function; already in scope at positions 5–6.
-            # max_wall_s is NOT applied on a cache hit — only the MAX_FRAMES slice applies.
-            # No app.is_running guard in this loop — the loop completes in ≤12 ms regardless,
-            # so an app-stop races the loop and is harmless. This is intentional.
-            for raw_frame in _cached_ansi[:MAX_FRAMES]:
-                raw_frame = _strip_ansi_bg(raw_frame)
-                rich_frame = (
-                    self._splice_startup_banner_frame(template_cell[0], raw_frame)
-                    if template_cell[0] is not None
-                    else Text.from_ansi(raw_frame)
-                )
-                rich_frame.no_wrap = True
-                rich_frame.overflow = "ignore"
-                try:
-                    content = _Content.from_rich_text(rich_frame, console=None)
-                except Exception:
-                    # EH-OK: content fallback renders correctly; isinstance(_Content) guard
-                    # below skips Phase 1.5, mirroring the producer-path no-op except.
-                    content = rich_frame  # type: ignore[assignment]
-                frame: object = content
-                if _render_w > 0 and isinstance(content, _Content):
-                    try:
-                        _lines = content._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
-                        _strips = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines]
-                        frame = _CachedStripsVisual(_strips, _render_w, source=content)
-                    except Exception:
-                        # EH-OK: content fallback renders correctly without Phase 1.5;
-                        # matches existing no-op except at producer-path line ~4929
-                        pass
-                anim_frames.append(frame)
-            # Append static terminal frame.
-            # _build_static() is an existing closure defined before this insertion point.
-            _static = _build_static()
-            try:
-                _static_c = _Content.from_rich_text(_static, console=None)
-                if _render_w > 0:
-                    try:
-                        _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
-                        _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
-                        _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore
-                    except Exception:
-                        pass  # EH-OK: content fallback renders correctly without Phase 1.5
-                anim_frames.append(_static_c)
-            except Exception:
-                anim_frames.append(_static)  # raw Text is acceptable if Content fails
-            rendered_any_flag[0] = True
-            producer_done.set()
-            prefetch_ready.set()
-            # fall through to Phase 2 playback — same path as the producer-thread case
+            # Cache-hit frame processing happens AFTER ensure_artefacts so that
+            # template_cell[0] is populated and frames get spliced into the
+            # banner template (the unspliced fallback path was a regression
+            # against the cache-miss producer path).  See Step C-cache below.
         else:
             logger.debug("TTE: cache miss effect=%s key=%s", _effect_name_norm, _cache_key)
             # ↓ existing "TTE: streaming producer starting" log moved here (was unconditional)
@@ -5240,6 +5193,86 @@ class HermesCLI:
             (time.monotonic() - _ensure_t0) * 1000,
             "set" if template_cell[0] is not None else "none",
         )
+
+        # Helper: convert one raw ANSI frame to a renderable (Phase 1 + 1.5).
+        # Used by both the cache-hit prefetch+bg path here and the cache-miss
+        # producer thread.  Pulled out so the two paths apply identical
+        # splicing/wrapping behaviour against the now-populated template.
+        def _process_raw_frame(raw_frame: str):
+            raw_frame = _strip_ansi_bg(raw_frame)
+            rich_frame = (
+                self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                if template_cell[0] is not None
+                else Text.from_ansi(raw_frame)
+            )
+            rich_frame.no_wrap = True
+            rich_frame.overflow = "ignore"
+            try:
+                content = _Content.from_rich_text(rich_frame, console=None)
+            except Exception:
+                # EH-OK: content fallback renders correctly without Phase 1.5
+                content = rich_frame  # type: ignore[assignment]
+            frame: object = content
+            if _render_w > 0 and isinstance(content, _Content):
+                try:
+                    _lines = content._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
+                    _strips = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines]
+                    frame = _CachedStripsVisual(_strips, _render_w, source=content)
+                except Exception:
+                    pass  # EH-OK: content fallback renders correctly
+            return frame
+
+        # Step C-cache — cache-hit fast path.  Process only the first
+        # _PREFETCH_FRAMES synchronously (≈20 ms) so playback can start
+        # immediately, then defer the rest of the cached frames + the static
+        # terminal frame to a background thread.  This eliminates the multi-
+        # second blocking wait that processing all 608 frames upfront caused.
+        if _cache_hit:
+            _cache_t0 = time.monotonic()
+            _cap = min(MAX_FRAMES, len(_cached_ansi))
+            _prefetch_n = min(_PREFETCH_FRAMES, _cap)
+            for raw_frame in _cached_ansi[:_prefetch_n]:
+                anim_frames.append(_process_raw_frame(raw_frame))
+            if anim_frames:
+                rendered_any_flag[0] = True
+            prefetch_ready.set()
+            logger.info(
+                "PLAY-TTE: cache prefetch done +%.0fms frames=%d/%d",
+                (time.monotonic() - _cache_t0) * 1000, _prefetch_n, _cap,
+            )
+
+            def _process_remaining_cache_frames() -> None:
+                try:
+                    for raw_frame in _cached_ansi[_prefetch_n:_cap]:
+                        if not getattr(app, "is_running", True):
+                            break
+                        if STARTUP_TTE_SKIP.is_set():
+                            break
+                        anim_frames.append(_process_raw_frame(raw_frame))
+                    # Append static terminal frame.
+                    _static = _build_static()
+                    try:
+                        _static_c = _Content.from_rich_text(_static, console=None)
+                        if _render_w > 0:
+                            try:
+                                _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
+                                _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
+                                _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore
+                            except Exception:
+                                pass  # EH-OK: fallback renders correctly
+                        anim_frames.append(_static_c)
+                    except Exception:
+                        anim_frames.append(_static)
+                except Exception:
+                    logger.debug("TTE cache bg processing failed", exc_info=True)
+                finally:
+                    producer_done.set()
+
+            _threading.Thread(
+                target=_process_remaining_cache_frames,
+                daemon=True,
+                name="hermes-tte-cache-bg",
+            ).start()
 
         # Step B.1 — drain prelaunch-pre-produced TTE raw frames into anim_frames,
         # running Phase 1/1.5 (Content + CachedStripsVisual) inline now that

@@ -115,11 +115,19 @@ class ToolEntry:
 
 _CHECK_FN_TTL_SECONDS = 30.0
 _check_fn_cache: Dict[Callable, tuple[float, bool]] = {}
+_check_fn_inflight: Dict[Callable, "threading.Event"] = {}
 _check_fn_cache_lock = threading.Lock()
 
 
 def _check_fn_cached(fn: Callable) -> bool:
-    """Return bool(fn()), TTL-cached across calls. Swallows exceptions as False."""
+    """Return bool(fn()), TTL-cached across calls.  Swallows exceptions as False.
+
+    Coordinates concurrent callers via an inflight-event registry so that two
+    threads (e.g. the prelaunch banner worker and the on_mount _tui_startup_display
+    worker) racing on the same expensive check don't both pay the cost
+    (subprocess fork, DNS lookup, etc.).  The second caller blocks on the
+    inflight event and reads the cached result.
+    """
     now = time.monotonic()
     with _check_fn_cache_lock:
         cached = _check_fn_cache.get(fn)
@@ -127,12 +135,30 @@ def _check_fn_cached(fn: Callable) -> bool:
             ts, value = cached
             if now - ts < _CHECK_FN_TTL_SECONDS:
                 return value
+        inflight = _check_fn_inflight.get(fn)
+        if inflight is not None:
+            wait_event: "threading.Event | None" = inflight
+        else:
+            wait_event = None
+            _check_fn_inflight[fn] = threading.Event()
+
+    if wait_event is not None:
+        wait_event.wait(timeout=_CHECK_FN_TTL_SECONDS)
+        with _check_fn_cache_lock:
+            cached = _check_fn_cache.get(fn)
+            if cached is not None:
+                return cached[1]
+        # Other thread failed to populate the cache (timeout, crash); recompute.
+
     try:
         value = bool(fn())
     except Exception:
         value = False
     with _check_fn_cache_lock:
-        _check_fn_cache[fn] = (now, value)
+        _check_fn_cache[fn] = (time.monotonic(), value)
+        ev = _check_fn_inflight.pop(fn, None)
+    if ev is not None:
+        ev.set()
     return value
 
 
@@ -175,14 +201,16 @@ class ToolRegistry:
         return self._snapshot_state()[1]
 
     def _evaluate_toolset_check(self, toolset: str, check: Callable | None) -> bool:
-        """Run a toolset check, treating missing or failing checks as unavailable/available."""
+        """Run a toolset check, treating missing or failing checks as unavailable/available.
+
+        Uses the module-level 30 s TTL cache (_check_fn_cached) so the
+        startup banner render — which calls check_tool_availability per
+        toolset — does not re-fork subprocess.run([docker,version]) etc.
+        on every launch.
+        """
         if not check:
             return True
-        try:
-            return bool(check())
-        except Exception:
-            logger.debug("Toolset %s check raised; marking unavailable", toolset)
-            return False
+        return _check_fn_cached(check)
 
     def get_entry(self, name: str) -> Optional[ToolEntry]:
         """Return a registered tool entry by name, or None."""
@@ -477,23 +505,56 @@ class ToolRegistry:
         return result
 
     def check_tool_availability(self, quiet: bool = False):
-        """Return (available_toolsets, unavailable_info) like the old function."""
-        available = []
-        unavailable = []
-        seen = set()
+        """Return (available_toolsets, unavailable_info) like the old function.
+
+        Toolset check_fns are evaluated in parallel (ThreadPoolExecutor) so a
+        slow check (e.g. ``docker version`` subprocess that takes ~500 ms) does
+        not serialize behind every other slow check.  This was the dominant
+        cost of the startup banner render — ~30 toolsets × ~100 ms each =
+        ~3 s on the critical path before this change.
+
+        check_fn results pass through _check_fn_cached (30 s TTL) so concurrent
+        callers in the same process don't double-fork subprocesses.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+
         entries, toolset_checks = self._snapshot_state()
+
+        # Build the unique-toolset list while preserving registration order.
+        seen: set = set()
+        ordered_toolsets: list[str] = []
+        toolset_entries: dict[str, list] = {}
         for entry in entries:
             ts = entry.toolset
-            if ts in seen:
-                continue
-            seen.add(ts)
-            if self._evaluate_toolset_check(ts, toolset_checks.get(ts)):
+            toolset_entries.setdefault(ts, []).append(entry)
+            if ts not in seen:
+                seen.add(ts)
+                ordered_toolsets.append(ts)
+
+        if not ordered_toolsets:
+            return [], []
+
+        def _check_one(ts: str) -> tuple[str, bool]:
+            return ts, self._evaluate_toolset_check(ts, toolset_checks.get(ts))
+
+        # max_workers = min(toolsets, 16) keeps thread overhead bounded.
+        with ThreadPoolExecutor(
+            max_workers=min(len(ordered_toolsets), 16),
+            thread_name_prefix="tool-availability",
+        ) as pool:
+            results = dict(pool.map(_check_one, ordered_toolsets))
+
+        available: list[str] = []
+        unavailable: list[dict] = []
+        for ts in ordered_toolsets:
+            if results.get(ts, False):
                 available.append(ts)
             else:
+                ts_entries = toolset_entries.get(ts, [])
                 unavailable.append({
                     "name": ts,
-                    "env_vars": entry.requires_env,
-                    "tools": [e.name for e in entries if e.toolset == ts],
+                    "env_vars": ts_entries[0].requires_env if ts_entries else None,
+                    "tools": [e.name for e in ts_entries],
                 })
         return available, unavailable
 

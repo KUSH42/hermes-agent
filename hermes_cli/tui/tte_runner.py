@@ -242,9 +242,14 @@ def _apply_effect_params(
 
     for key, raw in params.items():
         if key == "final_gradient_stops":
-            # Allow users to override skin-derived colors
-            _log.warning("tte_runner: using custom colors from config for %r (overrides skin palette)", effect_name)
             has_colors_override = True
+            if color_cls is not None and isinstance(raw, (list, tuple)) and raw:
+                try:
+                    stops = tuple(color_cls(str(c)) for c in raw)
+                    setattr(cfg, "final_gradient_stops", stops)
+                    _log.warning("tte_runner: using custom colors from config for %r (overrides skin palette)", effect_name)
+                except Exception:
+                    _log.warning("tte_runner: ignoring invalid final_gradient_stops for %r", effect_name, exc_info=True)
             continue
         if key == "parser_spec" or key not in known_keys:
             _log.warning("tte_runner: ignoring unknown %r param: %r", effect_name, key)
@@ -315,12 +320,8 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
         )
         cfg = getattr(effect, "effect_config", None)
         if color_cls is not None and cfg and hasattr(cfg, "final_gradient_stops"):
-            # Only apply skin colors if not already overridden via params
             if not has_colors_override:
                 effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
-                print(f"  Using skin-derived colors: {skin.get_color('banner_title')}, {skin.get_color('banner_accent')}, {skin.get_color('banner_dim')}")
-            else:
-                print(f"  Using custom colors from config params")
         tc = getattr(effect, "terminal_config", None)
         if tc:
             tc.frame_rate = 0  # disable TTE's internal sleep; producer in cli.py paces via deadline loop

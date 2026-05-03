@@ -29,6 +29,15 @@ x-hermes:
     effect: burn
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#FFD39A'
+        - '#F29C38'
+        - '#E2832B'
+        - '#C75B1D'
+        - '#7A3511'
+        - '#C75B1D'
+        - '#F29C38'
   schema: 1
   branding:
     agent_name: Charizard Agent

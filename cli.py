@@ -5001,11 +5001,11 @@ class HermesCLI:
                 )
             return self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
 
-        # Pre-flight: paint banner with BLANK hero so layout is visible while
-        # frames pre-render but the full logo does NOT appear before the animation.
-        # When no template exists (splice unavailable), fall back to full static.
-        # NOTE: app.call_later(_apply_preflight) is issued AFTER template_cell[0] is
-        # populated below so the event loop always sees the resolved template.
+        # Pre-flight: paint banner with BLANK hero so the banner layout is visible
+        # before animation starts, avoiding the jarring empty→frame-1 pop-in.
+        # Only fires when template is ready (template_cell[0] is populated before
+        # call_later fires); if template is unavailable we stay blank rather than
+        # flashing the static colored banner.
         async def _apply_preflight() -> None:
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
@@ -5017,8 +5017,7 @@ class HermesCLI:
                     hero_width = int(tmpl["hero_width"])
                     blank_hero = "\n".join(" " * hero_width for _ in range(hero_height))
                     widget.set_frame(self._splice_startup_banner_frame(tmpl, blank_hero))
-                else:
-                    widget.set_frame(_build_static())
+                # else: template not ready — leave widget empty; TTE frame 1 will fill it
             except NoMatches:
                 logger.debug("TTE: StartupBannerWidget not found for pre-flight")
             except Exception:
@@ -5313,20 +5312,7 @@ class HermesCLI:
                         if STARTUP_TTE_SKIP.is_set():
                             break
                         anim_frames.append(_process_raw_frame(raw_frame))
-                    # Append static terminal frame.
-                    _static = _build_static()
-                    try:
-                        _static_c = _Content.from_rich_text(_static, console=None)
-                        if _render_w > 0:
-                            try:
-                                _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
-                                _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
-                                _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore
-                            except Exception:
-                                pass  # EH-OK: fallback renders correctly
-                        anim_frames.append(_static_c)
-                    except Exception:
-                        anim_frames.append(_static)
+                    # Do NOT append static — freeze on last TTE frame (same as cache-miss path).
                 except Exception:
                     logger.debug("TTE cache bg processing failed", exc_info=True)
                 finally:
@@ -5419,11 +5405,10 @@ class HermesCLI:
             )
             producer_thread.start()
 
-        # Pre-flight placeholder suppressed: showing a static blank-hero frame
-        # before TTE starts produces a visible flash of placeholder chars.
-        # The banner stays at its static build_welcome_banner render until the
-        # first real TTE frame arrives.
-        # app.call_later(_apply_preflight)  # suppressed
+        # Pre-flight: show banner with blank hero so the layout appears before
+        # animation starts.  template_cell[0] is guaranteed set at this point
+        # (populated before call_later fires on the event loop).
+        app.call_later(_apply_preflight)
 
         # Wait for the first batch before handing off to the event loop.
         if not _cache_hit:
@@ -5507,27 +5492,15 @@ class HermesCLI:
         playback_done.wait(timeout=MAX_WALL_S + 5.0)
 
         if rendered_any_flag[0]:
-            # Scroll to END after TTE so the bottom of the banner is visible
-            # (meta info: model, path, session + full skills list).
-            # Force layout=True on the banner first — set_frame skips layout
-            # after frame 1, so height:auto stays sized to the first animation
-            # frame (shorter than the final static frame). The layout pass
-            # corrects virtual_size before scroll_end fires.
+            # Scroll to TOP after TTE so the hero art is visible at the start.
             from hermes_cli.tui.widgets.output_panel import OutputPanel
-            def _scroll_banner_end() -> None:
+            def _scroll_banner_top() -> None:
                 try:
                     panel = app.query_one(OutputPanel)
-                    # Double call_after_refresh: first pass lets the banner's
-                    # layout=True propagate to OutputPanel.virtual_size; second
-                    # pass fires scroll_end once max_scroll_y is non-zero.
-                    def _do_scroll(p=panel):
-                        p.scroll_end(animate=False)
-                    def _chain(p=panel):
-                        app.call_after_refresh(_do_scroll)
-                    app.call_after_refresh(_chain)
+                    app.call_after_refresh(panel.scroll_home, animate=False)
                 except Exception:
                     pass
-            app.call_from_thread(_scroll_banner_end)
+            app.call_from_thread(_scroll_banner_top)
             self._first_input_seen.wait(timeout=0.25)
 
         return rendered_any_flag[0]
@@ -5652,15 +5625,9 @@ class HermesCLI:
             try:
                 widget = app.query_one(StartupBannerWidget)
                 widget.set_frame(final_banner)
-                # Double call_after_refresh: first pass lets height:auto propagate
-                # to OutputPanel.virtual_size; second fires scroll_end.
                 try:
                     panel = app.query_one(OutputPanel)
-                    def _do_scroll(p=panel):
-                        p.scroll_end(animate=False)
-                    def _chain(p=panel):
-                        app.call_after_refresh(_do_scroll)
-                    app.call_after_refresh(_chain)
+                    app.call_after_refresh(panel.scroll_home, animate=False)
                 except Exception:
                     pass
             except Exception as exc:

@@ -855,6 +855,10 @@ This is a `config.yaml` key, **not** a skin YAML key.
 
 **Inline startup-banner TTE pipeline (2026-05-01):**
 - `HermesCLI._play_tte_in_output_panel()` now waits on two widget-side events before building the banner artefacts: `STARTUP_BANNER_READY` (widget mounted) and `OUTPUT_PANEL_WIDTH_READY` (panel width cached). Keep the width wait before `_ensure_startup_banner_artefacts()`.
+- After `STARTUP_BANNER_READY.wait(...)` succeeds, explicitly call
+  `STARTUP_BANNER_READY.set()` before installing the playback timer. `_tick()`
+  uses `is_set()` as the unmount guard; this latch keeps wait-only test stubs
+  and the real event state aligned until a real unmount clears the flag.
 - Startup banner rendering uses a splice template path whenever possible: pre-flight, live frames, skip completion, and post-TTE static all flow through `_splice_startup_banner_frame(template, plain_hero)` so only the hero rectangle changes between frames.
 - Cache contract: `_startup_banner_template` is `None` (untried), `_TEMPLATE_FAILED` (attempted and failed), or a template dict. `_startup_banner_static` is only populated for the fallback path.
 - Reserved marker: `_STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"` is used only inside template detection. Sanitize user hero text through `_sanitize_startup_hero_text()` before sizing or splicing.

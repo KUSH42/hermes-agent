@@ -98,6 +98,8 @@ class _AutocompleteMixin:
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)
+            elif trigger.context is CompletionContext.SLASH_SUBCOMMAND:
+                self._show_subcommand_completions(trigger.parent_command, trigger.fragment)  # type: ignore[attr-defined]
             elif trigger.context in (
                 CompletionContext.PATH_REF,
                 CompletionContext.PLAIN_PATH_REF,

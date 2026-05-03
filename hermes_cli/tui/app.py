@@ -2812,7 +2812,7 @@ class HermesApp(App):
         self,
         seed_filter: str = "",
         trigger_source: str = "prefix",
-    ) -> None:
+    ) -> bool:
         """Mount SkillPickerOverlay or update its filter if already mounted.
 
         Idempotent: calling twice with different seeds updates the live overlay
@@ -2821,12 +2821,17 @@ class HermesApp(App):
 
         Guard: if another modal is already active, decline silently so we never
         stack a skill picker on top of an interrupt overlay or similar.
+
+        Returns:
+            True if the picker was opened or updated successfully.
+            False if blocked by an active modal.
         """
         from textual.css.query import NoMatches as _NM
         from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
         try:
             existing = self.query_one(SkillPickerOverlay)
             existing.set_filter(seed_filter)
+            return True
         except _NM:
             # MOD-4: only open if no conflicting modal is active (or the stack is
             # empty / the top is itself a SkillPickerOverlay).
@@ -2835,7 +2840,7 @@ class HermesApp(App):
                 logger.debug(
                     "_open_skill_picker: blocked by active modal %r", type(top).__name__
                 )
-                return
+                return False
             # MOD-L4: race window — if top_modal() returns SkillPickerOverlay between
             # remove() and on_unmount, a second picker mounts for ~1 frame. Harmless:
             # on_unmount pops the first; the second is the intended replacement.
@@ -2845,6 +2850,7 @@ class HermesApp(App):
                     trigger_source=trigger_source,
                 )
             )
+            return True
 
     def _flash_hint(self, text: str, duration: float = 1.5) -> None:
         self.feedback.flash("hint-bar", text, duration=duration)

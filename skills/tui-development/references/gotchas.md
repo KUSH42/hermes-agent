@@ -680,6 +680,19 @@ When a daemon thread needs to call `app.query_one(SomeWidget)` shortly after app
 - `import threading as _threading` must be in the **top-level imports** of the widget module, not inline near the class definition (linters flag out-of-order imports).
 - The module-level constant (`STARTUP_BANNER_READY = _threading.Event()`) should live immediately before the class definition.
 - Tests must include an `autouse` fixture that calls `event.clear()` before and after each test to prevent module-level state from leaking between tests.
+- If playback code gates on `event.wait(timeout=...)` and later checks `event.is_set()`
+  inside a timer tick, latch the same event with `event.set()` after a successful
+  wait. Some unit tests patch `wait()` only; without the latch, playback can abort
+  immediately even though the mount gate "succeeded."
+
+## _AnimSurface size mocks may expose width without height (2026-05-03)
+
+Bare-instance `ThinkingWidget` / `_AnimSurface` tests often patch `size` with a
+`SimpleNamespace(width=...)` and omit `height`. Render helpers must therefore
+read `getattr(self.size, "height", 1)` instead of assuming `self.size.height`
+exists. If `_render_gradient_line()` touches a missing `height`, the exception
+path collapses the whole row to a blank background strip and hides the real
+gradient behavior being tested.
 
 ## Textual default `Widget.render()` repr leak under real PTY (2026-04-28)
 

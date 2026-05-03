@@ -348,10 +348,12 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             except Exception:
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
-            self.app._open_skill_picker(
+            opened = self.app._open_skill_picker(
                 seed_filter=self._current_trigger.fragment,
                 trigger_source=SKILL_PICKER_TRIGGER_PREFIX,
             )
+            if not opened:
+                return
         else:
             raise ValueError(f"Unknown assist kind: {target!r}")
         # --- Single write site ---

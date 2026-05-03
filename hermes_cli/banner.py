@@ -79,8 +79,8 @@ def _skin_branding(key: str, fallback: str) -> str:
 
 from hermes_cli import __version__ as VERSION, __release_date__ as RELEASE_DATE
 
-HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
+HERMES_AGENT_LOGO = """[#FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
+[#FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
 [#FFBF00]███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗      ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   [/]
 [#FFBF00]██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║      ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   [/]
 [#CD7F32]██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   [/]
@@ -663,7 +663,10 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     tools = tools or []
     enabled_toolsets = enabled_toolsets or []
 
+    _bw_t0 = time.monotonic()
     _, unavailable_toolsets = check_tool_availability(quiet=True)
+    logger.info("BUILD-BANNER: check_tool_avail +%.0fms n_unavail=%d",
+                (time.monotonic() - _bw_t0) * 1000, len(unavailable_toolsets))
     disabled_tools = set()
     # Tools whose toolset has a check_fn are lazy-initialized (e.g. honcho,
     # homeassistant) — they show as unavailable at banner time because the
@@ -723,6 +726,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         left_meta.append(Text.from_markup(f"[dim {session_color}]Session: {sid_display}[/]"))
 
     # BL-3: hoist MCP and skills computation; build summary as the FIRST line
+    _mcp_t0 = time.monotonic()
     try:
         from tools.mcp_tool import get_mcp_status
         mcp_status = get_mcp_status()
@@ -730,9 +734,12 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         logger.debug("get_mcp_status failed", exc_info=True)
         mcp_status = []
     mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
+    logger.info("BUILD-BANNER: mcp_status +%.0fms", (time.monotonic() - _mcp_t0) * 1000)
 
+    _sk_t0 = time.monotonic()
     skills_by_category = get_available_skills()
     total_skills = sum(len(s) for s in skills_by_category.values())
+    logger.info("BUILD-BANNER: skills +%.0fms n=%d", (time.monotonic() - _sk_t0) * 1000, total_skills)
 
     summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
     if mcp_connected:

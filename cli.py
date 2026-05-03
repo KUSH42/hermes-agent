@@ -4647,7 +4647,9 @@ class HermesCLI:
         from model_tools import get_tool_definitions
         from hermes_cli.banner import build_welcome_banner, render_banner_hero_text, resolve_banner_hero_assets
 
+        _rb_t0 = time.monotonic()
         tools = get_tool_definitions(enabled_toolsets=self.enabled_toolsets, quiet_mode=True)
+        logger.info("RENDER-BANNER: get_tools +%.0fms n=%d", (time.monotonic() - _rb_t0) * 1000, len(tools))
         ctx_len = None
         if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
             ctx_len = self.agent.context_compressor.context_length
@@ -4693,6 +4695,7 @@ class HermesCLI:
         if hero_renderable is not None:
             hero_renderable.no_wrap = True
             hero_renderable.overflow = "ignore"
+        _bw_t0 = time.monotonic()
         build_welcome_banner(
             console=capture,
             model=self.model,
@@ -4705,7 +4708,12 @@ class HermesCLI:
             hero_renderable=hero_renderable,
             bg_color=app_bg,
         )
+        logger.info("RENDER-BANNER: build_welcome +%.0fms", (time.monotonic() - _bw_t0) * 1000)
+        _ex_t0 = time.monotonic()
         rendered = Text.from_ansi(capture.export_text(styles=True))
+        logger.info("RENDER-BANNER: export+from_ansi +%.0fms total=%.0fms",
+                    (time.monotonic() - _ex_t0) * 1000,
+                    (time.monotonic() - _rb_t0) * 1000)
         try:
             if app_bg:
                 rendered.stylize(f"on {app_bg}")

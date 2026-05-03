@@ -4705,6 +4705,7 @@ class HermesCLI:
             session_id=self.session_id,
             context_length=ctx_len,
             print_hero=print_hero if hero_renderable is None else False,
+            print_logo=False,  # TUI renders inside a widget; block-letter logo doesn't belong here
             hero_renderable=hero_renderable,
             bg_color=app_bg,
         )

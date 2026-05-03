@@ -886,13 +886,14 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
             warn_color = _skin_color("banner_warning", "#FF8C00")
             warn_dim = _skin_color("banner_warning_dim", "#CD6500")
             key_color = _skin_color("banner_key", "#FFD700")
-            right_lines.append(
-                f"[bold {warn_color}]⚠ {behind} {commits_word} behind[/]"
-                f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
-            )
-            right_lines.append(
-                f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
-            )
+            # NOTE: hidden for recording — re-enable after showcase
+            # right_lines.append(
+            #     f"[bold {warn_color}]⚠ {behind} {commits_word} behind[/]"
+            #     f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
+            # )
+            # right_lines.append(
+            #     f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
+            # )
     except Exception:
         logger.debug("update check failed", exc_info=True)
 

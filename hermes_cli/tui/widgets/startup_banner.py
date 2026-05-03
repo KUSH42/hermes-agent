@@ -55,7 +55,9 @@ class StartupBannerWidget(Static):
         self.refresh()
 
     def set_frame(self, rich_text: Text) -> None:
-        # layout=True only on the first frame so height:auto sizes correctly;
-        # subsequent frames skip the layout pass since line count is constant.
+        # Always layout=True: animation frames are the same size as each other
+        # but the final static banner is taller. Without layout=True on the final
+        # frame, height:auto stays locked to the first animation frame's height,
+        # making max_scroll_y=0 so scroll_end is a no-op.
         self._frame_count += 1
-        self.update(rich_text, layout=self._frame_count == 1)
+        self.update(rich_text, layout=True)

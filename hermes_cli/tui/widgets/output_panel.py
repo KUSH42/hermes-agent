@@ -528,9 +528,9 @@ class OutputPanel(ScrollableContainer):
                 pass
         # R08/R09: scroll anchoring — preserve position after layout recalc.
         # During startup (before any messages), skip scroll_end: it would race
-        # with the async banner-set and scroll past the top of the banner,
-        # leaving the user at the bottom with the banner top cut off.
-        # scroll_home() is called explicitly after the banner is painted.
+        # with the async banner-set and show the wrong position before the final
+        # static frame is painted. scroll_end is called explicitly after the
+        # banner is fully painted (TTE or static path).
         if not getattr(self, "_user_scrolled_up", False):
             from hermes_cli.tui.widgets.message_panel import MessagePanel
             if list(self.query(MessagePanel)):

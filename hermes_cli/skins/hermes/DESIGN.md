@@ -28,6 +28,7 @@ x-hermes:
   startup_tte:
     effect: vhstape
     max_wall_s: 5.0
+    max_frames: 240
   schema: 1
   branding:
     agent_name: Hermes Agent

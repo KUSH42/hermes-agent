@@ -41,6 +41,7 @@ from textual.widget import Widget
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 from hermes_cli.tui.services.tools import ToolCallState
+from hermes_cli.tui.tool_panel.layout_resolver import THRESHOLDS, DensityTier
 
 if TYPE_CHECKING:
     pass
@@ -301,6 +302,97 @@ def _recompute_group_state(
 
 
 # ---------------------------------------------------------------------------
+# Group tier constants (TB-MED-2)
+# ---------------------------------------------------------------------------
+
+_GROUP_STATE_TO_TOOL_STATE: "dict[ToolGroupState, ToolCallState]" = {
+    ToolGroupState.PENDING:   ToolCallState.STARTED,
+    ToolGroupState.RUNNING:   ToolCallState.STREAMING,
+    ToolGroupState.DONE:      ToolCallState.DONE,
+    ToolGroupState.ERR:       ToolCallState.ERROR,
+    ToolGroupState.CANCELLED: ToolCallState.DONE,
+}
+
+_CAP_FOR_TIER: "dict[DensityTier, int | None]" = {
+    DensityTier.HERO:    None,                           # unbounded
+    DensityTier.DEFAULT: THRESHOLDS["GROUP_CAP_DEFAULT"],
+    DensityTier.COMPACT: THRESHOLDS["GROUP_CAP_COMPACT"],
+    DensityTier.TRACE:   THRESHOLDS["GROUP_CAP_TRACE"],
+}
+
+
+# ---------------------------------------------------------------------------
+# GroupOverflowChip (TB-MED-2)
+# ---------------------------------------------------------------------------
+
+
+class GroupOverflowChip(Widget):
+    """Focusable overflow indicator for capped group bodies (concept lines 848-857).
+
+    Enter / Space lifts the parent ToolGroup to HERO tier, lifting the cap.
+    """
+
+    DEFAULT_CSS = """
+    GroupOverflowChip { height: 1; padding-left: 2; }
+    GroupOverflowChip:focus { background: $boost; }
+    """
+    can_focus = True
+    BINDINGS = [
+        Binding("enter", "lift_to_hero", "Show all", show=False),
+        Binding("space", "lift_to_hero", "Show all", show=False),
+    ]
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._n_more = 0
+        self._n_err = 0
+        self._n_running = 0
+        self._tier = DensityTier.DEFAULT
+
+    def update(self, *, n_more: int, n_err: int, n_running: int,
+               tier: "DensityTier") -> None:
+        self._n_more = n_more
+        self._n_err = n_err
+        self._n_running = n_running
+        self._tier = tier
+        self.refresh()
+
+    def render(self) -> "Text":
+        try:
+            from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
+            sep = f" {_glyph(GLYPH_META_SEP)} "
+        except Exception:
+            # grammar module unavailable in test env; use plain separator
+            sep = " · "
+        if self._tier == DensityTier.TRACE:
+            label = f"… {self._n_more} children"
+            if self._n_err:
+                label += f"{sep}{self._n_err} errors"
+        else:
+            label = f"…+{self._n_more} more children"
+            if self._n_err:
+                label += f"{sep}{self._n_err} errors"
+            if self._n_running:
+                label += f"{sep}{self._n_running} running"
+        return Text(label, style="dim")
+
+    def action_lift_to_hero(self) -> None:
+        for a in self.ancestors_with_self:
+            if isinstance(a, ToolGroup):
+                a._user_hero = True
+                a.set_group_tier(DensityTier.HERO)
+                if a.is_mounted:
+                    try:
+                        a.focus()
+                    except Exception:
+                        # focus() may raise if widget is detaching mid-teardown;
+                        # HERO lock is already set — the focus failure is cosmetic only.
+                        _log.debug("action_lift_to_hero: focus() skipped (widget detaching)",
+                                   exc_info=True)
+                return
+
+
+# ---------------------------------------------------------------------------
 # ToolGroup
 # ---------------------------------------------------------------------------
 
@@ -336,6 +428,9 @@ class ToolGroup(Widget):
     can_focus = True
 
     collapsed: reactive[bool] = reactive(False, layout=True)
+    tier: reactive["DensityTier"] = reactive(DensityTier.DEFAULT, layout=True)
+
+    _overflow_chip: "GroupOverflowChip | None" = None
 
     BINDINGS = [
         Binding("enter",       "toggle_collapse", "Toggle group", show=False),
@@ -376,6 +471,10 @@ class ToolGroup(Widget):
         self._last_header_kwargs: dict = {}
         # PG-4: group-level terminal state
         self._group_state: ToolGroupState = ToolGroupState.PENDING
+        # TB-MED-2: group tier cap + HERO lock
+        self._user_hero: bool = False
+        from hermes_cli.tui.tool_panel.layout_resolver import ToolBlockLayoutResolver
+        self._resolver = ToolBlockLayoutResolver()
 
     def compose(self) -> ComposeResult:
         header = GroupHeader()
@@ -384,6 +483,139 @@ class ToolGroup(Widget):
         self._body = body
         yield header
         yield body
+
+    # ------------------------------------------------------------------
+    # TB-MED-2: tier cap methods
+    # ------------------------------------------------------------------
+
+    def set_group_tier(self, tier: "DensityTier") -> None:
+        """Set the group-level tier. ERR children always bypass cap."""
+        if tier != self.tier:
+            self.tier = tier  # triggers watch_tier
+
+    def watch_tier(self, old: "DensityTier", new: "DensityTier") -> None:
+        self._apply_child_render_cap()
+
+    def _resolve_group_tier(
+        self,
+        *,
+        pressure: float,
+        viewport_rows: int,
+        is_offscreen: bool,
+    ) -> None:
+        """Resolve and apply group tier via pressure resolver.
+
+        Does nothing when _user_hero=True (chip-Enter locked HERO).
+        kind=None ensures HERO is ineligible via auto-resolve.
+        """
+        if self._user_hero:
+            return
+        from hermes_cli.tui.tool_panel.layout_resolver import LayoutInputs
+        phase = _GROUP_STATE_TO_TOOL_STATE.get(self._group_state, ToolCallState.DONE)
+        is_error = (self._group_state == ToolGroupState.ERR)
+        child_count = (
+            len([c for c in self._body.children]) if self._body is not None else 0
+        )
+        inputs = LayoutInputs(
+            phase=phase,
+            is_error=is_error,
+            has_focus=bool(getattr(self, "has_focus", False)),
+            user_scrolled_up=False,
+            user_override=False,
+            user_override_tier=None,
+            body_line_count=child_count,
+            threshold=THRESHOLDS["GROUP_CAP_DEFAULT"],
+            kind=None,
+            parent_clamp=None,
+            width=getattr(getattr(self, "size", None), "width", 0),
+            user_collapsed=bool(getattr(self, "collapsed", False)),
+            has_footer_content=False,
+            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
+            pressure=pressure,
+            viewport_rows=viewport_rows,
+            is_offscreen=is_offscreen,
+        )
+        new_tier = self._resolver.resolve(inputs)
+        self.set_group_tier(new_tier)
+
+    def _apply_child_render_cap(self) -> None:
+        try:
+            self._apply_child_render_cap_inner()
+        except Exception:
+            # Cap state going stale on teardown is harmless; next pressure sweep
+            # reapplies it.
+            _log.debug("_apply_child_render_cap skipped", exc_info=True)
+
+    def _apply_child_render_cap_inner(self) -> None:
+        from hermes_cli.tui.tool_panel import ToolPanel as _TP
+        if self._body is None:
+            return
+        cap = _CAP_FOR_TIER.get(self.tier, None)
+        children = [c for c in self._body.children if isinstance(c, _TP)]
+
+        def is_err(p: "_TP") -> bool:
+            vs = getattr(p, "_view_state", None)
+            return vs is not None and vs.state == ToolCallState.ERROR
+
+        def is_running(p: "_TP") -> bool:
+            vs = getattr(p, "_view_state", None)
+            return vs is not None and vs.state in (
+                ToolCallState.STARTED, ToolCallState.STREAMING, ToolCallState.COMPLETING,
+            )
+
+        if cap is None:  # HERO: unbounded
+            for c in children:
+                c.display = True
+            self._set_overflow_chip_visible(False)
+            return
+
+        pinned_pred = is_err if self.tier != DensityTier.COMPACT else (
+            lambda p: is_err(p) or is_running(p)
+        )
+        pinned = [c for c in children if pinned_pred(c)]
+        rest = [c for c in children if not pinned_pred(c)]
+        visible_rest = rest[:max(0, cap - len(pinned))] if cap > 0 else []
+        visible = set(id(c) for c in pinned) | set(id(c) for c in visible_rest)
+
+        n_hidden = 0
+        n_err = sum(1 for c in children if is_err(c))
+        n_running = sum(1 for c in children if is_running(c))
+        for c in children:
+            shown = id(c) in visible
+            c.display = shown
+            if not shown:
+                n_hidden += 1
+
+        self._set_overflow_chip_visible(n_hidden > 0,
+                                        n_more=n_hidden,
+                                        n_err=n_err,
+                                        n_running=n_running,
+                                        tier=self.tier)
+
+    def _set_overflow_chip_visible(self, visible: bool, *,
+                                   n_more: int = 0, n_err: int = 0,
+                                   n_running: int = 0,
+                                   tier: "DensityTier | None" = None) -> None:
+        if not visible:
+            if self._overflow_chip is not None:
+                self._overflow_chip.display = False
+            return
+        if self._overflow_chip is None:
+            self._overflow_chip = GroupOverflowChip()
+            chip_mounted = False
+            try:
+                if self._body is not None and self._body.is_mounted:
+                    self._body.mount(self._overflow_chip)
+                    chip_mounted = True
+            except Exception:
+                _log.debug("overflow chip mount deferred (body not mounted)", exc_info=True)
+            if not chip_mounted:
+                self._overflow_chip = None
+                return
+        self._overflow_chip.display = True
+        self._overflow_chip.update(n_more=n_more, n_err=n_err,
+                                   n_running=n_running,
+                                   tier=tier if tier is not None else self.tier)
 
     def watch_collapsed(self, value: bool) -> None:
         if not self.is_mounted:
@@ -402,6 +634,7 @@ class ToolGroup(Widget):
                         self.focus()
                         break
         except Exception:
+            # focus may be unparented in test mounts; best-effort walk
             pass
 
         # Sync header toggle glyph
@@ -425,6 +658,7 @@ class ToolGroup(Widget):
             return
         if not isinstance(getattr(event, "widget", None), GroupHeader):
             return
+        self._user_hero = False          # clear HERO lock on explicit collapse/expand
         self._user_collapsed = not self.collapsed
         self.collapsed = self._user_collapsed
         if hasattr(event, "stop"):
@@ -432,6 +666,7 @@ class ToolGroup(Widget):
 
     def action_toggle_collapse(self) -> None:
         """Toggle group collapse via keyboard (parity with on_click)."""
+        self._user_hero = False          # clear HERO lock on explicit collapse/expand
         self._user_collapsed = not self.collapsed
         self.collapsed = self._user_collapsed
 
@@ -556,6 +791,7 @@ class ToolGroup(Widget):
         try:
             self._header.set_class(error_count > 0, "--group-has-error")
         except Exception:
+            # header may be unmounted during teardown; --group-has-error is decorative
             pass
 
         # PG-3: authoritative terminal values replace running diff totals
@@ -574,6 +810,7 @@ class ToolGroup(Widget):
         # PG-3: save for _refresh_header_counts partial updates
         self._last_header_kwargs = dict(kwargs)
         self._header.update(**kwargs)
+        self._apply_child_render_cap()
 
     def _refresh_header_counts(self) -> None:
         """PG-3: partial header update with live streaming counters."""
@@ -643,6 +880,7 @@ class ToolGroup(Widget):
                 # Widget not fully mounted; CSS group-state class is decorative,
                 # missed during early mount is harmless — next recompute will apply it.
                 _log.debug("set_class skipped: ToolGroup not fully mounted (state=%s)", self._group_state)
+            self._apply_child_render_cap()
         except Exception:
             _log.exception("toolgroup: on_tool_panel_completed failed")
 
@@ -1007,6 +1245,8 @@ async def _do_append_to_group(
     try:
         group.app._svc_browse.rebuild_browse_anchors()
     except Exception:
+        # _svc_browse may be absent (test mount) or unmounted (teardown);
+        # browse-anchor rebuild is best-effort
         pass
 
 

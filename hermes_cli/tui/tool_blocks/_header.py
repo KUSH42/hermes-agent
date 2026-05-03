@@ -133,6 +133,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         self._flash_msg: str | None = None
         self._flash_expires: float = 0.0
         self._duration: str = ""
+        self._duration_seconds: float = 0.0
         self._is_complete: bool = False
         self._tool_icon: str = ""
         self._tool_icon_error: bool = False
@@ -560,7 +561,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     ("remediation", Text(f"  {self._remediation_hint}", style="dim"))
                 )
         else:
-            tail_segments = _resolver.trim_header_tail(tail_segments, tail_budget, _tier)
+            tail_segments = _resolver.trim_header_tail(
+                tail_segments,
+                tail_budget,
+                _tier,
+                duration_s=getattr(self, "_duration_seconds", 0.0),
+                row_count=getattr(self, "_line_count", 0),
+            )
         from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
         _sep = Text(f" {_glyph(GLYPH_META_SEP)} ", style=self._colors().separator_dim)
         tail = Text()

@@ -448,6 +448,7 @@ class _ToolPanelCompletionMixin:
             if self._completed_at is not None:
                 elapsed = self._completed_at - self._start_time  # type: ignore[attr-defined]
                 header._duration = f"{elapsed:.1f}s"
+                header._duration_seconds = elapsed
             header._line_count = line_count
             header._has_affordances = line_count > 3
             if summary.primary is not None:

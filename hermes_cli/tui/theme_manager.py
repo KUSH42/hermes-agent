@@ -153,7 +153,7 @@ def _validate_hex(path: str, value: Any) -> str:
 
 # Component vars whose values are non-hex string config (Pygments theme names,
 # scheme keys), not colors. Skipped by hex validation. See SYN-1 / DM-E.
-_NON_HEX_COMPONENT_VARS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme", "tool-header-max-gap"})
+_NON_HEX_COMPONENT_VARS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme", "tool-header-max-gap", "thinking-hue-shift-speed"})
 
 
 def validate_skin_payload(
@@ -327,6 +327,24 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "thinking-spinner-peak": VarSpec(
         "#d8d8d8",
         description="ThinkingWidget braille surface peak color",
+        optional_in_skin=True,
+        category="animation",
+    ),
+    "thinking-chroma-a": VarSpec(
+        "#7b68ee",
+        description="ThinkingWidget chroma gradient top-row color",
+        optional_in_skin=True,
+        category="animation",
+    ),
+    "thinking-chroma-b": VarSpec(
+        "#00bcd4",
+        description="ThinkingWidget chroma gradient bottom-row color",
+        optional_in_skin=True,
+        category="animation",
+    ),
+    "thinking-hue-shift-speed": VarSpec(
+        "0.15",
+        description="Hue rotation turns/second; 0 = static",
         optional_in_skin=True,
         category="animation",
     ),

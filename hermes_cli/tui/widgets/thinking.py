@@ -26,6 +26,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
+from hermes_cli.tui._color_utils import _hue_rotate, _lerp_hex
 
 if TYPE_CHECKING:
     from hermes_cli.tui.anim_engines import AnimEngine, AnimParams
@@ -169,6 +170,9 @@ _AnimSurface {
 }
 """
 
+    _chroma_a_hex: str = "#7b68ee"
+    _chroma_b_hex: str = "#00bcd4"
+
     def __init__(
         self,
         engine_key: str,
@@ -239,8 +243,15 @@ _AnimSurface {
         accent_hex: str = "#888888",
         peak_hex: str | None = None,
         background_hex: str | None = None,
+        *,
+        chroma_a: str | None = None,
+        chroma_b: str | None = None,
     ) -> None:
         """Called from ThinkingWidget._tick. Advances frame and refreshes."""
+        if chroma_a is not None:
+            self._chroma_a_hex = chroma_a
+        if chroma_b is not None:
+            self._chroma_b_hex = chroma_b
         self._accent_hex = accent_hex
         if peak_hex is None:
             peak_hex = getattr(self, "_peak_hex", _DEFAULT_SPINNER_PEAK_HEX)
@@ -282,6 +293,14 @@ _AnimSurface {
 
     def _render_gradient_line(self, raw: str, row: int) -> Strip:
         width = len(raw)
+        height = max(1, self.size.height)
+        y_norm = row / (height - 1) if height > 1 else 0.0
+        row_dim_hex = _lerp_hex(
+            self._chroma_a_hex,
+            self._chroma_b_hex,
+            y_norm,
+        )
+        row_dim_rgb = _hex_to_rgb(row_dim_hex)
         phase_base = (self._frame_tick * 0.75) + (row * 1.35)
         segments: list[Segment] = []
         for idx, ch in enumerate(raw):
@@ -290,7 +309,7 @@ _AnimSurface {
                 continue
             factor = (1.0 + math.sin((idx * 0.65) + phase_base)) / 2.0
             style = _rgb_style(
-                _interpolate_rgb(self._dim_rgb, self._peak_rgb, factor),
+                _interpolate_rgb(row_dim_rgb, self._peak_rgb, factor),
                 self._background_rgb,
             )
             segments.append(Segment(ch, style))
@@ -422,6 +441,9 @@ _LabelLine   { height: 1;   width: 1fr; }
     _spinner_peak_hex: str = _DEFAULT_SPINNER_PEAK_HEX
     _spinner_dim_rgb: tuple[int, int, int] = _hex_to_rgb(_DEFAULT_SPINNER_DIM_HEX)
     _spinner_peak_rgb: tuple[int, int, int] = _hex_to_rgb(_DEFAULT_SPINNER_PEAK_HEX)
+    _chroma_a_hex: str = "#7b68ee"
+    _chroma_b_hex: str = "#00bcd4"
+    _chroma_hue_speed: float = 0.15
 
     # Label text
     _base_label: str = "Thinking…"
@@ -624,6 +646,15 @@ _LabelLine   { height: 1;   width: 1fr; }
         )
         self._spinner_dim_rgb = _hex_to_rgb(self._spinner_dim_hex)
         self._spinner_peak_rgb = _hex_to_rgb(self._spinner_peak_hex)
+        self._chroma_a_hex = _normalize_hex(css_vars.get("thinking-chroma-a"), "#7b68ee")
+        self._chroma_b_hex = _normalize_hex(css_vars.get("thinking-chroma-b"), "#00bcd4")
+        raw_speed = str(css_vars.get("thinking-hue-shift-speed", "0.15"))
+        try:
+            self._chroma_hue_speed = float(raw_speed)
+        except (ValueError, TypeError):
+            self._chroma_hue_speed = 0.15
+        # Clamp to [0.0, 2.0] turns/second
+        self._chroma_hue_speed = max(0.0, min(2.0, self._chroma_hue_speed))
         self._apply_background_styles()
 
     def _apply_background_styles(self) -> None:
@@ -934,11 +965,16 @@ _LabelLine   { height: 1;   width: 1fr; }
 
         # ── Drive children ─────────────────────────────────────────────────────
         if self._anim_surface is not None:
+            hue_delta = (elapsed * self._chroma_hue_speed) % 1.0
+            chroma_a = _hue_rotate(self._chroma_a_hex, hue_delta)
+            chroma_b = _hue_rotate(self._chroma_b_hex, hue_delta)
             self._anim_surface.tick_anim(
                 dt,
-                self._spinner_dim_hex or "#888888",
-                self._spinner_peak_hex,
-                self._app_bg_hex,
+                accent_hex=self._spinner_dim_hex or "#888888",
+                peak_hex=self._spinner_peak_hex,
+                background_hex=self._app_bg_hex,
+                chroma_a=chroma_a,
+                chroma_b=chroma_b,
             )
 
         if self._label_line is not None:

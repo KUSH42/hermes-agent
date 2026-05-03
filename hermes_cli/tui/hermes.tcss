@@ -91,6 +91,9 @@ $drawbraille-canvas-color: #00d7ff;
 $status-error-color: #ef5350;
 $thinking-spinner-dim: #4a4a4a;
 $thinking-spinner-peak: #d8d8d8;
+$thinking-chroma-a: #7b68ee;
+$thinking-chroma-b: #00bcd4;
+$thinking-hue-shift-speed: 0.15;
 /* Body renderer visual grammar vars */
 $diff-add-bg: #1a3a1a;
 $diff-del-bg: #3a1a1a;

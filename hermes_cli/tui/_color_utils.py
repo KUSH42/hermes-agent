@@ -31,6 +31,17 @@ def _hue_rotate(hex_color: str, delta: float) -> str:
     )
 
 
+def _lerp_hex(a: str, b: str, t: float) -> str:
+    """Linear interpolate two '#rrggbb' colors. t=0→a, t=1→b. t clamped to [0,1]."""
+    t = max(0.0, min(1.0, t))
+    ar, ag, ab = _hex_to_rgb(a)
+    br, bg, bb = _hex_to_rgb(b)
+    r = int(ar + (br - ar) * t)
+    g = int(ag + (bg - ag) * t)
+    b_ = int(ab + (bb - ab) * t)
+    return f"#{r:02x}{g:02x}{b_:02x}"
+
+
 def _expand_short_hex(h: str) -> str:
     """#abc → #aabbcc."""
     h = h.lstrip("#")

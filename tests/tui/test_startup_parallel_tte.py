@@ -142,8 +142,14 @@ def _run_play(cli, app, cfg, frames=("f0", "f1", "f2"), cache_frames=None,
 # ---------------------------------------------------------------------------
 
 class TestParallelTteProducer:
-    def test_producer_starts_before_artefacts(self):
-        """On cache miss, producer_thread.start() must be called before _ensure_startup_banner_artefacts."""
+    def test_producer_starts_after_artefacts_with_prelaunch(self):
+        """SPEC-STARTUP-OPT-2 supersedes the original OPT1 ordering: prelaunch
+        worker pre-builds the template AND pre-produces the first batch of TTE
+        frames, so the main thread joins the worker, then runs
+        _ensure_startup_banner_artefacts (a no-op on success), drains
+        prelaunch frames into anim_frames, and only then starts the producer
+        thread.  This invariant test pins the new order.
+        """
         call_order: list[str] = []
         app = _make_app()
         cli = _make_cli()
@@ -173,8 +179,8 @@ class TestParallelTteProducer:
             play_fn = cli_mod.HermesCLI._play_tte_in_output_panel.__get__(cli)
             play_fn(_cfg(), "hero")
 
-        assert call_order.index("start") < call_order.index("ensure"), \
-            f"Expected 'start' before 'ensure', got order: {call_order}"
+        assert call_order.index("ensure") < call_order.index("start"), \
+            f"Expected 'ensure' before 'start' (OPT2 order), got: {call_order}"
 
     def test_producer_not_started_on_cache_hit(self):
         """On cache hit, producer_thread.start() is never called."""

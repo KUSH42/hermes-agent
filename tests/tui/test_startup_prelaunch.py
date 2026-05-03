@@ -351,3 +351,60 @@ class TestPrelaunchIntegration:
         cli_mod.HermesCLI._ensure_startup_banner_artefacts(cli, "HERO")
 
         cli._render_startup_banner_text.assert_not_called()
+
+    def test_pre_produce_tte_stores_state(self):
+        """Worker pre-produces first PRELAUNCH_FRAMES raw frames and stashes
+        the running generator on _prelaunch_tte_state."""
+        cli_inst = MagicMock(spec=cli_mod.HermesCLI)
+        cli_inst._prelaunch_tte_state = None
+        fake_cfg = SimpleNamespace(effect_name="matrix", params={"speed": 1})
+        cli_inst._get_startup_text_effect_config = MagicMock(return_value=fake_cfg)
+
+        produced = ["f0", "f1", "f2", "f3", "f4", "f5", "f6"]
+
+        with patch("hermes_cli.tui.tte_runner.iter_frames", return_value=iter(produced)):
+            cli_mod.HermesCLI._prelaunch_pre_produce_tte_frames(cli_inst, "hero")
+
+        assert cli_inst._prelaunch_tte_state is not None
+        effect, hero, params, raw, gen = cli_inst._prelaunch_tte_state
+        assert effect == "matrix"
+        assert hero == "hero"
+        assert params == {"speed": 1}
+        assert raw == ["f0", "f1", "f2", "f3"]   # PRELAUNCH_FRAMES = 4
+        # generator still has remaining frames
+        assert next(gen) == "f4"
+
+    def test_pre_produce_tte_no_op_when_disabled(self):
+        """If TTE config is None (disabled or reduced motion), state stays None."""
+        cli_inst = MagicMock(spec=cli_mod.HermesCLI)
+        cli_inst._prelaunch_tte_state = None
+        cli_inst._get_startup_text_effect_config = MagicMock(return_value=None)
+
+        cli_mod.HermesCLI._prelaunch_pre_produce_tte_frames(cli_inst, "hero")
+
+        assert cli_inst._prelaunch_tte_state is None
+
+    def test_pre_produce_tte_handles_exception(self):
+        """iter_frames raising leaves state at None and logs at debug."""
+        cli_inst = MagicMock(spec=cli_mod.HermesCLI)
+        cli_inst._prelaunch_tte_state = None
+        cli_inst._get_startup_text_effect_config = MagicMock(
+            return_value=SimpleNamespace(effect_name="x", params={})
+        )
+
+        with (
+            patch("hermes_cli.tui.tte_runner.iter_frames", side_effect=RuntimeError("bad")),
+            patch.object(cli_mod, "logger") as mock_logger,
+        ):
+            cli_mod.HermesCLI._prelaunch_pre_produce_tte_frames(cli_inst, "hero")
+
+        assert cli_inst._prelaunch_tte_state is None
+        mock_logger.debug.assert_called_once()
+        _, kwargs = mock_logger.debug.call_args
+        assert kwargs.get("exc_info") is True
+
+    def test_prefetch_frames_constant_is_four(self):
+        """_PREFETCH_FRAMES dropped from 8 to 4 to start playback sooner."""
+        import inspect
+        src = inspect.getsource(cli_mod.HermesCLI._play_tte_in_output_panel)
+        assert "_PREFETCH_FRAMES = 4" in src

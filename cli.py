@@ -2651,6 +2651,7 @@ class HermesCLI:
         self._startup_banner_template: dict[str, object] | object | None = None
         self._startup_banner_static = None
         self._prelaunch_artefacts_pending: bool = False
+        self._prelaunch_tte_state: tuple | None = None
         self._first_input_seen = threading.Event()
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
@@ -4994,7 +4995,10 @@ class HermesCLI:
 
         # Number of frames to pre-render before starting playback.  Small enough
         # that the first frame appears quickly; large enough to absorb jitter.
-        _PREFETCH_FRAMES = 8
+        # Combined with the prelaunch TTE pre-producer (set in
+        # _start_prelaunch_banner_worker), the buffer is typically already full
+        # before the producer thread starts.
+        _PREFETCH_FRAMES = 4
 
         # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
         # Frames are appended to anim_frames as they are generated; playback
@@ -5114,13 +5118,22 @@ class HermesCLI:
                 _effect_name_norm, MAX_FRAMES, MAX_WALL_S,
             )
 
+        # Outer slots populated below if a prelaunch-pre-produced generator is
+        # present and matches.  _produce reads them when it starts.
+        _prelaunch_gen: object = None
+        _prelaunch_start_i: int = 0
+
         def _produce() -> None:
             nonlocal _app_stopped_early   # propagates assignment out to write-back guard
             nonlocal _produce_raised      # propagates assignment out to write-back guard
             try:
-                for i, raw_frame in enumerate(
-                    iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
-                ):
+                gen = (
+                    _prelaunch_gen
+                    if _prelaunch_gen is not None
+                    else iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
+                )
+                for j, raw_frame in enumerate(gen):
+                    i = _prelaunch_start_i + j
                     if not getattr(app, "is_running", True):
                         _app_stopped_early = True
                         break
@@ -5197,23 +5210,16 @@ class HermesCLI:
                         _effect_name_norm, _cache_key, len(_raw_for_cache),
                     )
 
-        # Step B — start producer immediately on cache miss, before building the
-        # template. _produce() reads template_cell[0] per-frame, so early frames
-        # (produced while artefacts are still building) fall back to Text.from_ansi;
-        # later frames get the full splice once template_cell[0] is populated.
-        if not _cache_hit:
-            producer_thread = _threading.Thread(
-                target=_produce, daemon=True, name="hermes-tte-producer"
-            )
-            producer_thread.start()
-
-        # Step C — build template in parallel with the producer thread.
-        # EH-OK: if _ensure_startup_banner_artefacts raises, template_cell[0] stays
-        # None; _produce() falls back to Text.from_ansi() for remaining frames and
-        # _build_static() uses _startup_banner_static — matching existing behaviour.
+        # Step B — join the prelaunch worker first.  The OPT2 worker may have
+        # pre-built the banner template AND pre-produced the first batch of TTE
+        # raw frames; both are available only once the worker has fully exited.
+        # EH-OK: if the join times out, _prelaunch_tte_state is left untouched
+        # (and therefore unused — the prelaunch_done check below gates pickup);
+        # _ensure_startup_banner_artefacts then runs synchronously.
         _prelaunch = getattr(self, "_prelaunch_banner_thread", None)
         if _prelaunch is not None and _prelaunch.is_alive():
             _prelaunch.join(timeout=0.3)   # almost always done; 300ms cap avoids stall
+        _prelaunch_done = _prelaunch is not None and not _prelaunch.is_alive()
 
         # _ensure_startup_banner_artefacts is now a no-op if worker finished
         self._ensure_startup_banner_artefacts(plain_hero)
@@ -5222,6 +5228,65 @@ class HermesCLI:
             if isinstance(self._startup_banner_template, dict)
             else None
         )
+
+        # Step B.1 — drain prelaunch-pre-produced TTE raw frames into anim_frames,
+        # running Phase 1/1.5 (Content + CachedStripsVisual) inline now that
+        # template_cell[0] is populated and _render_w is known.  The shared
+        # generator is handed to _produce so iteration continues without
+        # restarting the effect (TTE effects are not deterministic across
+        # generators — frames must come from the same iter_frames() call).
+        if not _cache_hit and _prelaunch_done:
+            _ps = getattr(self, "_prelaunch_tte_state", None)
+            self._prelaunch_tte_state = None  # one-shot consume
+            if (
+                _ps is not None
+                and _ps[0] == cfg.effect_name
+                and _ps[1] == plain_hero
+                and _ps[2] == cfg.params
+            ):
+                _, _, _, _pre_raw, _pre_gen = _ps
+                for raw_frame in _pre_raw:
+                    if (time.monotonic() - _pre_start) >= MAX_WALL_S:
+                        break
+                    raw_frame = _strip_ansi_bg(raw_frame)
+                    _raw_for_cache.append(raw_frame)
+                    rich_frame = (
+                        self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                        if template_cell[0] is not None
+                        else Text.from_ansi(raw_frame)
+                    )
+                    rich_frame.no_wrap = True
+                    rich_frame.overflow = "ignore"
+                    try:
+                        content = _Content.from_rich_text(rich_frame, console=None)
+                    except Exception:
+                        # EH-OK: content fallback renders correctly without Phase 1.5
+                        content = rich_frame  # type: ignore[assignment]
+                    frame: object = content
+                    if _render_w > 0 and isinstance(content, _Content):
+                        try:
+                            _lines = content._wrap_and_format(
+                                _render_w, no_wrap=True, overflow="fold"
+                            )
+                            _strips = [_Strip(*_ln.to_strip(_base_style)) for _ln in _lines]
+                            frame = _CachedStripsVisual(_strips, _render_w, source=content)
+                        except Exception:
+                            pass  # EH-OK: content fallback renders correctly
+                    anim_frames.append(frame)
+                if anim_frames:
+                    rendered_any_flag[0] = True
+                if len(anim_frames) >= _PREFETCH_FRAMES:
+                    prefetch_ready.set()
+                _prelaunch_gen = _pre_gen
+                _prelaunch_start_i = len(_pre_raw)
+
+        # Step C — start producer thread.  Uses the prelaunch generator if
+        # available so iteration continues from frame N rather than restarting.
+        if not _cache_hit:
+            producer_thread = _threading.Thread(
+                target=_produce, daemon=True, name="hermes-tte-producer"
+            )
+            producer_thread.start()
 
         # _apply_preflight must be enqueued AFTER template_cell[0] is populated:
         # the event loop may process it at any time after call_later() returns,
@@ -5336,8 +5401,14 @@ class HermesCLI:
                 # _play_startup_text_effect — safe to call independently here.
                 _, plain_hero = resolve_banner_hero_assets()
                 plain_hero = _sanitize_startup_hero_text(plain_hero)
-                if plain_hero.strip():
-                    self._ensure_startup_banner_artefacts(plain_hero)
+                if not plain_hero.strip():
+                    return
+                self._ensure_startup_banner_artefacts(plain_hero)
+                # Pre-produce first batch of raw TTE frames so the prefetch buffer
+                # is already populated when _play_tte_in_output_panel runs.
+                # Eliminates the ~1 s gap between static banner paint and first
+                # animation frame on cache miss.
+                self._prelaunch_pre_produce_tte_frames(plain_hero)
             except Exception:
                 logger.debug("prelaunch banner worker failed", exc_info=True)
 
@@ -5345,6 +5416,35 @@ class HermesCLI:
             target=_work, daemon=True, name="hermes-banner-prelaunch"
         )
         self._prelaunch_banner_thread.start()
+
+    def _prelaunch_pre_produce_tte_frames(self, plain_hero: str) -> None:
+        """Pre-render the first PRELAUNCH_FRAMES of TTE output and stash the
+        running generator so _play_tte_in_output_panel can resume from there
+        without paying the producer-thread spin-up cost.
+
+        Stores tuple (effect_name, plain_hero, params, raw_frames, generator)
+        on self._prelaunch_tte_state.  None on any failure (caller falls back
+        to the original cache-miss producer path).
+        """
+        PRELAUNCH_FRAMES = 4
+        try:
+            cfg = self._get_startup_text_effect_config()
+            if cfg is None:
+                return
+            from hermes_cli.tui.tte_runner import iter_frames
+            gen = iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
+            raw_frames: list[str] = []
+            for raw in gen:
+                raw_frames.append(raw)
+                if len(raw_frames) >= PRELAUNCH_FRAMES:
+                    break
+            if not raw_frames:
+                return
+            self._prelaunch_tte_state = (
+                cfg.effect_name, plain_hero, dict(cfg.params), raw_frames, gen
+            )
+        except Exception:
+            logger.debug("prelaunch TTE pre-produce failed", exc_info=True)
 
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.

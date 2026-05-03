@@ -236,6 +236,7 @@ fall through to the `set_interval` branch automatically.
 - `get_css_variables()` is called during `super().__init__()`. Guard instance
   attrs with `getattr(...)`.
 - New `$vars` must be declared in `hermes.tcss` before use or startup fails.
+- Hot-reload / discovery tests that load a minimal `DESIGN.md` through `ThemeManager._load_path()` will emit `missing component_vars keys (using defaults)` warnings unless the fixture seeds `x-hermes.component-vars` with the full `_defaults_as_strs()` mapping. If the test is about path watching or mtime behavior rather than validator warnings, use a fully-seeded fixture so the run stays quiet.
 - `RichLog` subclasses inherit background defaults you may need to override.
 - Transparent widgets inherit from `Screen`, not just `HermesApp`.
 - In this theme, `$surface` can equal `$app-bg`; elevation sometimes requires

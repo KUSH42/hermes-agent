@@ -92,10 +92,6 @@ def test_t2_referenced_defaults_declared_in_tcss() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason="Phase 4 generator target — all defaults declared in TCSS",
-    strict=False,
-)
 def test_t2_all_defaults_declared_post_phase4() -> None:
     decls = scan_tcss_declarations()
     missing = set(COMPONENT_VAR_DEFAULTS.keys()) - set(decls.keys())

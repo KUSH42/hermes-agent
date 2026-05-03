@@ -370,8 +370,14 @@ def _user_skin_yaml(home: Path, name: str) -> Path:
 
 
 def _user_skin_design_md(home: Path, name: str, *, body: str | None = None) -> Path:
+    from hermes_cli.tui.theme_manager import _defaults_as_strs
+
     p = home / "skins" / name / "DESIGN.md"
     p.parent.mkdir(parents=True, exist_ok=True)
+    component_vars = "\n".join(
+        f'            {key}: "{value}"'
+        for key, value in sorted(_defaults_as_strs().items())
+    )
     p.write_text(body or dedent(f"""
         ---
         version: alpha
@@ -381,6 +387,9 @@ def _user_skin_design_md(home: Path, name: str, *, body: str | None = None) -> P
           foreground: "#cdd6f4"
           background: "#1e1e2e"
           accent: "#cba6f7"
+        x-hermes:
+          component-vars:
+{component_vars}
         ---
         # {name}
         """).lstrip(), encoding="utf-8")

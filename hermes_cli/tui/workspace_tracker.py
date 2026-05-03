@@ -15,7 +15,7 @@ import ast
 import logging
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from textual.message import Message
@@ -59,6 +59,8 @@ class FileEntry:
     hermes_touched: bool = False
     last_write: float = 0.0
     complexity_warning: str | None = None
+    git_added: int = 0
+    git_removed: int = 0
 
 
 @dataclass
@@ -73,6 +75,7 @@ class GitSnapshot:
     renamed_count: int
     conflicted_count: int
     is_git_repo: bool = True
+    numstat: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -145,6 +148,7 @@ class WorkspaceTracker:
         new_entries: dict[str, FileEntry] = {}
         for row in snapshot.entries:
             meta = self._session_meta.get(row.path)
+            git_added, git_removed = snapshot.numstat.get(row.rel_path, (0, 0))
             new_entries[row.path] = FileEntry(
                 path=row.path,
                 rel_path=row.rel_path,
@@ -162,6 +166,8 @@ class WorkspaceTracker:
                 hermes_touched=meta.hermes_touched if meta else False,
                 last_write=meta.last_write if meta else 0.0,
                 complexity_warning=meta.complexity_warning if meta else None,
+                git_added=git_added,
+                git_removed=git_removed,
             )
         self._entries = new_entries
 
@@ -206,6 +212,8 @@ class WorkspaceTracker:
                 hermes_touched=e.hermes_touched,
                 last_write=e.last_write,
                 complexity_warning=warning,
+                git_added=e.git_added,
+                git_removed=e.git_removed,
             )
 
     def entries(self) -> list[FileEntry]:
@@ -254,6 +262,8 @@ class WorkspaceTracker:
             hermes_touched=meta.hermes_touched,
             last_write=meta.last_write,
             complexity_warning=meta.complexity_warning,
+            git_added=entry.git_added,
+            git_removed=entry.git_removed,
         )
 
 
@@ -369,6 +379,24 @@ class GitPoller:
             )
             i += 1
 
+        numstat_map: dict[str, tuple[int, int]] = {}
+        try:
+            ns_out = subprocess.check_output(  # allow-sync-io: dispatched from run_worker context, not event loop
+                ["git", "diff", "--numstat", "HEAD"],
+                cwd=self._repo_root,
+                timeout=5,
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="replace")
+            for line in ns_out.splitlines():
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    added_s, removed_s, path_s = parts
+                    if added_s == "-" or removed_s == "-":
+                        continue  # binary file — no line counts
+                    numstat_map[path_s.strip()] = (int(added_s), int(removed_s))
+        except Exception:
+            _log.debug("GitPoller: numstat failed", exc_info=True)
+
         return GitSnapshot(
             branch=branch,
             dirty_count=len(entries),
@@ -380,6 +408,7 @@ class GitPoller:
             renamed_count=renamed_count,
             conflicted_count=conflicted_count,
             is_git_repo=True,
+            numstat=numstat_map,
         )
 
     def _abs(self, rel_path: str) -> str:

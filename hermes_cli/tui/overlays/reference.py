@@ -740,11 +740,16 @@ class WorkspaceOverlay(ReferenceModal):
                 tags.append("conflict")
             tag_text = f"  [dim]{' · '.join(tags)}[/dim]" if tags else ""
             rename_text = f"  [dim]← {e.git_renamed_from}[/dim]" if e.git_renamed_from else ""
-            delta_text = ""
-            if e.hermes_touched or e.session_added or e.session_removed:
+            added = e.git_added or e.session_added
+            removed = e.git_removed or e.session_removed
+            if e.git_untracked:
+                delta_text = ""  # untracked files have no meaningful diff vs HEAD
+            elif added or removed:
                 delta_text = (
-                    f"  [green]+{e.session_added}[/green] [red]-{e.session_removed}[/red]"
+                    f"  [green]+{added}[/green] [red]-{removed}[/red]"
                 )
+            else:
+                delta_text = ""
             css_class = "ws-file-dirty" if e.git_status not in (" ", "") else "ws-file"
             line = f"[bold]{e.git_xy or e.git_status or ' '}[/bold]  {e.rel_path or e.path}{rename_text}{delta_text}{tag_text}"
             file_children.append(Static(line, classes=css_class))

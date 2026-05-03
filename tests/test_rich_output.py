@@ -3332,7 +3332,7 @@ class TestMonokaiIntraDiff:
         assert _MONOKAI_FUNCTION in ansi_mono, "monokai function colour expected under charizard skin"
 
         # --- switch to default (hermes scheme) ---
-        set_active_skin("default")
+        set_active_skin("hermes")
         syntax_highlighter.refresh()
 
         del_segs_def, _ = _intra_diff(old, new, "pipe.py")

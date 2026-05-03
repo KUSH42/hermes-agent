@@ -33,7 +33,7 @@ def _fake_cfg(**overrides):
     base = {
         "display": {
             "tool_progress": "all",
-            "skin": "default",
+            "skin": "hermes",
             "show_reasoning": False,
             "rich_reasoning": True,
             "skin_overrides": {"vars": {}},

@@ -120,8 +120,8 @@ class ConfigOverlay(Widget):
         # Skin tab snapshot (for Esc revert)
         self._snap_css_vars: dict[str, str] = {}
         self._snap_component_vars: dict[str, str] = {}
-        self._snap_skin_name: str = "default"
-        self._current_skin: str = "default"
+        self._snap_skin_name: str = "hermes"
+        self._current_skin: str = "hermes"
         self._current_syntax: str = "monokai"
         self._skin_names: list[str] = []
         self._syntax_schemes: list[str] = []
@@ -469,7 +469,7 @@ class ConfigOverlay(Widget):
 
     def _take_skin_snapshot(self) -> None:
         cfg = _cfg_read_raw_config()
-        self._snap_skin_name = cfg.get("display", {}).get("skin", "default")
+        self._snap_skin_name = cfg.get("display", {}).get("skin", "hermes")
         self._current_skin = self._snap_skin_name
         tm = getattr(self.app, "_theme_manager", None)
         if tm is not None:
@@ -493,7 +493,7 @@ class ConfigOverlay(Widget):
             except Exception:
                 names = []
         if not names:
-            names = [self._current_skin or "default"]
+            names = [self._current_skin or "hermes"]
         self._skin_names = names
         try:
             self.query_one("#co-skin-current", Static).update(f"Current: {self._current_skin}")

@@ -172,8 +172,8 @@ class TestConfigOverlay:
         overlay._reasoning_current_level = "medium"
         overlay._snap_css_vars = {}
         overlay._snap_component_vars = {}
-        overlay._snap_skin_name = "default"
-        overlay._current_skin = "default"
+        overlay._snap_skin_name = "hermes"
+        overlay._current_skin = "hermes"
         overlay._current_syntax = "monokai"
         overlay._skin_names = []
         overlay._syntax_schemes = []

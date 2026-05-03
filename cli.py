@@ -211,6 +211,14 @@ class _StartupTteConfig:
     fps: int
 
 
+_warned_unknown_skin_effects: set[tuple[str, str]] = set()
+
+
+def _reset_for_tests() -> None:
+    """Test-only resetter for the per-skin startup-TTE warning latch."""
+    _warned_unknown_skin_effects.clear()
+
+
 _LOOP_TEARDOWN_RUNTIME_ERRORS = (
     "Event loop is closed",
     "no running event loop",
@@ -511,7 +519,7 @@ def load_cli_config() -> Dict[str, Any]:
             "streaming": True,
             "busy_input_mode": "interrupt",
             "syntax_bold": True,
-            "skin": "default",
+            "skin": "hermes",
             "tool_icon_mode": "auto",
             "startup_text_effect": {
                 "enabled": False,
@@ -2042,12 +2050,12 @@ def _build_compact_banner() -> str:
     except Exception:
         _skin = None
 
-    skin_name = getattr(_skin, "name", "default") if _skin else "default"
+    skin_name = getattr(_skin, "name", "hermes") if _skin else "hermes"
     border_color = _skin.get_color("banner_border", "#FFD700") if _skin else "#FFD700"
     title_color = _skin.get_color("banner_title", "#FFBF00") if _skin else "#FFBF00"
     dim_color = _skin.get_color("banner_dim", "#B8860B") if _skin else "#B8860B"
 
-    if skin_name == "default":
+    if skin_name == "hermes":
         line1 = "⚕ NOUS HERMES - AI Agent Framework"
         tiny_line = "⚕ NOUS HERMES"
     else:
@@ -4446,12 +4454,51 @@ class HermesCLI:
         effect_cfg = display_cfg.get("startup_text_effect") or {}
         if not isinstance(effect_cfg, dict) or not effect_cfg.get("enabled", False):
             return None
+
+        # Per-skin startup_tte override (TTE-1). Honors enabled flag (above)
+        # and reduced-motion (above) — both user opt-outs win over the skin.
+        skin_tte: dict = {}
+        try:
+            from hermes_cli.skin_engine import get_active_skin, get_active_skin_name
+            _skin = get_active_skin()
+            skin_tte = dict(_skin.get_startup_tte() or {})
+            _skin_name = get_active_skin_name()
+        except Exception:
+            logger.debug("startup_tte: skin lookup failed", exc_info=True)
+            skin_tte = {}
+            _skin_name = ""
+
         effect_name = str(effect_cfg.get("effect", "")).strip().lower()
-        if not effect_name:
-            return None
         params = effect_cfg.get("params") or {}
         if not isinstance(params, dict):
             params = {}
+
+        if skin_tte and skin_tte.get("effect"):
+            skin_effect = str(skin_tte["effect"]).strip().lower()
+            try:
+                from hermes_cli.tui.tte_runner import EFFECT_MAP
+                _known = frozenset(EFFECT_MAP)
+            except Exception:
+                _known = frozenset()
+            if skin_effect in _known:
+                effect_name = skin_effect
+                # params from skin REPLACE config params (no merge)
+                if "params" in skin_tte and isinstance(skin_tte["params"], dict):
+                    params = dict(skin_tte["params"])
+                elif "params" not in skin_tte:
+                    params = {}
+            else:
+                pair = (_skin_name, skin_effect)
+                if pair not in _warned_unknown_skin_effects:
+                    logger.warning(
+                        "startup_tte: skin %r declares unknown effect %r; "
+                        "falling back to config effect",
+                        _skin_name, skin_effect,
+                    )
+                    _warned_unknown_skin_effects.add(pair)
+
+        if not effect_name:
+            return None
 
         def _clamp(value: float | int, lo: float | int, hi: float | int, key: str):
             if not (lo <= value <= hi):
@@ -4489,9 +4536,21 @@ class HermesCLI:
                 )
                 return default
 
-        raw_wall_s = _coerce_float(effect_cfg.get("max_wall_s", 30.0), 30.0, "max_wall_s")
-        raw_frames = _coerce_int(effect_cfg.get("max_frames", 3000), 3000, "max_frames")
-        raw_fps = _coerce_int(effect_cfg.get("fps", 60), 60, "fps")
+        # Skin overrides for max_wall_s/max_frames/fps fall through to config defaults
+        # when missing on the skin block.
+        _wall_default = effect_cfg.get("max_wall_s", 30.0)
+        _frames_default = effect_cfg.get("max_frames", 3000)
+        _fps_default = effect_cfg.get("fps", 60)
+        if skin_tte and effect_name == str(skin_tte.get("effect", "")).strip().lower():
+            if "max_wall_s" in skin_tte:
+                _wall_default = skin_tte["max_wall_s"]
+            if "max_frames" in skin_tte:
+                _frames_default = skin_tte["max_frames"]
+            if "fps" in skin_tte:
+                _fps_default = skin_tte["fps"]
+        raw_wall_s = _coerce_float(_wall_default, 30.0, "max_wall_s")
+        raw_frames = _coerce_int(_frames_default, 3000, "max_frames")
+        raw_fps = _coerce_int(_fps_default, 60, "fps")
         return _StartupTteConfig(
             effect_name=effect_name,
             params=dict(params),

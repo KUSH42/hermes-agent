@@ -21,6 +21,10 @@ colors:
   ui-ok: '#00ff41'
   ui-warn: '#ffb000'
 x-hermes:
+  startup_tte:
+    effect: matrix
+    max_wall_s: 3.0
+    max_frames: 500
   schema: 1
   branding:
     agent_name: Morpheus

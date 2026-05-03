@@ -24,6 +24,9 @@ colors:
   rule-start: '#4A4A4A'
   rule-end: '#222222'
 x-hermes:
+  startup_tte:
+    effect: crumble
+    max_wall_s: 4.5
   schema: 1
   branding:
     agent_name: Sisyphus Agent

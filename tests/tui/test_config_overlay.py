@@ -34,7 +34,7 @@ async def _app_with_overlay():
 
 
 def _fake_cfg(tool_progress="all", model="gpt-5", models=None, approvals_mode="manual",
-              skin="default", show_reasoning=False, rich_reasoning=True):
+              skin="hermes", show_reasoning=False, rich_reasoning=True):
     return {
         "display": {
             "tool_progress": tool_progress,

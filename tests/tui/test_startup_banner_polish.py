@@ -353,6 +353,15 @@ def test_T_SBP_11_no_flags_returns_valid_tuple(monkeypatch):
 
     monkeypatch.delenv("HERMES_REDUCED_MOTION", raising=False)
 
+    # Per-skin startup_tte (SPEC-TTE) would override the config effect; force
+    # an empty skin block so this test still verifies the config path.
+    class _NoTteSkin:
+        name = "test"
+        def get_startup_tte(self):
+            return {}
+    monkeypatch.setattr("hermes_cli.skin_engine.get_active_skin", lambda: _NoTteSkin())
+    monkeypatch.setattr("hermes_cli.skin_engine.get_active_skin_name", lambda: "test")
+
     result = cli._get_startup_text_effect_config()
     assert result is not None
     assert result.effect_name == "matrix"
@@ -796,7 +805,7 @@ def test_T_SBP_25_hero_width_cached_per_skin(monkeypatch):
     resolver = MagicMock(return_value=("markup", "abc\ndef"))
     monkeypatch.setattr(banner_module, "resolve_banner_hero_assets", resolver)
 
-    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="default"):
+    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"):
         assert banner_module.get_cached_hero_width() == ("abc\ndef", 3)
         assert banner_module.get_cached_hero_width() == ("abc\ndef", 3)
 
@@ -811,7 +820,7 @@ def test_T_SBP_26_hero_cache_invalidated_on_skin_reload(monkeypatch):
     resolver = MagicMock(side_effect=[("markup-1", "abc"), ("markup-2", "wxyz")])
     monkeypatch.setattr(banner_module, "resolve_banner_hero_assets", resolver)
 
-    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="default"):
+    with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"):
         assert banner_module.get_cached_hero_width() == ("abc", 3)
         banner_module._invalidate_hero_cache()
         assert banner_module.get_cached_hero_width() == ("wxyz", 4)

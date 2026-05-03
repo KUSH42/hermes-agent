@@ -24,6 +24,9 @@ colors:
   rule-start: '#6B1717'
   rule-end: '#2A1010'
 x-hermes:
+  startup_tte:
+    effect: laseretch
+    max_wall_s: 4.5
   schema: 1
   branding:
     agent_name: Ares Agent

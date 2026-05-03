@@ -24,6 +24,9 @@ colors:
   rule-start: '#444444'
   rule-end: '#222222'
 x-hermes:
+  startup_tte:
+    effect: print
+    max_wall_s: 3.5
   schema: 1
   branding:
     agent_name: Hermes Agent

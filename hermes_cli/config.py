@@ -826,7 +826,7 @@ DEFAULT_CONFIG = {
             "disk_cache": True,        # cache normalized PNGs to emojis/.cache/
             "reasoning": True,         # resolve :name: inside the reasoning panel
         },
-        "skin": "default",
+        "skin": "hermes",
         "skin_overrides": {      # per-user overrides merged on top of every skin load
             "vars": {},
             "component_vars": {},

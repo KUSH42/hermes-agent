@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: default
-description: Hermes default — gold accent on near-black
+name: hermes
+description: Hermes — gold accent on near-black
 colors:
   banner-border: '#CD7F32'
   banner-title: '#FFD700'
@@ -24,6 +24,9 @@ colors:
   rule-start: '#555555'
   rule-end: '#2A2A2A'
 x-hermes:
+  startup_tte:
+    effect: vhstape
+    max_wall_s: 5.0
   schema: 1
   branding:
     agent_name: Hermes Agent

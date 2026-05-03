@@ -24,6 +24,9 @@ colors:
   rule-start: '#1a4a7a'
   rule-end: '#0d2540'
 x-hermes:
+  startup_tte:
+    effect: waves
+    max_wall_s: 5.0
   schema: 1
   branding:
     agent_name: Poseidon Agent

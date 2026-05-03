@@ -58,14 +58,14 @@ class TestMarkSeen:
         cfg_path = tmp_path / "config.yaml"
         cfg_path.write_text(yaml.safe_dump({
             "model": {"default": "claude-sonnet-4.6"},
-            "display": {"skin": "default"},
+            "display": {"skin": "hermes"},
         }))
 
         assert mark_seen(cfg_path, BUSY_INPUT_FLAG) is True
         loaded = yaml.safe_load(cfg_path.read_text())
 
         assert loaded["model"]["default"] == "claude-sonnet-4.6"
-        assert loaded["display"]["skin"] == "default"
+        assert loaded["display"]["skin"] == "hermes"
         assert loaded["onboarding"]["seen"][BUSY_INPUT_FLAG] is True
 
     def test_preserves_other_seen_flags(self, tmp_path):

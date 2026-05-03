@@ -443,6 +443,26 @@ class HermesApp(App):
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
 
+    # MMP-M4: _browse_anchors / _browse_cursor are owned by BrowseService.
+    # These property shims proxy through so all existing read/write sites work
+    # without modification.  BrowseService.__init__ initialises both to [] / 0.
+
+    @property
+    def _browse_anchors(self) -> "list[BrowseAnchor]":
+        return self._svc_browse._browse_anchors
+
+    @_browse_anchors.setter
+    def _browse_anchors(self, value: "list[BrowseAnchor]") -> None:
+        self._svc_browse._browse_anchors = list(value)
+
+    @property
+    def _browse_cursor(self) -> int:
+        return self._svc_browse._browse_cursor
+
+    @_browse_cursor.setter
+    def _browse_cursor(self, value: int) -> None:
+        self._svc_browse._browse_cursor = int(value)
+
     def __init__(
         self,
         cli: Any,
@@ -503,10 +523,8 @@ class HermesApp(App):
 
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
-        # Unified anchor list for []/{}/ Alt+↑↓ navigation
-        self._browse_anchors: list[BrowseAnchor] = []
-        self._browse_cursor: int = 0
         # Browse mode visual markers config (wired from cli.py)
+        # _browse_anchors / _browse_cursor owned by BrowseService (MMP-M4 property shims above)
         self._browse_markers_enabled: bool = True
         self._browse_reasoning_markers: bool = True
         self._browse_minimap_default: bool = False

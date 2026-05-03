@@ -42,7 +42,7 @@ class BrowseService(AppService):
             self.rebuild_browse_anchors()
             self.apply_browse_pips()
             if app._browse_minimap_default and not app._browse_minimap:
-                app.call_after_refresh(self.mount_minimap_default)
+                app.call_after_refresh(self._mount_minimap)  # MMP-M6: unified mount path
         else:
             app._browse_hint = ""
             self.clear_browse_highlight()
@@ -60,36 +60,51 @@ class BrowseService(AppService):
         self.apply_browse_focus()
         app._svc_spinner.set_hint_phase("browse" if value else app._svc_spinner.compute_hint_phase())
 
-    def mount_minimap_default(self) -> None:
-        """Auto-mount minimap on browse enter when minimap_default=True."""
-        app = self.app
-        from hermes_cli.tui.widgets import OutputPanel
-        try:
-            from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
-            output = app.query_one(OutputPanel)
-            app.call_later(output.mount, _BM())
-            app._browse_minimap = True
-        except (ImportError, NoMatches, AttributeError):
-            _log.debug("mount_minimap_default: failed to mount BrowseMinimap", exc_info=True)
+    async def _mount_minimap(self) -> bool:
+        """Mount BrowseMinimap inside OutputPanel. Returns True on success.
 
-    async def action_toggle_minimap(self) -> None:
-        """Toggle the BrowseMinimap widget inside OutputPanel."""
-        app = self.app
+        MMP-M6: single mount helper used by both auto-mount (on_browse_mode) and
+        the toggle action.  Sets app._browse_minimap=True only on success so the
+        flag is never ahead of the DOM.
+        """
         from hermes_cli.tui.widgets import OutputPanel
         from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
-        if not app.browse_mode or not app._browse_markers_enabled:
-            return
+        app = self.app
         try:
-            existing = app.query_one(_BM)
-            await existing.remove()
+            output = app.query_one(OutputPanel)
+            await output.mount(_BM())
+            app._browse_minimap = True
+            return True
+        except Exception:
+            _log.warning("_mount_minimap: failed", exc_info=True)
             app._browse_minimap = False
-        except NoMatches:
+            return False
+
+    async def action_toggle_minimap(self) -> None:
+        """Toggle the BrowseMinimap widget inside OutputPanel.
+
+        MMP-M5: gate on app._browse_minimap flag synchronously before any await
+        to prevent double-mount on rapid keypresses.
+        MMP-M7: flash hint when markers are disabled.
+        """
+        app = self.app
+        from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
+        if not app.browse_mode:
+            return  # defensive gate for programmatic calls; binding only fires in browse mode
+        if not app._browse_markers_enabled:
+            app._flash_hint("Anchor markers disabled — toggle in /config", 2.0)
+            return
+        if app._browse_minimap:
+            # In-flight or mounted: unmount path
+            app._browse_minimap = False
             try:
-                output = app.query_one(OutputPanel)
-                await output.mount(_BM())
-                app._browse_minimap = True
-            except (NoMatches, AttributeError):
-                _log.debug("action_toggle_minimap: mount failed", exc_info=True)
+                existing = app.query_one(_BM)
+            except NoMatches:
+                return  # mount never completed; flag now consistent
+            await existing.remove()
+            return
+        # Mount path — delegate to unified helper (MMP-M6)
+        await self._mount_minimap()
 
     def _refresh_minimap(self) -> None:
         """Refresh the minimap if mounted. No-op otherwise."""
@@ -229,14 +244,11 @@ class BrowseService(AppService):
                 except (ImportError, AttributeError):
                     _log.debug("rebuild_browse_anchors: InlineMediaWidget import failed", exc_info=True)
         self._browse_anchors = anchors
-        # Keep app-level alias in sync
-        app._browse_anchors = anchors
+        # MMP-M4: BrowseService is the single owner; no dual-write to app needed.
         if anchors:
-            cur = getattr(app, "_browse_cursor", self._browse_cursor)
-            self._browse_cursor = min(cur, len(anchors) - 1)
+            self._browse_cursor = min(self._browse_cursor, len(anchors) - 1)
         else:
             self._browse_cursor = 0
-        app._browse_cursor = self._browse_cursor
         if app.browse_mode and not anchors:
             app._flash_hint("No turns to browse — start a conversation first", 2.0)
         if app.browse_mode:
@@ -259,7 +271,7 @@ class BrowseService(AppService):
         ]
         if not candidates:
             return
-        cur = getattr(self.app, "_browse_cursor", self._browse_cursor)
+        cur = self._browse_cursor  # MMP-M4: service is single owner
         if direction == 1:
             for idx, anchor in candidates:
                 if idx > cur:
@@ -286,8 +298,7 @@ class BrowseService(AppService):
                         self.focus_anchor(new_idx, new_anchor, _retry=False)
                         return
             return
-        self._browse_cursor = idx
-        app._browse_cursor = idx
+        self._browse_cursor = idx  # MMP-M4: service is single owner; app property proxies here
         try:
             output = app.query_one(OutputPanel)
             output._last_scroll_origin = "browse_jump"
@@ -335,7 +346,7 @@ class BrowseService(AppService):
         if not app._browse_markers_enabled:
             return
         self.clear_browse_pips()
-        anchors = getattr(app, "_browse_anchors", None) or self._browse_anchors
+        anchors = self._browse_anchors  # MMP-M4: single source of truth on service
         code_anchors = [a for a in anchors if a.anchor_type == BrowseAnchorType.CODE_BLOCK]
         total_code = len(code_anchors)
         code_seq: dict[int, int] = {id(a.widget): i + 1 for i, a in enumerate(code_anchors)}

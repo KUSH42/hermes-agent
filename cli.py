@@ -5216,16 +5216,29 @@ class HermesCLI:
         # EH-OK: if the join times out, _prelaunch_tte_state is left untouched
         # (and therefore unused — the prelaunch_done check below gates pickup);
         # _ensure_startup_banner_artefacts then runs synchronously.
+        _step_t0 = time.monotonic()
         _prelaunch = getattr(self, "_prelaunch_banner_thread", None)
-        if _prelaunch is not None and _prelaunch.is_alive():
+        _was_alive = _prelaunch is not None and _prelaunch.is_alive()
+        if _was_alive:
             _prelaunch.join(timeout=0.3)   # almost always done; 300ms cap avoids stall
+        logger.info(
+            "PLAY-TTE: join done +%.0fms was_alive=%s now_alive=%s",
+            (time.monotonic() - _step_t0) * 1000, _was_alive,
+            _prelaunch is not None and _prelaunch.is_alive(),
+        )
 
         # _ensure_startup_banner_artefacts is now a no-op if worker finished
+        _ensure_t0 = time.monotonic()
         self._ensure_startup_banner_artefacts(plain_hero)
         template_cell[0] = (
             self._startup_banner_template
             if isinstance(self._startup_banner_template, dict)
             else None
+        )
+        logger.info(
+            "PLAY-TTE: ensure done +%.0fms template=%s",
+            (time.monotonic() - _ensure_t0) * 1000,
+            "set" if template_cell[0] is not None else "none",
         )
 
         # Step B.1 — drain prelaunch-pre-produced TTE raw frames into anim_frames,
@@ -5237,15 +5250,29 @@ class HermesCLI:
         # Re-check is_alive() here: the 300ms join may have timed out while
         # _ensure_startup_banner_artefacts() was running on this thread;
         # the worker may have finished in the meantime.
-        if not _cache_hit and (_prelaunch is None or not _prelaunch.is_alive()):
+        _drain_eligible = not _cache_hit and (_prelaunch is None or not _prelaunch.is_alive())
+        if not _cache_hit:
+            logger.info(
+                "PLAY-TTE: drain check eligible=%s tte_state=%s",
+                _drain_eligible,
+                "set" if getattr(self, "_prelaunch_tte_state", None) is not None else "none",
+            )
+        if _drain_eligible:
             _ps = getattr(self, "_prelaunch_tte_state", None)
             self._prelaunch_tte_state = None  # one-shot consume
-            if (
+            _match = (
                 _ps is not None
                 and _ps[0] == cfg.effect_name
                 and _ps[1] == plain_hero
                 and _ps[2] == cfg.params
-            ):
+            )
+            if _ps is not None and not _match:
+                logger.info(
+                    "PLAY-TTE: drain mismatch effect(%s vs %s) hero_eq=%s params_eq=%s",
+                    _ps[0], cfg.effect_name,
+                    _ps[1] == plain_hero, _ps[2] == cfg.params,
+                )
+            if _match:
                 _, _, _, _pre_raw, _pre_gen = _ps
                 for raw_frame in _pre_raw:
                     if (time.monotonic() - _pre_start) >= MAX_WALL_S:
@@ -5277,10 +5304,15 @@ class HermesCLI:
                     anim_frames.append(frame)
                 if anim_frames:
                     rendered_any_flag[0] = True
-                if len(anim_frames) >= _PREFETCH_FRAMES:
+                _prefetch_was_set = len(anim_frames) >= _PREFETCH_FRAMES
+                if _prefetch_was_set:
                     prefetch_ready.set()
                 _prelaunch_gen = _pre_gen
                 _prelaunch_start_i = len(_pre_raw)
+                logger.info(
+                    "PLAY-TTE: drain done frames=%d prefetch_set=%s start_i=%d",
+                    len(anim_frames), _prefetch_was_set, _prelaunch_start_i,
+                )
 
         # Step C — start producer thread.  Uses the prelaunch generator if
         # available so iteration continues from frame N rather than restarting.
@@ -5391,26 +5423,31 @@ class HermesCLI:
         import threading as _t
         self._prelaunch_artefacts_pending = True  # guard: show_banner_with_startup_effect skips resets
 
+        _t0 = time.monotonic()
+
         def _work() -> None:
             try:
                 from hermes_cli.banner import resolve_banner_hero_assets
                 from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY
-                # Block until OutputPanel reports its width (fires on first resize,
-                # typically <100 ms after app.run()).  Fallback: use terminal width.
+                logger.info("PRELAUNCH: worker started t=%.0fms", (time.monotonic() - _t0) * 1000)
                 OUTPUT_PANEL_WIDTH_READY.wait(timeout=1.5)
-                # resolve_banner_hero_assets() reads from the bundled skin assets; it is
-                # deterministic and returns the same hero as the later call in
-                # _play_startup_text_effect — safe to call independently here.
+                logger.info("PRELAUNCH: width ready t=%.0fms", (time.monotonic() - _t0) * 1000)
                 _, plain_hero = resolve_banner_hero_assets()
                 plain_hero = _sanitize_startup_hero_text(plain_hero)
                 if not plain_hero.strip():
                     return
                 self._ensure_startup_banner_artefacts(plain_hero)
-                # Pre-produce first batch of raw TTE frames so the prefetch buffer
-                # is already populated when _play_tte_in_output_panel runs.
-                # Eliminates the ~1 s gap between static banner paint and first
-                # animation frame on cache miss.
+                logger.info(
+                    "PRELAUNCH: ensure_artefacts done t=%.0fms template=%s",
+                    (time.monotonic() - _t0) * 1000,
+                    "set" if isinstance(self._startup_banner_template, dict) else "none",
+                )
                 self._prelaunch_pre_produce_tte_frames(plain_hero)
+                logger.info(
+                    "PRELAUNCH: pre-produce done t=%.0fms tte_state=%s",
+                    (time.monotonic() - _t0) * 1000,
+                    "set" if self._prelaunch_tte_state is not None else "none",
+                )
             except Exception:
                 logger.debug("prelaunch banner worker failed", exc_info=True)
 

@@ -976,6 +976,18 @@ class HermesApp(App):
             self.watch(panel, "scroll_state", self._on_output_scroll_state)
         except NoMatches:
             pass
+        # Seed status_model from CLI so the bar shows the model name immediately.
+        try:
+            _cli = getattr(self, "cli", None)
+            _initial_model = (
+                getattr(getattr(_cli, "agent", None), "model", None)
+                or getattr(_cli, "model", None)
+                or ""
+            )
+            if _initial_model:
+                self.status_model = str(_initial_model)
+        except Exception:
+            logger.debug("status_model init from CLI failed", exc_info=True)
         _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
         if _mount_elapsed_ms > 500.0:
             logger.warning("[STARTUP] slow mount: mount_ms=%.1f (budget=500)", _mount_elapsed_ms)
@@ -1351,17 +1363,18 @@ class HermesApp(App):
         Mirrors what ConfigOverlay._confirm_model does without going through
         the TUI input widget (avoids recursive handle_slash_command invocation).
         """
+        # Strip --provider and other flags for the status bar display name.
+        model_display = name.split("--")[0].strip()
         try:
             cli = getattr(self, "cli", None)
             if cli is not None and hasattr(cli, "_pending_input"):
                 cli._pending_input.put(f"/model {name}")
-            else:
-                # Fallback: update display-side only (CLI will sync on next turn)
-                self.status_model = name
+            # Optimistic update in all paths — CLI will confirm on next turn.
+            self.status_model = model_display
         except Exception:
             logger.debug("_apply_model_inline: routing failed", exc_info=True)
             try:
-                self.status_model = name
+                self.status_model = model_display
             except Exception:
                 logger.warning("_apply_model_inline: status_model fallback failed", exc_info=True)
 

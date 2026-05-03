@@ -160,8 +160,9 @@ class CommandsService(AppService):
             app._dismiss_all_info_overlays()
             try:
                 overlay = app.query_one(ConfigOverlay)
-                overlay.show_overlay(tab=_TAB_FOR_CMD[stripped])
+                # refresh_data sets _last_cli before show_overlay calls _refresh_active_tab
                 overlay.refresh_data(app.cli)
+                overlay.show_overlay(tab=_TAB_FOR_CMD[stripped])
             except NoMatches:
                 pass
             return True

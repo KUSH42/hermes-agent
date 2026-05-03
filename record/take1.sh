@@ -6,9 +6,8 @@ source "$(dirname "$0")/_lib.sh"
 # Order chosen for visual contrast: bold first, then warm/cool/neutral mix.
 SKINS=(matrix charizard poseidon ares hermes tokyo-night)
 
-# Per-skin hold (seconds). Each skin's TTE wall ranges 1.5-3s; 6s leaves room
-# for slow effects (vhstape, burn) plus a beat of the settled banner.
-HOLD_S=6
+# Per-skin hold (seconds): ~2s hermes boot + up to 8s TTE wall + 4s settled banner dwell.
+HOLD_S=15
 
 # Gap between skins (seconds). Long enough to make cut points obvious.
 GAP_S=1
@@ -25,8 +24,8 @@ countdown 3 "starting recording"
 obs_toggle
 
 for skin in "${SKINS[@]}"; do
-    clear
-    echo ">>> skin=$skin"
+    # blank the terminal silently — no text before hermes alt-screen kicks in
+    printf '\033[2J\033[H' >/dev/tty
     HERMES_SKIN="$skin" hermes </dev/tty >/dev/tty 2>/dev/tty &
     HPID=$!
     sleep "$HOLD_S"

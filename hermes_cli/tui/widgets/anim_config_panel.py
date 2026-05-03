@@ -374,7 +374,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
     def dismiss_overlay(self) -> None:
         """Permanent-widget dismiss: hide without removing from DOM."""
         target = self._restore_focus_to()
-        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
+        self.remove_class("--visible")
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
         except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade

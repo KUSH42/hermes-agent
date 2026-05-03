@@ -1182,7 +1182,7 @@ class _ToolPanelActionsMixin:
             if view is not None:
                 # AB-1 / TBM-3: clear stale classifier-driven hint BEFORE override write
                 # so the streaming_kind_hint watcher branch refreshes the header first.
-                self._clear_streaming_kind_hint(view)
+                _ToolPanelActionsMixin._clear_streaming_kind_hint(self, view)
                 set_user_kind_override(view, kind, source_widget=self)
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
@@ -1324,7 +1324,7 @@ class _ToolPanelActionsMixin:
             return
         # AB-1 / TBM-3: clear stale hint BEFORE override write so the watcher fires first.
         from hermes_cli.tui.services.tools import set_user_kind_override
-        self._clear_streaming_kind_hint(view)
+        _ToolPanelActionsMixin._clear_streaming_kind_hint(self, view)
         set_user_kind_override(view, None, source_widget=self)
         self.force_renderer(None)  # type: ignore[attr-defined]
         self._flash_header("render as: auto", tone="accent")

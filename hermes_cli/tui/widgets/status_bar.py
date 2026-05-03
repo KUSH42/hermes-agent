@@ -849,10 +849,10 @@ class StatusBar(PulseMixin, Widget):
         # S1-B: Active-file breadcrumb \u2014 only when block is scrolled off viewport
         active_file = str(getattr(app, "status_active_file", ""))
         offscreen = _safe_bool(getattr(app, "status_active_file_offscreen", False))
-        if active_file and offscreen and width >= 60:
+        max_path = max(10, width // 4)
+        if active_file and width >= 60 and (offscreen or len(active_file) > max_path):
             file_glyph = _nf_or_text("\uf040", "editing", app=app)
             t.append(f"  {file_glyph} ", style="dim")
-            max_path = max(10, width // 4)
             display_path = (
                 active_file if len(active_file) <= max_path
                 else "\u2026" + active_file[-(max_path - 1):]

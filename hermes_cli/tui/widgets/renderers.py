@@ -177,12 +177,18 @@ class CopyableRichLog(RichLog, can_focus=False):
         # Done at the top, before the deferred-return branch, so the capture
         # happens exactly once — even when the render is deferred for layout.
         if not self._wws_active and not _deferred:
+            plain_text: str | None = None
             if isinstance(content, Text):
-                self._plain_lines.append(content.plain)
-                self._line_links.append(None)
+                plain_text = content.plain
             elif isinstance(content, str):
-                self._plain_lines.append(content)
-                self._line_links.append(None)
+                plain_text = content
+            if plain_text is not None:
+                replay_idx = int(getattr(self, "_plain_replay_index", 0) or 0)
+                if replay_idx < len(self._plain_lines) and plain_text == self._plain_lines[replay_idx]:
+                    self._plain_replay_index = replay_idx + 1
+                elif getattr(self, "_size_known", True):
+                    self._plain_lines.append(plain_text)
+                    self._line_links.append(None)
         if width is None:
             if self._render_width is not None:
                 width = self._render_width
@@ -289,6 +295,7 @@ class CopyableRichLog(RichLog, can_focus=False):
     def clear(self) -> "CopyableRichLog":
         self._plain_lines.clear()
         self._line_links.clear()
+        self._plain_replay_index = 0
         return super().clear()
 
     def on_click(self, event: Any) -> None:

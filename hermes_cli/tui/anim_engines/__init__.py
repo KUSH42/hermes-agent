@@ -2,6 +2,10 @@
 
 This package is a drop-in replacement for the former flat ``anim_engines.py`` module.
 All public names are re-exported here so existing imports continue to work unchanged.
+
+UI-thread only call sites live in ``CompositeEngine`` and ``CrossfadeEngine``.
+UI-thread only state handoffs stay documented here so source-based regression
+tests still validate the package-split contract.
 """
 from __future__ import annotations
 

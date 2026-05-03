@@ -345,11 +345,12 @@ def _cell_px() -> tuple[int, int]:
             if ws_col > 0 and ws_row > 0 and ws_xpixel > 0 and ws_ypixel > 0:
                 return ws_xpixel // ws_col, ws_ypixel // ws_row
         except OSError as exc:
-            if exc.errno in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
+            err = getattr(exc, "errno", None)
+            if err in (errno.ENOTTY, errno.EBADF, errno.EINVAL, 25):
                 _tty_unavailable = True
                 _log.info(
                     "kitty_graphics: TTY unavailable (errno=%d); skipping further probes this process",
-                    exc.errno,
+                    err,
                 )
             else:
                 _log.debug("kitty_graphics._cell_px: TIOCGWINSZ ioctl failed", exc_info=True)

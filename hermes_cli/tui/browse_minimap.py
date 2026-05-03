@@ -109,7 +109,9 @@ class BrowseMinimap(Widget):
         anchors = getattr(app, "_browse_anchors", [])
         cursor = getattr(app, "_browse_cursor", 0)
 
-        if not anchors and not self._viewport_rect_enabled:
+        viewport_rect_enabled = bool(getattr(self, "_viewport_rect_enabled", False))
+
+        if not anchors and not viewport_rect_enabled:
             return Strip([Segment(" ")])
 
         vh = self.size.height or 1
@@ -130,7 +132,7 @@ class BrowseMinimap(Widget):
         upper = virtual_h if y == vh - 1 else content_y + band
 
         # Config-gated viewport rectangle (MMP-H4). Skip entirely when off.
-        if self._viewport_rect_enabled:
+        if viewport_rect_enabled:
             in_viewport = not (upper <= scroll_y or content_y >= scroll_y + vh)
             vp_bg = self._viewport_bg_cached
         else:

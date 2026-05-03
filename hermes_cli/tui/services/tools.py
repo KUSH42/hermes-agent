@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+from contextlib import nullcontext
 import logging
 import threading
 import time as _time
@@ -1069,13 +1070,17 @@ class ToolRenderingService(AppService):
         #
         # _state_lock strategy (RLock, re-entrant): wrap the entire step-11 block.
         # If the caller already holds _state_lock, re-entrant acquisition is safe.
-        with self._state_lock:
+        state_lock = getattr(self, "_state_lock", None)
+        with (state_lock if state_lock is not None else nullcontext()):
             if tool_call_id and view is not None:
                 hist = self._tool_views_history_by_id.setdefault(tool_call_id, [])
                 hist.append(view)
                 # Bound memory: drop oldest entries beyond cap.
-                if len(hist) > self._HISTORY_CAP_PER_ID:
-                    del hist[: len(hist) - self._HISTORY_CAP_PER_ID]
+                history_cap = int(
+                    getattr(self, "_HISTORY_CAP_PER_ID", ToolRenderingService._HISTORY_CAP_PER_ID)
+                )
+                if len(hist) > history_cap:
+                    del hist[: len(hist) - history_cap]
             if tool_call_id:
                 self._tool_views_by_id.pop(tool_call_id, None)
             if view is not None and view.gen_index is not None:

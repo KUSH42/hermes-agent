@@ -1389,7 +1389,8 @@ class TestAnimationSharedState:
     """IL-A1: no module-level mutable buffers in animation modules without exemption."""
 
     _ANIM_FILES = [
-        _TUI_ROOT / "anim_engines.py",
+        # anim_engines.py was split into a package; scan all sub-modules
+        *(_TUI_ROOT / "anim_engines").glob("*.py"),
         _TUI_ROOT / "animation.py",
         _TUI_ROOT / "anim_orchestrator.py",
     ]

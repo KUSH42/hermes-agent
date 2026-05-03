@@ -4913,41 +4913,40 @@ class HermesCLI:
         MAX_WALL_S = cfg.max_wall_s
         DISPLAY_FPS = min(_tc.MAX_FPS, max(1, cfg.fps))
 
-        self._ensure_startup_banner_artefacts(plain_hero)
-        template = (
-            self._startup_banner_template
-            if isinstance(self._startup_banner_template, dict)
-            else None
-        )
+        # template_cell[0] starts as None; populated after _ensure_startup_banner_artefacts
+        # returns so that _produce() (started earlier on cache miss) sees the resolved
+        # template for frames produced after artefact build completes.
+        template_cell: list = [None]
 
         def _build_static() -> Text:
-            if template is not None:
+            if template_cell[0] is not None:
                 return self._splice_startup_banner_frame(
-                    template, self._hero_ansi_colored(plain_hero)
+                    template_cell[0], self._hero_ansi_colored(plain_hero)
                 )
             return self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
 
         # Pre-flight: paint banner with BLANK hero so layout is visible while
         # frames pre-render but the full logo does NOT appear before the animation.
         # When no template exists (splice unavailable), fall back to full static.
+        # NOTE: app.call_later(_apply_preflight) is issued AFTER template_cell[0] is
+        # populated below so the event loop always sees the resolved template.
         async def _apply_preflight() -> None:
             from textual.css.query import NoMatches
             from hermes_cli.tui.widgets import StartupBannerWidget
             try:
                 widget = app.query_one(StartupBannerWidget)
-                if template is not None:
-                    hero_height = int(template["hero_height"])
-                    hero_width = int(template["hero_width"])
+                tmpl = template_cell[0]
+                if tmpl is not None:
+                    hero_height = int(tmpl["hero_height"])
+                    hero_width = int(tmpl["hero_width"])
                     blank_hero = "\n".join(" " * hero_width for _ in range(hero_height))
-                    widget.set_frame(self._splice_startup_banner_frame(template, blank_hero))
+                    widget.set_frame(self._splice_startup_banner_frame(tmpl, blank_hero))
                 else:
                     widget.set_frame(_build_static())
             except NoMatches:
                 logger.debug("TTE: StartupBannerWidget not found for pre-flight")
             except Exception:
                 logger.debug("TTE: pre-flight failed", exc_info=True)
-
-        app.call_later(_apply_preflight)
 
         # Minimal Visual subclass that returns pre-rendered Strip lists at O(1) with
         # zero allocation — used by Phase 1.5 to eliminate _wrap_and_format() at
@@ -5064,8 +5063,8 @@ class HermesCLI:
             for raw_frame in _cached_ansi[:MAX_FRAMES]:
                 raw_frame = _strip_ansi_bg(raw_frame)
                 rich_frame = (
-                    self._splice_startup_banner_frame(template, raw_frame)
-                    if template is not None
+                    self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                    if template_cell[0] is not None
                     else Text.from_ansi(raw_frame)
                 )
                 rich_frame.no_wrap = True
@@ -5131,8 +5130,8 @@ class HermesCLI:
                     raw_frame = _strip_ansi_bg(raw_frame)
                     _raw_for_cache.append(raw_frame)
                     rich_frame = (
-                        self._splice_startup_banner_frame(template, raw_frame)
-                        if template is not None
+                        self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                        if template_cell[0] is not None
                         else Text.from_ansi(raw_frame)
                     )
                     rich_frame.no_wrap = True
@@ -5197,11 +5196,31 @@ class HermesCLI:
                         _effect_name_norm, _cache_key, len(_raw_for_cache),
                     )
 
-        producer_thread = _threading.Thread(
-            target=_produce, daemon=True, name="hermes-tte-producer"
-        )
+        # Step B — start producer immediately on cache miss, before building the
+        # template. _produce() reads template_cell[0] per-frame, so early frames
+        # (produced while artefacts are still building) fall back to Text.from_ansi;
+        # later frames get the full splice once template_cell[0] is populated.
         if not _cache_hit:
+            producer_thread = _threading.Thread(
+                target=_produce, daemon=True, name="hermes-tte-producer"
+            )
             producer_thread.start()
+
+        # Step C — build template in parallel with the producer thread.
+        # EH-OK: if _ensure_startup_banner_artefacts raises, template_cell[0] stays
+        # None; _produce() falls back to Text.from_ansi() for remaining frames and
+        # _build_static() uses _startup_banner_static — matching existing behaviour.
+        self._ensure_startup_banner_artefacts(plain_hero)
+        template_cell[0] = (
+            self._startup_banner_template
+            if isinstance(self._startup_banner_template, dict)
+            else None
+        )
+
+        # _apply_preflight must be enqueued AFTER template_cell[0] is populated:
+        # the event loop may process it at any time after call_later() returns,
+        # including before the next line in this thread executes.
+        app.call_later(_apply_preflight)
 
         # Wait for the first batch before handing off to the event loop.
         if not _cache_hit:

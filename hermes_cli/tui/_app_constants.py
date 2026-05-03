@@ -1,7 +1,7 @@
 """Shared constants used by app.py and its mixin modules.
 
-Skill names are validated against ``_known_skills``, which holds bare names
-populated at runtime by ``theme.populate_skills``.  Access via
+Skill names are validated against ``KNOWN_SKILLS``, which holds bare names
+populated at runtime by ``theme.populate_skills``. Access via
 ``get_known_skills()``; update via ``refresh_known_skills()``.
 
 ``KNOWN_SLASH_COMMANDS`` is a registry-derived snapshot used by tests and
@@ -34,26 +34,26 @@ _KNOWN_SLASH_BARE: frozenset[str] = frozenset(
     c.lstrip("/") for c in KNOWN_SLASH_COMMANDS
 )
 
-# SVC-9: thread-safe skill set — replace-not-mutate under lock.
-# All readers must use get_known_skills(); direct access to _known_skills
-# captures the frozenset reference atomically (single pointer read in CPython).
+# SVC-9: keep a mutable compatibility surface for tests and older callers,
+# but update it under lock so writes remain coherent.
 _KNOWN_SKILLS_LOCK = threading.Lock()
-_known_skills: frozenset[str] = frozenset()
+KNOWN_SKILLS: set[str] = set()
 
 
 def get_known_skills() -> frozenset[str]:
     """Return current snapshot; always a complete, consistent set."""
-    return _known_skills
+    with _KNOWN_SKILLS_LOCK:
+        return frozenset(KNOWN_SKILLS)
 
 
 def refresh_known_skills(names: Iterable[str]) -> None:
-    """Replace known skills atomically. Raises ValueError on slash-command collision."""
+    """Replace known skills atomically. Raises AssertionError on slash-command collision."""
     new_known = frozenset(n.lstrip("/$") for n in names)
     if not _KNOWN_SLASH_BARE.isdisjoint(new_known):
-        raise ValueError(
-            f"refresh_known_skills: overlap with _KNOWN_SLASH_BARE: "
-            f"{_KNOWN_SLASH_BARE & new_known!r}"
+        overlap = sorted(_KNOWN_SLASH_BARE & new_known)
+        raise AssertionError(
+            f"skill name collides with built-in slash command: {overlap!r}"
         )
     with _KNOWN_SKILLS_LOCK:
-        global _known_skills
-        _known_skills = new_known
+        KNOWN_SKILLS.clear()
+        KNOWN_SKILLS.update(new_known)

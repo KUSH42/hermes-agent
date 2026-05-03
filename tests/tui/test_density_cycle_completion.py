@@ -7,10 +7,12 @@ from hermes_cli.tui.tool_panel._actions import (
     _density_cycle,
     _is_hero_row_legal,
     _next_legal_tier_static,
-    _HERO_MIN_BODY_ROWS,
 )
 from hermes_cli.tui.tool_panel._actions import _ToolPanelActionsMixin as _Mixin
 from hermes_cli.tui.tool_panel.density import DensityTier
+from hermes_cli.tui.tool_panel.layout_resolver import THRESHOLDS
+
+_HERO_MIN_BODY_ROWS = THRESHOLDS["HERO_MIN_BODY_ROWS"]
 
 
 # ---------------------------------------------------------------------------

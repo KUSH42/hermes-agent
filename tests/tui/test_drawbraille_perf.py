@@ -38,8 +38,6 @@ from hermes_cli.tui.anim_engines import (
     _COS_LUT,
     _lut_sin,
     _lut_cos,
-    _LAYER_ROW_BUF,
-    _LAYER_RESULT_BUF,
     _BOID_CELL_SIZE,
 )
 

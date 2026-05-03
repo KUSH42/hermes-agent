@@ -98,7 +98,12 @@ class BrowseMinimap(Widget):
     def render_line(self, y: int) -> Strip:
         """Map viewport row y to a virtual content offset and draw anchor glyph."""
         if self._accent_dirty:
-            self._refresh_accent()
+            try:
+                self._accent_cached = self.app.get_css_variables().get("accent", "cyan")
+            except Exception:
+                _log.debug("BrowseMinimap: accent lookup failed", exc_info=True)
+                self._accent_cached = "cyan"
+            self._accent_dirty = False
 
         app = self.app
         anchors = getattr(app, "_browse_anchors", [])

@@ -316,9 +316,26 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
             self._dispatch_selected()
 
     def dismiss(self) -> None:
-        """Close the mounted picker widget. Delegates to mixin dismiss_overlay."""
-        # on_unmount (via remove()) handles stack pop + focus restore via mixin
-        self.dismiss_overlay()
+        """Close the mounted picker widget and restore focus immediately."""
+        try:
+            self.remove_class("--modal")
+        except Exception:
+            _log.debug("SkillPickerOverlay.dismiss: remove_class failed", exc_info=True)
+        target = None
+        try:
+            target = self._restore_focus_to()
+        except Exception:
+            _log.debug("SkillPickerOverlay.dismiss: restore target lookup failed", exc_info=True)
+        try:
+            self.remove()
+        except Exception:
+            _log.debug("SkillPickerOverlay.dismiss: remove failed", exc_info=True)
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("SkillPickerOverlay.dismiss: focus restore failed", exc_info=True)
 
     def _dispatch_selected(self) -> None:
         """Enter: submit $name and close."""
@@ -385,4 +402,4 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
 
     def action_dismiss_picker(self) -> None:
         """Esc: dismiss without dispatch; input retains whatever fragment it had."""
-        self.dismiss_overlay()
+        self.dismiss()

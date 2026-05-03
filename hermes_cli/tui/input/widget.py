@@ -797,7 +797,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return InputMode.REV_SEARCH
         if self.has_class("--bash-mode"):
             return InputMode.BASH
-        if self.assist == AssistKind.OVERLAY:
+        assist = getattr(self, "assist", AssistKind.NONE)
+        if assist == AssistKind.OVERLAY or getattr(self, "_completion_overlay_active", False):
             return InputMode.COMPLETION
         return InputMode.NORMAL
 

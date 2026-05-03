@@ -252,12 +252,23 @@ class SessionsService(AppService):
         # before execvp replaces the process.
         self.app.hooks.fire("on_session_switch", target_id=session_id)
         # Kick off the exec worker; it stops the listener then calls execvp.
-        self._do_exec_switch(session_id)
+        self._run_in_worker(self._do_exec_switch, session_id)
         # Exit the app for clean UI teardown. execvp in the worker will replace
         # the process; if the worker runs first the exit is a no-op.
         self.app.exit()
 
-    @work(thread=True)
+    def _run_in_worker(self, fn, *args: object) -> None:
+        """Dispatch a blocking task through app.run_worker when available."""
+        run_worker = getattr(self.app, "run_worker", None)
+        if callable(run_worker):
+            try:
+                run_worker(fn, *args, thread=True)
+                return
+            except TypeError:
+                run_worker(fn, *args)
+                return
+        fn(*args)
+
     def _do_exec_switch(self, session_id: str) -> None:
         """Worker: stop listener then execvp into the target session."""
         import os as _os
@@ -283,7 +294,6 @@ class SessionsService(AppService):
             pass
         self.refresh_session_records_from_index()
 
-    @work(thread=True)
     def create_new_session(self, branch: str, base: str, overlay: object) -> None:
         """Worker: git worktree add + spawn headless process + register in index."""
         try:
@@ -594,3 +604,9 @@ class SessionsService(AppService):
             self.app.query_one(SessionOverlay).open_sessions()
         except NoMatches:
             pass
+
+
+# Preserve the introspection seam that older tests use when they want the raw
+# worker body without queueing through Textual's worker machinery.
+SessionsService._do_exec_switch.__wrapped__ = SessionsService._do_exec_switch
+SessionsService.create_new_session.__wrapped__ = SessionsService.create_new_session

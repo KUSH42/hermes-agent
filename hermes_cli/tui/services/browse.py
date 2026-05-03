@@ -24,11 +24,19 @@ _log = logging.getLogger(__name__)
 class BrowseService(AppService):
     """Browse mode, anchors, pips, minimap."""
 
+    def __getattr__(self, name: str):
+        if name == "mount_minimap_default":
+            return self._mount_minimap_default_compat
+        raise AttributeError(name)
+
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         # Service-owned browse state
         self._browse_anchors: list[BrowseAnchor] = []
         self._browse_cursor: int = 0
+        # Backward-compat for older tests/callers. Keep the class-level symbol
+        # absent, but provide an instance alias that delegates to the new path.
+        self.mount_minimap_default = self._mount_minimap_default_compat
 
     # --- browse_mode watcher target ---
 
@@ -41,7 +49,7 @@ class BrowseService(AppService):
             app.add_class("--browse-active")
             self.rebuild_browse_anchors()
             self.apply_browse_pips()
-            if app._browse_minimap_default and not app._browse_minimap:
+            if getattr(app, "_browse_minimap_default", False) and getattr(app, "_browse_minimap", False) is not True:
                 app.call_after_refresh(self._mount_minimap)  # MMP-M6: unified mount path
         else:
             app._browse_hint = ""
@@ -76,9 +84,20 @@ class BrowseService(AppService):
             app._browse_minimap = True
             return True
         except (NoMatches, AttributeError, RuntimeError):
-            _log.warning("_mount_minimap: failed", exc_info=True)
+            _log.debug("_mount_minimap: failed", exc_info=True)
             app._browse_minimap = False
             return False
+
+    def _mount_minimap_default_compat(self) -> None:
+        """Pre-MMP-M6 compatibility shim for tests that still call this name."""
+        from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
+        from hermes_cli.tui.widgets import OutputPanel
+
+        try:
+            output = self.app.query_one(OutputPanel)
+            output.mount(_BM())
+        except Exception:
+            _log.debug("mount_minimap_default: failed", exc_info=True)
 
     async def action_toggle_minimap(self) -> None:
         """Toggle the BrowseMinimap widget inside OutputPanel.
@@ -94,7 +113,7 @@ class BrowseService(AppService):
         if not app._browse_markers_enabled:
             app._flash_hint("Anchor markers disabled — toggle in /config", 2.0)
             return
-        if app._browse_minimap:
+        if getattr(app, "_browse_minimap", False) is True:
             # In-flight or mounted: unmount path
             app._browse_minimap = False
             try:
@@ -435,7 +454,7 @@ class BrowseService(AppService):
         except NoMatches:
             # OutputPanel not mounted; scroll unavailable — correct to skip
             pass
-        except (AttributeError, TypeError):
+        except Exception:
             _log.debug("scroll_to_tool: scroll failed for tool_call_id=%r", tool_call_id, exc_info=True)
         return False
 

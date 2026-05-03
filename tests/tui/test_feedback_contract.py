@@ -186,7 +186,7 @@ class TestFC2CancellationRace:
         svc = MagicMock(spec=ToolRenderingService)
         svc._tool_views_by_id = {}
         svc._tool_views_by_gen_index = {}
-    svc._tool_views_history_by_id = {}
+        svc._tool_views_history_by_id = {}
         svc._open_tool_count = 0
         svc._agent_stack = []
         svc._turn_tool_calls = {}

@@ -683,7 +683,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         _, _hero_width = get_cached_hero_width()
     except Exception:
         _hero_width = 30
-    layout_table.add_column("left", justify="center", width=_hero_width, no_wrap=True)
+    layout_table.add_column("left", justify="left", width=_hero_width, no_wrap=True)
     layout_table.add_column("right", justify="left")
 
     # Resolve skin colors once for the entire banner
@@ -889,7 +889,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     term_width = term_size.columns
     term_rows = term_size.lines
     if print_logo and term_width >= 95:
-        if term_rows >= 32:
+        if term_rows >= 20:
             markup_logo, _ = resolve_banner_logo_assets()
             logo_text = render_banner_logo_text(markup_logo)
             logo_text.no_wrap = True

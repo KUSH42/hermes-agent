@@ -201,6 +201,17 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
 _TEMPLATE_FAILED = object()
 _STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"
 
+# Matches standalone ANSI background-color SGR sequences produced by TTE effects.
+# Stripping these lets StartupBannerWidget's CSS background: $app-bg show through.
+_ANSI_BG_STRIP_RE = re.compile(
+    r"\033\[(?:4[0-9]|10[0-7]|48;[25];[^m]*)m"
+)
+
+
+def _strip_ansi_bg(text: str) -> str:
+    """Remove ANSI background-color escape codes from a TTE frame string."""
+    return _ANSI_BG_STRIP_RE.sub("", text)
+
 
 @dataclass(frozen=True)
 class _StartupTteConfig:
@@ -4946,7 +4957,7 @@ class HermesCLI:
 
         # Number of frames to pre-render before starting playback.  Small enough
         # that the first frame appears quickly; large enough to absorb jitter.
-        _PREFETCH_FRAMES = 15
+        _PREFETCH_FRAMES = 8
 
         # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
         # Frames are appended to anim_frames as they are generated; playback
@@ -5014,6 +5025,7 @@ class HermesCLI:
             # No app.is_running guard in this loop — the loop completes in ≤12 ms regardless,
             # so an app-stop races the loop and is harmless. This is intentional.
             for raw_frame in _cached_ansi[:MAX_FRAMES]:
+                raw_frame = _strip_ansi_bg(raw_frame)
                 rich_frame = (
                     self._splice_startup_banner_frame(template, raw_frame)
                     if template is not None
@@ -5079,6 +5091,7 @@ class HermesCLI:
                         break
                     if i >= MAX_FRAMES or (time.monotonic() - _pre_start) >= MAX_WALL_S:
                         break
+                    raw_frame = _strip_ansi_bg(raw_frame)
                     _raw_for_cache.append(raw_frame)
                     rich_frame = (
                         self._splice_startup_banner_frame(template, raw_frame)

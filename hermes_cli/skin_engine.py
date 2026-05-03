@@ -1381,6 +1381,12 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
     src = source or str(path)
     text = path.read_text(encoding="utf-8")
     fm = _parse_frontmatter(text, src)
+    if "stream_effect" in fm:
+        x_hermes = fm.get("x-hermes")
+        if not isinstance(x_hermes, dict):
+            x_hermes = {}
+        x_hermes.setdefault("stream_effect", fm.pop("stream_effect"))
+        fm["x-hermes"] = x_hermes
     validate_design_md_payload(fm, source=src)
 
     # Build resolution context (colors only — refs target colors.*)

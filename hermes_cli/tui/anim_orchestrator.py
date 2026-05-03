@@ -29,6 +29,17 @@ _BRAILLE_BIT_POSITIONS: tuple[tuple[int, int, int], ...] = tuple(
     (dy * 2 + dx, dx, dy) for dy in range(4) for dx in range(2)
 )
 
+# Precomputed lookup: braille bits value (0–255) → tuple of (dot_dx, dot_dy) offsets.
+# Eliminates the inner 8-branch conditional from the apply_external_trail hot path.
+_BRAILLE_BITS_TO_OFFSETS: tuple[tuple[tuple[int, int], ...], ...] = tuple(
+    tuple(
+        (dx, dy)
+        for bit_idx, dx, dy in _BRAILLE_BIT_POSITIONS
+        if bits & (1 << bit_idx)
+    )
+    for bits in range(256)
+)
+
 
 class AnimOrchestrator:
     """Engine lifecycle — selection, caching, carousel, SDF warmup.
@@ -443,12 +454,13 @@ class AnimOrchestrator:
         et = self._external_trail
         with measure("apply_external_trail", budget_ms=4):
             for row_idx, row in enumerate(frame_str.split("\n")):
+                row_base = row_idx * 4
                 for col_idx, ch in enumerate(row):
-                    if 0x2800 <= ord(ch) <= 0x28FF:
-                        bits = ord(ch) - 0x2800
-                        for bit_idx, dx, dy in _BRAILLE_BIT_POSITIONS:
-                            if bits & (1 << bit_idx):
-                                et.set(col_idx * 2 + dx, row_idx * 4 + dy, 1.0)
+                    cp = ord(ch)
+                    if 0x2800 <= cp <= 0x28FF:
+                        col_base = col_idx * 2
+                        for dx, dy in _BRAILLE_BITS_TO_OFFSETS[cp - 0x2800]:
+                            et.set(col_base + dx, row_base + dy, 1.0)
         et.decay_all()
         return et.to_canvas().frame()
 

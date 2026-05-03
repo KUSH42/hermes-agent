@@ -36,7 +36,10 @@ def write(text: str) -> bool:
             len(raw),
             _MAX_RAW_BYTES,
         )
-        raw = raw[:_MAX_RAW_BYTES]
+        # Decode with errors="ignore" to drop any incomplete tail codepoint
+        # before re-encoding, so the result is valid UTF-8 rather than a
+        # byte sequence that straddles a multi-byte character boundary.
+        raw = raw[:_MAX_RAW_BYTES].decode("utf-8", errors="ignore").encode("utf-8")
 
     b64 = base64.b64encode(raw).decode("ascii")
     seq = f"\033]52;c;{b64}\a"

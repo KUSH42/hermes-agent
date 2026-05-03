@@ -19,6 +19,7 @@ Polymorphic over ``Candidate`` — reads ``display``, returns
 
 from __future__ import annotations
 
+import heapq
 from dataclasses import replace
 from typing import Iterable, TypeVar
 
@@ -37,11 +38,11 @@ def fuzzy_rank(
     doesn't bleed into the "no query" display.
     """
     if not query:
-        # No query → deterministic alphabetical sort (match walk order
-        # from _iwalk, which now sorts per-directory).
-        clean = [replace(c, score=0, match_spans=()) for c in items]
-        clean.sort(key=lambda c: c.display)
-        return clean[:limit]
+        # No query → deterministic alphabetical sort bounded by limit.
+        # heapq.nsmallest is O(n log limit) and avoids a full sort of all n
+        # items; memory allocation is bounded by limit regardless of input size.
+        limited = heapq.nsmallest(limit, items, key=lambda c: c.display)
+        return [replace(c, score=0, match_spans=()) for c in limited]
 
     q = query.lower()
     scored: list[tuple[int, _C]] = []

@@ -297,7 +297,7 @@ _AnimSurface {
 
     def _render_gradient_line(self, raw: str, row: int) -> Strip:
         width = len(raw)
-        height = max(1, self.size.height)
+        height = max(1, getattr(self.size, "height", 1))
         t = row / (height - 1) if height > 1 else 0.0
         ar, ag, ab = self._chroma_a_rgb
         br, bg, bb = self._chroma_b_rgb

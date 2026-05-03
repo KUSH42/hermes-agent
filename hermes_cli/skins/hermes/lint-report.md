@@ -1,14 +1,14 @@
 ---
-skin: default
+skin: hermes
 warning_baseline: 0
 ---
 
-# DESIGN.md lint report — default
+# DESIGN.md lint report — hermes
 
 ## Command
 
 ```
-npx -y @google/design.md lint --format json hermes_cli/skins/default/DESIGN.md
+npx -y @google/design.md lint --format json hermes_cli/skins/hermes/DESIGN.md
 ```
 
 ## Lint CLI version

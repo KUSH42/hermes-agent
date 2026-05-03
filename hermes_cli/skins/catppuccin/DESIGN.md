@@ -39,6 +39,9 @@ components:
     backgroundColor: '{colors.border}'
     textColor: '{colors.foreground}'
 x-hermes:
+  startup_tte:
+    effect: bubbles
+    max_wall_s: 4.5
   schema: 1
   vars:
     preview-syntax-theme: catppuccin

@@ -33,7 +33,7 @@ class TestCliSkinPromptIntegration:
     def test_default_prompt_fragments_use_default_symbol(self):
         cli = _make_cli_stub()
 
-        set_active_skin("default")
+        set_active_skin("hermes")
         assert cli._get_tui_prompt_fragments() == [("class:prompt", "❯ ")]
 
     def test_ares_prompt_fragments_use_skin_symbol(self):
@@ -93,7 +93,7 @@ class TestCliSkinPromptIntegration:
 
 class TestCompactBannerSkinIntegration:
     def test_default_compact_banner_keeps_legacy_nous_hermes_branding(self):
-        set_active_skin("default")
+        set_active_skin("hermes")
 
         with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
              patch.dict(_build_compact_banner.__globals__, {"format_banner_version_label": lambda: "Hermes Agent v0.1.0 (test)"}):
@@ -124,7 +124,7 @@ class TestCompactBannerSkinIntegration:
         assert skin.get_color("banner_dim") in banner
 
     def test_compact_banner_shows_version_label(self):
-        set_active_skin("default")
+        set_active_skin("hermes")
 
         with patch("cli.shutil.get_terminal_size", return_value=SimpleNamespace(columns=90)), \
              patch.dict(_build_compact_banner.__globals__, {"format_banner_version_label": lambda: "Hermes Agent v1.0 (test) · upstream abc12345"}):

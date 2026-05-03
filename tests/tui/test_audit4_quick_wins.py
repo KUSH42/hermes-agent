@@ -198,7 +198,7 @@ class TestSkinPreview:
         ov = ConfigOverlay.__new__(ConfigOverlay)
         ov._snap_css_vars = {}
         ov._snap_component_vars = {}
-        ov._current_skin = "default"
+        ov._current_skin = "hermes"
         return ov
 
     def test_highlight_applies_skin_without_saving(self):

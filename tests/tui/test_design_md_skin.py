@@ -799,6 +799,6 @@ class TestDmK3RemovalScope:
 
 def test_bundled_skin_names_constant():
     assert set(BUNDLED_SKIN_NAMES) == {
-        "default", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
+        "hermes", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
         "matrix", "catppuccin", "solarized-dark", "tokyo-night",
     }

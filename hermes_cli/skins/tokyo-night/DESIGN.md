@@ -33,6 +33,9 @@ components:
     backgroundColor: '{colors.background}'
     textColor: '{colors.foreground}'
 x-hermes:
+  startup_tte:
+    effect: beams
+    max_wall_s: 4.5
   schema: 1
   vars:
     preview-syntax-theme: tokyo-night

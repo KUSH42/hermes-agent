@@ -19,7 +19,7 @@ class TestSaveConfigValueAtomic:
         config_path = hermes_home / "config.yaml"
         config_path.write_text(yaml.dump({
             "model": {"default": "test-model", "provider": "openrouter"},
-            "display": {"skin": "default"},
+            "display": {"skin": "hermes"},
         }))
         monkeypatch.setattr("cli._hermes_home", hermes_home)
         return config_path
@@ -45,7 +45,7 @@ class TestSaveConfigValueAtomic:
         result = yaml.safe_load(config_env.read_text())
         assert result["model"]["default"] == "test-model"
         assert result["model"]["provider"] == "openrouter"
-        assert result["display"]["skin"] == "default"
+        assert result["display"]["skin"] == "hermes"
         assert result["agent"]["max_turns"] == 50
 
     def test_creates_nested_keys(self, config_env):

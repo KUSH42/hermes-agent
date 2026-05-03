@@ -24,6 +24,9 @@ colors:
   rule-start: '#7A3511'
   rule-end: '#2A1508'
 x-hermes:
+  startup_tte:
+    effect: burn
+    max_wall_s: 4.5
   schema: 1
   branding:
     agent_name: Charizard Agent

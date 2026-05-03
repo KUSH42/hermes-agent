@@ -218,7 +218,8 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from hermes_constants import get_hermes_home
 
@@ -585,6 +586,7 @@ class SkinConfig:
     markdown: Dict[str, Any] = field(default_factory=dict)     # Any: lists + strings
     ui_ext: Dict[str, Any] = field(default_factory=dict)       # Any: lists + strings
     component_vars: Dict[str, str] = field(default_factory=dict)  # TUI CSS variable overrides
+    startup_tte: Dict[str, Any] = field(default_factory=dict)
 
     def get_color(self, key: str, fallback: str = "") -> str:
         """Get a color value with fallback."""
@@ -630,6 +632,10 @@ class SkinConfig:
         """Return a markdown style/value, falling back to _MARKDOWN_DEFAULTS."""
         return self.markdown.get(key, _MARKDOWN_DEFAULTS.get(key, fallback))
 
+    def get_startup_tte(self) -> Mapping[str, Any]:
+        """Return the per-skin startup TTE override block (may be empty)."""
+        return self.startup_tte
+
     def get_ui_ext(self, key: str, fallback: Any = None) -> Any:
         """Return an extended UI style/value, falling back to _UI_EXT_DEFAULTS."""
         return self.ui_ext.get(key, _UI_EXT_DEFAULTS.get(key, fallback))
@@ -640,7 +646,30 @@ class SkinConfig:
 # =============================================================================
 
 _active_skin: Optional[SkinConfig] = None
-_active_skin_name: str = "default"
+_active_skin_name: str = "hermes"
+
+_SKIN_NAME_ALIASES: Dict[str, str] = {"default": "hermes"}
+_alias_warning_logged: bool = False
+
+
+def _normalize_skin_name(name: str) -> str:
+    global _alias_warning_logged
+    canonical = _SKIN_NAME_ALIASES.get(name)
+    if canonical is None:
+        return name
+    if not _alias_warning_logged:
+        logger.info(
+            "skin %r is now %r; auto-mapping for compatibility. "
+            "Update display.skin in your config.yaml to silence this notice.",
+            name, canonical,
+        )
+        _alias_warning_logged = True
+    return canonical
+
+
+def _reset_alias_warning_for_tests() -> None:
+    global _alias_warning_logged
+    _alias_warning_logged = False
 
 
 def _skins_dir() -> Path:
@@ -656,7 +685,7 @@ def _bundled_skins_dir() -> Path:
 @functools.lru_cache(maxsize=1)
 def _bundled_default_payload() -> "SkinPayload":
     """Load the bundled default DESIGN.md once; used as the base for legacy YAML."""
-    return load_design_md_payload(_bundled_skins_dir() / "default" / "DESIGN.md")
+    return load_design_md_payload(_bundled_skins_dir() / "hermes" / "DESIGN.md")
 
 
 def _load_skin_from_yaml(path: Path) -> Optional[Dict[str, Any]]:
@@ -759,6 +788,7 @@ def _build_skin_config_from_yaml(data: Dict[str, Any]) -> SkinConfig:
         markdown=markdown,
         ui_ext=ui_ext,
         component_vars=component_vars,
+        # legacy YAML skins do not inherit startup_tte from the bundled hermes default
     )
 
 
@@ -903,10 +933,11 @@ def load_skin(name: str) -> SkinConfig:
     Malformed DESIGN.md raises SkinError and does **not** silently fall through
     (DM-B precedence rule).
     """
+    name = _normalize_skin_name(name)
     path = _resolve_skin_path(name)
     if path is None:
         logger.warning("Skin '%s' not found, falling back to bundled default", name)
-        path = _bundled_skins_dir() / "default" / "DESIGN.md"
+        path = _bundled_skins_dir() / "hermes" / "DESIGN.md"
 
     if path.name == "DESIGN.md":
         payload = load_design_md_payload(path)
@@ -917,7 +948,7 @@ def load_skin(name: str) -> SkinConfig:
     data = _load_skin_from_yaml(path)
     if not data:
         # YAML parse failure → fall through to bundled default
-        fallback = _bundled_skins_dir() / "default" / "DESIGN.md"
+        fallback = _bundled_skins_dir() / "hermes" / "DESIGN.md"
         return skin_config_from_payload(load_design_md_payload(fallback))
     return _build_skin_config_from_yaml(data)
 
@@ -933,6 +964,7 @@ def get_active_skin() -> SkinConfig:
 def set_active_skin(name: str) -> SkinConfig:
     """Switch the active skin. Returns the new SkinConfig."""
     global _active_skin, _active_skin_name
+    name = _normalize_skin_name(name)
     _active_skin_name = name
     _active_skin = load_skin(name)
     for fn in _invalidation_callbacks:
@@ -956,11 +988,11 @@ def init_skin_from_config(config: dict) -> None:
     display = config.get("display", {})
     if not isinstance(display, dict):
         display = {}
-    skin_name = display.get("skin", "default")
+    skin_name = display.get("skin", "hermes")
     if isinstance(skin_name, str) and skin_name.strip():
         set_active_skin(skin_name.strip())
     else:
-        set_active_skin("default")
+        set_active_skin("hermes")
 
 
 # =============================================================================
@@ -1090,7 +1122,11 @@ _DESIGN_MD_STANDARD_TOP_KEYS: frozenset = frozenset({
 _X_HERMES_ALLOWED_KEYS: frozenset = frozenset({
     "schema", "semantic", "component-vars", "syntax", "diff", "markdown",
     "spinner", "branding", "tool_prefix", "tool_icons", "banner_logo",
-    "banner_hero", "vars", "stream_effect", "colors",
+    "banner_hero", "vars", "stream_effect", "colors", "startup_tte",
+})
+
+_STARTUP_TTE_ALLOWED_KEYS: frozenset = frozenset({
+    "effect", "max_wall_s", "max_frames", "fps", "params",
 })
 
 # Whether DESIGN.md directory discovery is on by default. Phase 4 flipped this
@@ -1106,7 +1142,7 @@ _YAML_DEPRECATED_SINCE: str = "0.8.0"
 _AUTHORING_DOCS_PRIMARY_DESIGN_MD: bool = True
 
 BUNDLED_SKIN_NAMES: Tuple[str, ...] = (
-    "default", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
+    "hermes", "ares", "mono", "slate", "poseidon", "sisyphus", "charizard",
     "matrix", "catppuccin", "solarized-dark", "tokyo-night",
 )
 
@@ -1142,6 +1178,9 @@ class SkinPayload:
     tool_icons: Dict[str, str]
     banner_logo: str
     banner_hero: str
+    startup_tte: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def to_loader_tuple(self) -> Tuple[Dict[str, str], Dict[str, str]]:
         """Compatibility tuple for ThemeManager._load_path()."""
@@ -1213,6 +1252,53 @@ def _lookup_ref(refs: Dict[str, Any], dotted: str) -> Any:
     return node
 
 
+def _validate_startup_tte_block(raw: Any, *, source: str) -> None:
+    """Validate an x-hermes.startup_tte mapping (effect + optional knobs).
+
+    Empty mapping is a no-op. Non-empty must include `effect` and only the
+    keys in _STARTUP_TTE_ALLOWED_KEYS. EFFECT_MAP is imported lazily to keep
+    skin_engine independent of the TUI package layout.
+    """
+    if not isinstance(raw, dict):
+        raise SkinError(f"{source}.x-hermes.startup_tte: must be a mapping")
+    if not raw:
+        return
+    for k in raw:
+        if k not in _STARTUP_TTE_ALLOWED_KEYS:
+            raise SkinError(f"{source}.x-hermes.startup_tte: unknown key {k!r}")
+    if "effect" not in raw:
+        raise SkinError(
+            f"{source}.x-hermes.startup_tte: requires 'effect' when other keys are set"
+        )
+    from hermes_cli.tui.tte_runner import EFFECT_MAP  # lazy
+    known = frozenset(EFFECT_MAP)
+    effect = raw["effect"]
+    if not isinstance(effect, str) or effect not in known:
+        raise SkinError(
+            f"{source}.x-hermes.startup_tte.effect: unknown effect {effect!r}"
+        )
+    if "max_wall_s" in raw:
+        v = raw["max_wall_s"]
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not (1.0 <= float(v) <= 600.0):
+            raise SkinError(
+                f"{source}.x-hermes.startup_tte.max_wall_s: must be number in [1.0, 600.0]"
+            )
+    if "max_frames" in raw:
+        v = raw["max_frames"]
+        if not isinstance(v, int) or isinstance(v, bool) or not (100 <= v <= 100_000):
+            raise SkinError(
+                f"{source}.x-hermes.startup_tte.max_frames: must be int in [100, 100000]"
+            )
+    if "fps" in raw:
+        v = raw["fps"]
+        if not isinstance(v, int) or isinstance(v, bool) or not (1 <= v <= 240):
+            raise SkinError(
+                f"{source}.x-hermes.startup_tte.fps: must be int in [1, 240]"
+            )
+    if "params" in raw and not isinstance(raw["params"], dict):
+        raise SkinError(f"{source}.x-hermes.startup_tte.params: must be a mapping")
+
+
 def validate_design_md_payload(frontmatter: Dict[str, Any], *, source: str = "<DESIGN.md>") -> None:
     """In-process Hermes validator for DESIGN.md front matter.
 
@@ -1256,6 +1342,9 @@ def validate_design_md_payload(frontmatter: Dict[str, Any], *, source: str = "<D
     for k in x_hermes:
         if k not in _X_HERMES_ALLOWED_KEYS:
             raise SkinError(f"{source}.x-hermes.{k}: unknown extension key")
+
+    if "startup_tte" in x_hermes:
+        _validate_startup_tte_block(x_hermes["startup_tte"], source=source)
 
     # Duplicate-color check (DM-G fan-out rule)
     std_colors = frontmatter.get("colors", {}) or {}
@@ -1382,6 +1471,8 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
     tool_icons = {str(k): "" if v is None else str(v) for k, v in (x_hermes.get("tool_icons", {}) or {}).items()}
     banner_logo = str(x_hermes.get("banner_logo", "") or "")
     banner_hero = str(x_hermes.get("banner_hero", "") or "")
+    raw_tte = x_hermes.get("startup_tte") or {}
+    startup_tte = MappingProxyType(dict(raw_tte))
 
     return SkinPayload(
         name=name,
@@ -1399,6 +1490,7 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
         tool_icons=tool_icons,
         banner_logo=banner_logo,
         banner_hero=banner_hero,
+        startup_tte=startup_tte,
     )
 
 
@@ -1560,4 +1652,5 @@ def skin_config_from_payload(payload: SkinPayload) -> SkinConfig:
         markdown=dict(payload.markdown),
         ui_ext={},
         component_vars=dict(payload.component_vars),
+        startup_tte=dict(payload.startup_tte),
     )

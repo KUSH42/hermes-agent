@@ -22,13 +22,13 @@ def reset_skin():
     from hermes_cli import skin_engine
     from agent import rich_output
     skin_engine._active_skin = None
-    skin_engine._active_skin_name = "default"
+    skin_engine._active_skin_name = "hermes"
     skin_engine._invalidation_callbacks.clear()
     rich_output._MD_ANSI_CACHE = None
     rich_output._MD_VAL_CACHE = None
     yield
     skin_engine._active_skin = None
-    skin_engine._active_skin_name = "default"
+    skin_engine._active_skin_name = "hermes"
     skin_engine._invalidation_callbacks.clear()
     rich_output._MD_ANSI_CACHE = None
     rich_output._MD_VAL_CACHE = None
@@ -51,11 +51,11 @@ def test_syntax_scheme_highlights_python(scheme):
     from hermes_cli.skin_engine import load_skin, set_active_skin
     from agent.rich_output import SyntaxHighlighter
 
-    set_active_skin("default")
+    set_active_skin("hermes")
     # Patch syntax_scheme on the fly via a user skin override
     from hermes_cli import skin_engine
     skin_engine._active_skin = None  # force reload
-    skin = load_skin("default")
+    skin = load_skin("hermes")
     skin.syntax_scheme = scheme
     skin_engine._active_skin = skin
 
@@ -78,7 +78,7 @@ def test_syntax_refresh_on_skin_switch():
     from agent.rich_output import SyntaxHighlighter
     from hermes_cli.skin_engine import set_active_skin
 
-    set_active_skin("default")   # hermes scheme
+    set_active_skin("hermes")   # hermes scheme
     hl = SyntaxHighlighter()
     default_out = hl.to_ansi(PYTHON_SNIPPET, "python")
 
@@ -106,7 +106,7 @@ def test_diff_filename_style_uses_active_skin():
     from agent.rich_output import DiffRenderer
     from hermes_cli.skin_engine import get_active_skin, set_active_skin
 
-    set_active_skin("default")
+    set_active_skin("hermes")
     skin = get_active_skin()
     skin.diff["filename"] = "bold #123456"
 
@@ -133,12 +133,12 @@ def test_md_cache_rebuilds_after_skin_switch():
     from agent.rich_output import _md_ansi, _rebuild_md_cache
     from hermes_cli.skin_engine import set_active_skin, get_active_skin
 
-    set_active_skin("default")
+    set_active_skin("hermes")
     _rebuild_md_cache()
     before = _md_ansi("link")
 
     # Switch to a skin with custom link color
-    set_active_skin("default")
+    set_active_skin("hermes")
     skin = get_active_skin()
     skin.markdown["link"] = "#FF0000"  # red
     _rebuild_md_cache()

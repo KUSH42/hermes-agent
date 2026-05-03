@@ -318,7 +318,7 @@ When you add a new `component_var` key to `COMPONENT_VAR_DEFAULTS` in
 
 1. `theme_manager.py` — `COMPONENT_VAR_DEFAULTS` dict (the canonical default)
 2. `hermes.tcss` — declaration so the var is resolved at CSS parse time
-3. `hermes_cli/skins/<name>/DESIGN.md` — `x-hermes.component-vars` entry with a skin-appropriate value
+3. `skins/matrix.yaml` — `component_vars` section with a matrix-appropriate value
 4. `docs/skins/example-skin.yaml` — add a commented-out entry with description
 
 Failing to update the skin files means the new var silently falls back to the

@@ -713,3 +713,203 @@ When a reactive widget needs to know about the open/closed state of a sibling ov
 ## watch_collapsed must be explicitly defined (2026-04-28)
 
 Textual only calls `watch_<attr>()` if the method EXISTS on the class. `ToolHeader` had no `watch_collapsed` — create it. The reactive's `repaint=True` already handles repaints; the watcher is needed only for side effects (e.g. `_refresh_remediation_hint()`).
+
+## asyncio.ensure_future weak GC vs create_task — store the handle (2026-04-28)
+
+`asyncio.ensure_future(coro)` does NOT prevent GC of the coroutine. If nothing holds a reference to the returned future, Python may collect it before it completes. Use `asyncio.get_event_loop().create_task(coro)` and store the handle; cancel it in `on_unmount`. Pattern: `self._bg_tasks: list[asyncio.Task] = []`; append in `on_mount`; `for t in self._bg_tasks: t.cancel()` in `on_unmount`.
+
+## on_unmount is synchronous in Textual 8.x — do not await cancelled tasks (2026-04-28)
+
+`on_unmount` is NOT `async`. Calling `await task` inside it raises `RuntimeError`. Cancel tasks synchronously; do not await them. If you need to drain, use `app.run_worker` or schedule a final worker from inside `on_unmount`.
+
+## MpvPoller double-wrap call_from_thread raises RuntimeError (2026-04-28)
+
+`MpvPoller._poll_loop()` runs in a daemon thread. Passing an already-bound coroutine to `app.call_from_thread(await coro)` double-wraps it — the inner `await` evaluates the coroutine before call_from_thread receives it, causing `RuntimeError: no running event loop`. Pass bare function objects (not coroutines): `app.call_from_thread(fn, arg1, arg2)`.
+
+## FooterPane.parent read-only — dynamic subclass to override (2026-04-28)
+
+`Widget.parent` is a read-only Textual property. To supply a fake parent in tests without a running app, create a dynamic subclass:
+```python
+pane.__class__ = type("_TestFP", (FooterPane,), {"parent": property(lambda s: mock_panel)})
+```
+Do NOT try `pane.parent = mock` — raises `AttributeError: can't set attribute`.
+
+## :focus-within needs sentinel self-rule for Textual _update_focus_styles (2026-04-28)
+
+Textual's `_update_focus_styles` only propagates `:focus-within` to a node if the node has at least one CSS rule that references `:focus-within` *on itself*. A rule like `ToolPanel:focus-within { ... }` is not enough if no sibling rule explicitly uses `.child:focus-within`. Add a sentinel `ToolPanel:focus-within { }` rule (empty body) to ensure the pseudo-class propagates from focused children upward.
+
+## density-compact bare class vs HermesApp.density-compact scope (2026-04-28)
+
+`HermesApp.--density-compact ToolPanel { ... }` only matches when `--density-compact` is on `HermesApp`. If the class is toggled on `OutputPanel` instead, the selector fails silently. Always verify which widget carries the density class before writing the TCSS selector.
+
+## opacity: CSS property unsupported in Textual 8.2.3 (2026-04-28)
+
+`opacity:` is not a valid Textual TCSS property. Use `color: $text-muted 55%` (Rich color with alpha component) to achieve a dim effect, or `display: none` / `visibility: hidden` for full suppression.
+
+## DOMNode.id is a write-once property — ValueError on re-set (2026-04-28)
+
+`DOMNode.id` setter (`@id.setter`) raises `ValueError` when `self._id is not None`. DOM ids are write-once. Tests that re-use a widget stub across multiple test calls must reset `_id` to `None` between tests or use fresh instances. Never assign `widget.id = new_id` after the widget has been mounted.
+
+## query() multi-result never raises NoMatches — only query_one() does (2026-04-28)
+
+`self.query(".class")` always returns a `DOMQuery` (may be empty). `self.query_one(".class")` raises `NoMatches` when nothing matches. Code that checks `if result:` on a `DOMQuery` is silently wrong when the query returns 0 items — iterate or call `.first()`/`.last()` with a fallback.
+
+## BodyFooter circular import — always deferred import in tool_blocks (2026-04-28)
+
+`body_renderers._grammar.BodyFooter` creates a circular import if `tool_blocks` imports it at module level (both packages import from each other transitively). Always defer: `from hermes_cli.tui.body_renderers._grammar import BodyFooter` inside the function/method that needs it.
+
+## set_reactive() is correct for seeding reactives in tests (2026-04-28)
+
+`set_reactive(Cls.attr_name, value)` (Textual helper) seeds a reactive's instance backing without triggering watchers. `obj.__dict__["attr"] = value` is bypassed by the descriptor and has no effect. For test setup: `set_reactive(widget, ToolPanel.collapsed, True)`.
+
+## MouseUp constructor requires full positional signature (2026-04-28)
+
+`MouseUp(x, y, delta_x, delta_y, button, shift, meta, ctrl, screen_x, screen_y)` requires all positional args. Omitting any raises `TypeError`. For synthetic tests: `MouseUp(0, 0, 0, 0, 1, False, False, False, 0, 0)`.
+
+## assert_called_once_with() returns None — never wrap in assert (2026-04-28)
+
+`mock.assert_called_once_with(...)` raises `AssertionError` if the call doesn't match but returns `None` on success. `assert mock.assert_called_once_with(...)` always passes (truthy return on success is `None` which is falsy, but the assertion above it already raised if wrong). Use the assertion call directly without wrapping in `assert`.
+
+## nonlocal required for outer-scope assignment in nested functions (2026-04-28)
+
+Inside a nested function that assigns to an outer-scope variable, `nonlocal var` is required. Without it, Python treats the assignment as a new local, leaving the outer variable unchanged. Common in test helpers that capture call counts: `def on_call(): nonlocal count; count += 1`.
+
+## os.write(sys.stdout.fileno(), ...) for OSC 52 bypass Python buffering (2026-04-28)
+
+Python's `sys.stdout.write()` buffers output. OSC 52 clipboard sequences must reach the terminal immediately — use `os.write(sys.stdout.fileno(), seq.encode())` to bypass buffering. Always restore fd state with `os.fsync` if writing in a thread.
+
+## Logger naming: services/io.py and app.py use `logger`, not `_log` (2026-04-28)
+
+Most modules use `_log = logging.getLogger(__name__)`. Exception: `services/io.py` and `app.py` use `logger = logging.getLogger(__name__)`. When patching for tests: `patch("hermes_cli.tui.app.logger")` not `patch("hermes_cli.tui.app._log")`.
+
+## _produce_raised = True must be first statement before re-raise (2026-04-28)
+
+In workers with a `_produce_raised` flag: place `self._produce_raised = True` as the FIRST statement inside the `except` block, before any `raise`. If the re-raise somehow runs before the assignment (e.g. due to another exception in teardown), the flag stays `False` and the counter is not incremented.
+
+## @runtime_checkable Protocol matches MagicMock structurally (2026-04-28)
+
+`isinstance(MagicMock(), SomeProtocol)` returns `True` if the Protocol only requires methods (MagicMock has `__getattr__`). For negative Protocol tests, use a hand-rolled class that explicitly does NOT have the required methods. Do not rely on MagicMock for negative isinstance checks against `@runtime_checkable` Protocols.
+
+## TTE conftest patches load_tte_frames autouse — capture real fn at import time (2026-04-28)
+
+`tests/tui/conftest.py` has an autouse fixture that patches `load_tte_frames` to a no-op. If you need to test the real `load_tte_frames` function, capture it at module import time: `_real_load = load_tte_frames` before the conftest patch applies, then call `_real_load(...)` inside the test.
+
+## threading.local().depth in _set_view_state — reset in tests for xdist leakage (2026-04-28)
+
+`_set_view_state` uses a `threading.local()` depth counter for recursion guard. Under pytest-xdist, thread-locals can leak between tests in the same worker thread. In `setup_method`: `hermes_cli.tui.tool_panel._core._view_state_depth.depth = 0` to reset.
+
+## _ORPHANED_CSI_RE only matches sequences WITHOUT \x1b prefix (2026-04-28)
+
+`_ORPHANED_CSI_RE` in `response_flow.py` only matches CSI sequences that start with `\x9b` (C1 form), NOT `\x1b[` (two-byte ESC form). Orphaned ESC-bracket sequences must be caught separately or the regex must be extended. Confirm which form the terminal emits before debugging.
+
+## Widget.parent read-only — dynamic subclass to override in tests (2026-04-28)
+
+`Widget.parent` is a read-only Textual property (raises `AttributeError` on set). For test stubs: `obj.__class__ = type("_TestBP", (BodyPane,), {"parent": property(lambda s: mock_panel)})`.
+
+## Live-output suffix invariant: ThinkingWidget at bottom (2026-04-28)
+
+`OutputPanel` enforces `[LiveLineWidget, ThinkingWidget]` at the bottom of the output widget list (ThinkingWidget is always LAST). Tests checking live-output order must assert `ThinkingWidget` after all `LiveLineWidget` instances, not before.
+
+## caplog.at_level needs logger name kwarg for specific logger capture (2026-04-28)
+
+`with caplog.at_level(logging.WARNING)` captures ALL loggers. To capture only a specific module's logger: `with caplog.at_level(logging.WARNING, logger="hermes_cli.tui.tool_panel._core")`. Without the `logger=` kwarg, caplog captures the root logger and may miss messages from child loggers if they have `propagate=False`.
+
+## AnimConfigPanel.action_dismiss calls _save_fields_only, not _do_save (2026-04-28)
+
+`AnimConfigPanel.action_dismiss()` calls `self._save_fields_only()` to persist only changed fields before removing `--visible`. It does NOT call `_do_save()` (which writes to disk). Tests asserting dismiss behavior must mock `_save_fields_only`, not `_do_save`.
+
+## Permanent (pre-mounted) widgets must override on_mount/on_unmount as no-ops for ModalOverlayMixin (2026-04-28)
+
+`ModalOverlayMixin.on_mount()` and `on_unmount()` expect to be called once per show/hide cycle. Pre-mounted overlays (never removed from DOM) call `on_mount` only at first composition. Override `on_mount` and `on_unmount` as no-ops in pre-mounted overlay subclasses to prevent the mixin from trying to push/pop the modal stack on composition events.
+
+## border_title = "" class-level attribute shadows Textual reactive in test stubs (2026-04-28)
+
+Setting `border_title = ""` as a class-level attribute in a test stub shadows Textual's `border_title` reactive descriptor. Assigning `obj.border_title = "new"` thereafter writes to the class dict, not the reactive backing. Use `object.__setattr__(obj, "border_title", val)` or avoid the class-level shadow entirely.
+
+## DrawbrailleOverlay._tick tests need FakeOverlay + descriptor binding (2026-04-28)
+
+`DrawbrailleOverlay._tick` is defined as a plain method but tested via a fake subclass to avoid full app construction. The method must be bound explicitly: `DrawbrailleOverlay._tick.__get__(obj, FakeOverlay)(args)`. Using `obj._tick(args)` raises `AttributeError` if `FakeOverlay` does not inherit from `DrawbrailleOverlay` with the full `__init__` chain.
+
+## IL-W1 exemption comment must be on line immediately ABOVE @work decorator (2026-04-28)
+
+The IL-W1 lint gate (in `test_invariants.py`) checks `decorator.lineno - 1` (one line above `@work`), NOT the last line of the decorator (`end_lineno - 1`). The exemption comment `# il-w1: <reason>` must be placed on the line directly preceding `@work`, not on the line after or on the same line.
+
+## concurrent.futures.TimeoutError for classifier timeout — IL-8 needs exc_info=True (2026-04-28)
+
+The renderer classifier uses `concurrent.futures.Future.result(timeout=...)` which raises `concurrent.futures.TimeoutError` on expiry. IL-8 (invariant) requires that any `.warning(...)` call on an exception has `exc_info=True`. Bare `_log.warning("timeout")` without `exc_info=True` in the `except TimeoutError` block fails the IL-8 lint gate.
+
+## isinstance(mock, SettledAware) passes — MagicMock matches runtime_checkable Protocol (2026-04-28)
+
+`isinstance(MagicMock(), SettledAware)` returns `True` because `SettledAware` is `@runtime_checkable` and MagicMock provides all attribute lookups via `__getattr__`. For negative tests (ensuring a non-SettledAware object is rejected), use a hand-rolled class with no `settled` attribute.
+
+## SourcesBar Label.render() returns Content object — use str() not ._label (2026-04-28)
+
+`Label.render()` in Textual 8.x returns a `Content` (Rich renderables wrapper), not a plain string. `label._label` is the private backing. For assertions: `str(label.render())` or `label._label` — avoid `label.renderable` (does not exist in 8.x).
+
+## _cell_px imported INSIDE invalidate_for_resize — patch at kitty_graphics._cell_px (2026-04-28)
+
+`_cell_px` is imported INSIDE the `invalidate_for_resize` function body in `kitty_graphics.py`. Patching `hermes_cli.tui.kitty_graphics._cell_px` at module level has no effect because the local import re-binds it each call. Patch `hermes_cli.tui.kitty_graphics._cell_px` using `patch.object` or restructure the code to import at module top.
+
+## set_user_kind_override() helper — freeze-compliant kind-axis override (2026-04-28)
+
+`services/tools.py` exposes `set_user_kind_override(tool_call_id, kind_value)` as the freeze-compliant way to override the KIND axis on a live tool call. Do NOT add new `AxisName` enum values (concept doc frozen). Use this helper for per-call kind overrides in tests and production code.
+
+## TmuxDriver.wait_for() returns False on timeout, not exception (2026-04-28)
+
+`TmuxDriver.wait_for(pattern, timeout=5.0)` returns `False` if the pattern is not found within the timeout. It does NOT raise `TimeoutError`. Test assertions must check the return value: `assert driver.wait_for("ready", timeout=2.0), "Timed out waiting for ready"`.
+
+## session_name: grep for hermes-audit- to find leaked tmux sessions (2026-04-28)
+
+`TmuxDriver` creates sessions with `session_name: f"hermes-audit-{uuid.uuid4().hex[:8]}"`. After test failures, orphaned sessions persist. Find and kill them: `tmux ls | grep hermes-audit-` then `tmux kill-session -t <name>`.
+
+## Textual 8.x: CSS transition on borders silently ignored (2026-04-28)
+
+`transition: border-top 80ms` has no effect in Textual 8.x — borders cannot be animated via CSS transitions. Use `set_timer(delay_s, callback)` to simulate a timed style flip (add class → timer fires → remove class).
+
+## StreamingCodeBlock border-top cue survives child styling; color: does not (2026-04-28)
+
+`StreamingCodeBlock` uses Pygments-styled child `Text` objects. A `color:` CSS rule on the widget root is overridden by child `Style` cascades from Rich. For visual cues that must survive, use `border-top:` (paints the widget root frame, not the child text).
+
+## _render_shimmer_row: y==0 label branch must precede _no_color branch (2026-04-28)
+
+In `HintBar._render_shimmer_row`, the `y == 0` semantic-label branch must come BEFORE the `self._no_color` branch. If `_no_color` is checked first, color-mode users see only shimmer with no semantic label, violating WCAG contrast requirements.
+
+## OutputPanel.on_mount at line 347 — never redefine in subclass (2026-04-28)
+
+`widgets/output_panel.py:OutputPanel.on_mount` at line 347 caches the startup-banner width. Defining another `on_mount` in a subclass shadows this cache. Extend via `super().on_mount()` instead.
+
+## anim_engines package: patch targets changed after split (2026-05-03)
+
+After `anim_engines/` was split from `drawbraille_overlay.py`, engine classes live in sub-modules. Old patch target `hermes_cli.tui.drawbraille_overlay.NeuralPulseEngine` no longer works. New target: `hermes_cli.tui.anim_engines._organic.NeuralPulseEngine` (or via `hermes_cli.tui.anim_engines.NeuralPulseEngine` if patching the re-export). Always patch the definition site, not the alias.
+
+## IL-A1 invariant: ENGINES dict must be written once at module load (2026-05-03)
+
+`test_invariants.py`'s IL-A1 gate checks that `anim_engines.ENGINES` is declared at module level as a plain `dict` (not a function return). The comment `# il-a1:` must appear on the line immediately above the `ENGINES = {...}` assignment. Runtime mutations (e.g. `ENGINES["new"] = cls` in a test) cause IL-A1 to fail on the next run.
+
+## _lerp_hex in _color_utils — use for ThinkingWidget gradient (2026-05-03)
+
+`hermes_cli.tui._color_utils._lerp_hex(hex_a, hex_b, t) -> str` linearly interpolates between two hex color strings. Used by `ThinkingWidget` for per-row chroma gradient. Import from `_color_utils`, not inline — avoids duplicate implementations.
+
+## ThinkingWidget CSS vars: --thinking-chroma-a, --thinking-chroma-b, --thinking-hue-shift-speed (2026-05-03)
+
+ThinkingWidget reads three CSS vars at render time: `--thinking-chroma-a` (start color), `--thinking-chroma-b` (end color), `--thinking-hue-shift-speed` (float, hue rotation degrees per second). All three must be present in `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` and in the skin YAML under `x-hermes`. Missing vars cause silent fallback to defaults but log a WARNING.
+
+## per-skin stream_effect in skin YAML — top-level key, not nested (2026-05-03)
+
+`stream_effect:` in a skin YAML file is a TOP-LEVEL key (same level as `name`, `palette`, `x-hermes`). It is NOT nested under `x-hermes`. If placed under `x-hermes`, it is silently ignored. Shape: `stream_effect: "cascade"` or `stream_effect: {enabled: true, cascade_ticks: 4}`.
+
+## ToolGroupState.ERROR is ERR-sticky — terminal-absorbing (2026-05-03)
+
+`ToolGroupState.ERROR` (renamed from `PARTIAL`) is terminal-absorbing: once a group reaches `ERROR`, `_recompute_group_state` will not transition it to any other state regardless of member state changes. Tests that check post-error recovery must explicitly reset the group state to test the recovery path.
+
+## _tool_views_history_by_id cap=10 — pop oldest on overflow (2026-05-03)
+
+`_tool_views_history_by_id` in `ToolPanel` is capped at 10 entries per tool call id. When a new view state is appended and the list reaches cap, the oldest entry is popped (index 0). In tests that add >10 states, assert against the last 10, not all entries.
+
+## THRESHOLDS dict in density.py — add new tier entry if extending tiers (2026-05-03)
+
+`density.py` exports `THRESHOLDS: dict[str, int]` mapping tier names to row thresholds. Adding a new `DensityTier` value without a corresponding `THRESHOLDS` entry causes `_pressure_band()` to raise `KeyError`. Always update both `DensityTier` enum and `THRESHOLDS` together.
+
+## LayoutInputs pressure/viewport_rows/is_offscreen fields (2026-05-03)
+
+`LayoutInputs` (in `tool_panel/density.py`) now has three additional fields: `pressure: float` (0.0–1.0 viewport pressure), `viewport_rows: int` (current terminal height), `is_offscreen: bool` (whether the panel is outside viewport). All three are required. Omitting them in test construction raises `TypeError`; use `dataclasses.replace(base_inputs, pressure=0.5)` for partial overrides.

@@ -31,7 +31,9 @@ HermesApp
 │   ├── LiveLineWidget                   (streaming token line — always last-1)
 │   └── ThinkingWidget                   (animated thinking indicator — always last)
 ├── StatusBar / VoiceStatusBar / FPSCounter / HintBar / AnimatedCounter
-├── DrawbrailleOverlay / AnimConfigPanel    (braille animation overlay)
+├── DrawbrailleOverlay                       (braille overlay host, flat file)
+├── anim_engines/                            (engine package — was part of drawbraille_overlay.py)
+│   └── AnimConfigPanel                      (config UI, now in widgets/anim_config_panel.py)
 ├── CompletionOverlay → VirtualCompletionList + PreviewPanel
 ├── ImageBar                             (user-attached file thumbnails)
 ├── InlineImageBar                       (model inline image thumbnails)
@@ -71,12 +73,19 @@ High-signal flow:
   `_apply_min_size_overlay`: mounts `MinSizeBackdrop` when `w < 40 or h < 8`; updates if already shown; removes when adequate.
   Key attrs: `_pending_resize`, `_resize_timer`, `_RESIZE_DEBOUNCE_S = 0.06`.
 
-- **`hermes_cli/tui/widgets/`** (subpackage — `widgets.py` deleted; shim kept as backward-compat re-export)
+- **`hermes_cli/tui/widgets/`** (subpackage — `widgets.py` deleted; `__init__.py` is pure re-export shim)
+  Full submodule list: `__init__.py`, `_events.py`, `anim_config_panel.py`, `bash_output_block.py`,
+  `code_blocks.py`, `context_panel_stub.py`, `fps_counter.py`, `inline_media.py`, `input_legend_bar.py`,
+  `media.py`, `message_panel.py`, `nameplate.py`, `output_panel.py`, `overlays.py`, `pane_container.py`,
+  `plan_panel.py`, `prose.py`, `renderers.py`, `split_target_stub.py`, `startup_banner.py`,
+  `status_bar.py`, `thinking.py`, `tte_widget.py`, `utils.py`.
   Key modules: `message_panel.py`, `status_bar.py` (`HintBar`, `StatusBar`, `AnimatedCounter`, `VoiceStatusBar`),
   `thinking.py` (`ThinkingWidget`), `plan_panel.py`, `code_blocks.py` (`StreamingCodeBlock`),
   `inline_media.py` (`InlineMediaWidget`, `SeekBar`), `prose.py` (`CopyableRichLog`, `InlineProseLog`),
-  `input_legend_bar.py`, `pane_container.py`, `anim_config_panel.py` (`AnimConfigPanel`),
-  `renderers.py` (re-export shim for streaming renderers).
+  `input_legend_bar.py`, `pane_container.py`, `anim_config_panel.py` (`AnimConfigPanel` — moved from drawbraille_overlay.py),
+  `output_panel.py` (`OutputPanel`), `nameplate.py` (`AssistantNameplate`), `startup_banner.py` (`StartupBannerWidget`),
+  `tte_widget.py` (`TTEWidget`), `fps_counter.py` (`FpsCounter`), `renderers.py` (re-export shim),
+  `overlays.py` (backward-compat re-export from `overlays/`), `_events.py` (widget-level message classes).
   Key classes still queryable: `CopyableRichLog`, `InlineProseLog`, `LiveLineWidget`, `MessagePanel`,
   `StreamingCodeBlock`, `ThinkingWidget`, `OutputPanel`, `UserMessagePanel`, `ReasoningPanel`,
   `TitledRule`, `PlainRule`, `HintBar`, `StatusBar`, `AnimatedCounter`, `VoiceStatusBar`,
@@ -280,14 +289,28 @@ High-signal flow:
   `GitSnapshotEntry` preserves `git_xy`, staged/worktree split, untracked/conflict/rename metadata.
   `GitPoller.poll()` runs blocking Git subprocesses and returns a parsed `GitSnapshot`.
   `WorkspaceUpdated(snapshot, poll_elapsed_ms)` — app-thread handoff message from worker to app.
-- **`hermes_cli/tui/drawbraille_overlay.py`** (~2300 lines)
-  `DrawbrailleOverlay` (braille-canvas loading animation, 20 engines), `AnimConfigPanel` (`/anim` config UI),
-  `DrawbrailleOverlayCfg`, `AnimParams`, `TrailCanvas`, `CompositeEngine`, `CrossfadeEngine`.
-  Engines: `NeuralPulseEngine`, `FluidFieldEngine`, `LissajousWeaveEngine`, `AuroraRibbonEngine`,
-  `MandalaBloomEngine`, `FlockSwarmEngine`, `ConwayLifeEngine`, `RopeBraidEngine`, `PerlinFlowEngine`,
-  `HyperspaceEngine`, `WaveFunctionEngine`, `StrangeAttractorEngine`, `SDFMorphEngine`, plus 8 originals.
-  `_ENGINES` is `dict[str, type]` (class refs, not instances). `_get_engine()` caches in `_current_engine_instance`.
-  Adaptive `on_signal` protocol — detected via `hasattr` (no Protocol class).
+- **`hermes_cli/tui/drawbraille_overlay.py`** (overlay host, kept flat — NOT deleted)
+  `DrawbrailleOverlay` (braille-canvas loading animation), `DrawbrailleOverlayCfg`.
+  Engines and primitives have been **split out** into `hermes_cli/tui/anim_engines/` (package — see below).
+  `_get_engine()` caches in `_current_engine_instance`. Adaptive `on_signal` protocol — detected via `hasattr`.
+
+- **`hermes_cli/tui/anim_engines/`** (subpackage — `anim_engines.py` deleted; was ~2300-line monolith)
+  `__init__.py` — re-exports all engine classes + `ENGINES: dict[str, type]` + `ANIMATION_LABELS`.
+  Submodules by engine family:
+  - `_base.py` — `AnimEngine(Protocol)`, `AnimParams`, `TrailCanvas`, `_BaseEngine`, shared helpers
+    (`_layer_frames`, `_easing`, `_safe_dims`, `_braille_density_set`, `_lut_sin/cos`).
+  - `_helix.py` — `ClassicHelixEngine`, `DnaHelixEngine`, `DoubleHelixEngine`, `DoubleHelixLitEngine`,
+    `MorphHelixEngine`, `RotatingHelixEngine`, `TripleHelixEngine`.
+  - `_flow.py` — `FluidFieldEngine`, `PerlinFlowEngine`, `VortexEngine`, `WaveInterferenceEngine`.
+  - `_organic.py` — `ConwayLifeEngine`, `FlockSwarmEngine`, `NeuralPulseEngine`.
+  - `_geometric.py` — `AuroraRibbonEngine`, `KaleidoscopeEngine`, `LissajousWeaveEngine`,
+    `MandalaBloomEngine`, `RopeBraidEngine`, `ThickHelixEngine`, `WaveFunctionEngine`.
+  - `_math.py` — `HyperspaceEngine`, `StrangeAttractorEngine`.
+  - `_special.py` — `MatrixRainEngine`, `PlasmaEngine`, `SierpinskiEngine`, `Torus3DEngine`,
+    `WireframeCubeEngine`. (Also exports `_bresenham_pts`, `_clip_segment` — test helpers.)
+  - `_composite.py` — `CompositeEngine`, `CrossfadeEngine`.
+  `ENGINES` registry: 28 keys. `AnimConfigPanel` (config UI) moved to `widgets/anim_config_panel.py`.
+  Import all engines via `from hermes_cli.tui.anim_engines import ENGINES, AnimEngine, AnimParams`.
 - **`hermes_cli/tui/emoji_registry.py`** — `EmojiEntry` dataclass, `EmojiRegistry` (load/get/
   system_prompt_block/reload_normalized), `normalize_emoji()` (cell_height always 1), `_cell_px()`,
   `AnimatedEmojiWidget` via deferred factory `_build_animated_emoji_widget()` + `get_animated_emoji_widget_class()`.
@@ -434,5 +457,5 @@ High-signal flow:
 - **Overlay/input bug:** `app.py` → `overlays/` → `state.py` → overlay tests
 - **Completion/preview bug:** `input/widget.py` → `completion_context.py` → `path_search.py` → completion tests
 - **Theme bug:** `hermes.tcss` → `theme_manager.py` → `skin_loader.py` → theme tests
-- **Animation bug:** `drawbraille_overlay.py` → `animation.py` → drawbraille tests
+- **Animation bug:** `drawbraille_overlay.py` + `anim_engines/` → drawbraille tests
 - **Inline image/media bug:** `kitty_graphics.py` → `widgets/inline_media.py §InlineImage` → `media_player.py` → inline tests

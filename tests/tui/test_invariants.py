@@ -1657,3 +1657,45 @@ class W:
 """
         violations = _ils1_check_source(source)
         assert violations == [], f"Exemption comment should silence the violation; got: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# IL-10 — ERR-sticky aggregation: _recompute_group_state must return ERR
+#          (never PARTIAL, never DONE) for any child set containing ERROR.
+# ---------------------------------------------------------------------------
+
+
+class TestIL10ERRStickyAggregation:
+    """IL-10: _recompute_group_state must return ERR (never PARTIAL, never DONE)
+    for any child set containing ERROR, regardless of DONE / CANCELLED siblings."""
+
+    def test_il10_no_partial_value_in_enum(self):
+        from hermes_cli.tui.tool_group import ToolGroupState
+        # Assert PARTIAL is gone and ERROR is renamed to ERR
+        assert "PARTIAL" not in {s.name for s in ToolGroupState}
+        assert "ERROR" not in {s.name for s in ToolGroupState}  # renamed to ERR
+        assert ToolGroupState.ERR.value == "err"
+
+    def test_il10_err_sticky_wins_over_done(self):
+        # Build 99 DONE stubs + 1 ERROR stub via types.SimpleNamespace.
+        # Call _recompute_group_state(children, current_state=ToolGroupState.RUNNING).
+        # Assert result is ToolGroupState.ERR (not DONE, not any PARTIAL residue).
+        from hermes_cli.tui.tool_group import ToolGroupState, _recompute_group_state
+        from hermes_cli.tui.services.tools import ToolCallState
+        import types
+        done_child = types.SimpleNamespace(_view_state=types.SimpleNamespace(state=ToolCallState.DONE))
+        err_child = types.SimpleNamespace(_view_state=types.SimpleNamespace(state=ToolCallState.ERROR))
+        children = [done_child] * 99 + [err_child]
+        result = _recompute_group_state(children, current_state=ToolGroupState.RUNNING)
+        assert result is ToolGroupState.ERR
+
+    def test_il10_terminal_absorbing_done(self):
+        # Build a STREAMING child stub via types.SimpleNamespace.
+        # Call _recompute_group_state([streaming_child], current_state=ToolGroupState.DONE).
+        # Assert result is ToolGroupState.DONE (terminal absorbing; STREAMING does not re-open).
+        from hermes_cli.tui.tool_group import ToolGroupState, _recompute_group_state
+        from hermes_cli.tui.services.tools import ToolCallState
+        import types
+        streaming_child = types.SimpleNamespace(_view_state=types.SimpleNamespace(state=ToolCallState.STREAMING))
+        result = _recompute_group_state([streaming_child], current_state=ToolGroupState.DONE)
+        assert result is ToolGroupState.DONE

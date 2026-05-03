@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -243,14 +244,36 @@ class GroupHeader(Widget):
 class ToolGroupState(StrEnum):
     PENDING   = "pending"
     RUNNING   = "running"
-    DONE      = "done"       # all children DONE
-    PARTIAL   = "partial"    # mix of DONE and ERROR children
-    ERROR     = "error"      # any child ERROR, none DONE yet
-    CANCELLED = "cancelled"  # all children CANCELLED
+    DONE      = "done"        # all children DONE
+    ERR       = "err"         # any child ERR (sticky once latched)
+    CANCELLED = "cancelled"   # no ERR; ≥1 CANCEL; rest DONE/CANCEL
 
 
-def _recompute_group_state(children: list) -> ToolGroupState:
-    """Derive group terminal state from child _view_state values."""
+_TERMINAL_GROUP_STATES = frozenset({
+    ToolGroupState.DONE,
+    ToolGroupState.ERR,
+    ToolGroupState.CANCELLED,
+})
+
+
+def _recompute_group_state(
+    children: list,
+    *,
+    current_state: ToolGroupState | None = None,
+) -> ToolGroupState:
+    """Derive group terminal state from child _view_state values.
+
+    Implements concept §ToolGroup transition graph (lines 821–832) including
+    sticky-ERR aggregation (829–831) and terminal absorbing (832).
+
+    NOTE: `ToolCallState.ERROR` below refers to the child-level PHASE enum
+    (not renamed). `ToolGroupState.ERR` is the group-level aggregate state
+    (renamed from `ToolGroupState.ERROR` by this spec).
+    """
+    # Terminal absorbing: once latched, do not unwind on late events.
+    if current_state in _TERMINAL_GROUP_STATES:
+        return current_state
+
     raw_states = [
         getattr(getattr(c, "_view_state", None), "state", None)
         for c in children
@@ -258,21 +281,22 @@ def _recompute_group_state(children: list) -> ToolGroupState:
     states = {s for s in raw_states if s is not None}
     if not states:
         return ToolGroupState.PENDING
+
+    # ERR is sticky: any child ToolCallState.ERROR latches the group to
+    # ToolGroupState.ERR regardless of sibling DONEs (concept lines 829–831).
+    if ToolCallState.ERROR in states:
+        return ToolGroupState.ERR
+
     terminal = {ToolCallState.DONE, ToolCallState.ERROR, ToolCallState.CANCELLED}
     if not states <= terminal:
         if any(s in (ToolCallState.STARTED, ToolCallState.STREAMING,
                      ToolCallState.COMPLETING) for s in states):
             return ToolGroupState.RUNNING
         return ToolGroupState.PENDING
-    done = ToolCallState.DONE in states
-    err  = ToolCallState.ERROR in states
-    canc = ToolCallState.CANCELLED in states
-    if canc and not done and not err:
+
+    # All children terminal, no ERR: CANCELLED if ≥1 CANCEL, else DONE.
+    if ToolCallState.CANCELLED in states:
         return ToolGroupState.CANCELLED
-    if err and done:
-        return ToolGroupState.PARTIAL
-    if err:
-        return ToolGroupState.ERROR
     return ToolGroupState.DONE
 
 
@@ -609,14 +633,16 @@ class ToolGroup(Widget):
             )
             self.recompute_aggregate()
             # PG-4: recompute group terminal state
-            self._group_state = _recompute_group_state(children)
+            self._group_state = _recompute_group_state(children, current_state=self._group_state)
             # Reflect terminal group state on the ToolGroup widget via CSS classes
             # so hermes.tcss can style border-left based on outcome.
             try:
                 self.set_class(self._group_state == ToolGroupState.DONE, "--group-done")
-                self.set_class(self._group_state in (ToolGroupState.ERROR, ToolGroupState.PARTIAL), "--group-error")
-            except Exception:  # widget not fully mounted; CSS group-state class is decorative
-                pass
+                self.set_class(self._group_state == ToolGroupState.ERR, "--group-error")
+            except NoMatches:
+                # Widget not fully mounted; CSS group-state class is decorative,
+                # missed during early mount is harmless — next recompute will apply it.
+                _log.debug("set_class skipped: ToolGroup not fully mounted (state=%s)", self._group_state)
         except Exception:
             _log.exception("toolgroup: on_tool_panel_completed failed")
 

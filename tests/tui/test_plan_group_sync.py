@@ -464,21 +464,22 @@ class TestPG4GroupTerminal:
         result = _recompute_group_state(children)
         assert result == ToolGroupState.DONE
 
-    def test_one_child_error_group_error(self):
+    def test_one_child_error_group_err(self):
         children = [
             _make_child_mock(ToolCallState.ERROR),
             _make_child_mock(ToolCallState.ERROR),
         ]
         result = _recompute_group_state(children)
-        assert result == ToolGroupState.ERROR
+        assert result == ToolGroupState.ERR
 
-    def test_mix_done_error_group_partial(self):
+    def test_mix_done_error_group_err(self):
+        """ERR-sticky: any child ERROR latches group to ERR regardless of DONE siblings."""
         children = [
             _make_child_mock(ToolCallState.DONE),
             _make_child_mock(ToolCallState.ERROR),
         ]
         result = _recompute_group_state(children)
-        assert result == ToolGroupState.PARTIAL
+        assert result == ToolGroupState.ERR
 
     def test_all_cancelled_group_cancelled(self):
         children = [

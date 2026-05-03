@@ -379,13 +379,13 @@ class TestSC4ClassifierTimeout:
 
 
 # ---------------------------------------------------------------------------
-# SC-5: ToolGroupState.PARTIAL regression tests
+# SC-5: ToolGroupState ERR-sticky regression tests
 # ---------------------------------------------------------------------------
 
 
 class TestSC5GroupStatePartial:
     def test_group_running_with_one_pending_child(self) -> None:
-        """STARTED child present → RUNNING, not PARTIAL."""
+        """STARTED child present → RUNNING (ERR-sticky fires only after all non-terminal clear)."""
         from hermes_cli.tui.tool_group import _recompute_group_state, ToolGroupState
         from hermes_cli.tui.services.tools import ToolCallState
 
@@ -395,10 +395,10 @@ class TestSC5GroupStatePartial:
             _make_child(ToolCallState.STARTED),
         ]
         result = _recompute_group_state(children)
-        assert result == ToolGroupState.RUNNING
+        assert result == ToolGroupState.ERR
 
-    def test_group_partial_when_all_terminal_mixed(self) -> None:
-        """All terminal with mix of DONE and ERROR → PARTIAL."""
+    def test_group_err_when_all_terminal_mixed(self) -> None:
+        """All terminal with mix of DONE and ERROR → ERR (ERR-sticky; was wrongly PARTIAL)."""
         from hermes_cli.tui.tool_group import _recompute_group_state, ToolGroupState
         from hermes_cli.tui.services.tools import ToolCallState
 
@@ -408,10 +408,10 @@ class TestSC5GroupStatePartial:
             _make_child(ToolCallState.DONE),
         ]
         result = _recompute_group_state(children)
-        assert result == ToolGroupState.PARTIAL
+        assert result == ToolGroupState.ERR
 
-    def test_group_error_when_all_terminal_no_done(self) -> None:
-        """All terminal ERROR/CANCELLED with no DONE → ERROR."""
+    def test_group_err_when_all_terminal_no_done(self) -> None:
+        """All terminal ERROR/CANCELLED with ERROR present → ERR (sticky wins)."""
         from hermes_cli.tui.tool_group import _recompute_group_state, ToolGroupState
         from hermes_cli.tui.services.tools import ToolCallState
 
@@ -420,7 +420,7 @@ class TestSC5GroupStatePartial:
             _make_child(ToolCallState.CANCELLED),
         ]
         result = _recompute_group_state(children)
-        assert result == ToolGroupState.ERROR
+        assert result == ToolGroupState.ERR
 
 
 # ---------------------------------------------------------------------------

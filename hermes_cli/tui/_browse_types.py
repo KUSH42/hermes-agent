@@ -8,6 +8,10 @@ from __future__ import annotations
 import dataclasses
 import enum
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from textual.widget import Widget
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +33,16 @@ _BROWSE_TYPE_GLYPH: dict[str, str] = {
     "subagent_root": "🤖",       # robot face
 }
 
+# Single-cell variants for the 1-column minimap. Width-2 glyphs collapsed to
+# their lead char; emoji collapsed to a single-cell BMP fallback.
+_BROWSE_TYPE_GLYPH_NARROW: dict[str, str] = {
+    "turn_start":    "▸",
+    "code_block":    "‹",
+    "tool_block":    "▣",
+    "media":         "▶",
+    "subagent_root": "◆",   # narrow stand-in for 🤖
+}
+
 
 def _is_in_reasoning(widget: object) -> bool:
     """Return True if widget is a descendant of a ReasoningPanel."""
@@ -45,6 +59,6 @@ def _is_in_reasoning(widget: object) -> bool:
 @dataclasses.dataclass
 class BrowseAnchor:
     anchor_type: BrowseAnchorType
-    widget: object  # Widget — typed as object to avoid forward-ref issues
+    widget: "Widget"
     label: str
     turn_id: int

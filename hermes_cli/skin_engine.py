@@ -984,7 +984,13 @@ def init_skin_from_config(config: dict) -> None:
     """Initialize the active skin from CLI config at startup.
 
     Call this once during CLI init with the loaded config dict.
+    HERMES_SKIN env var overrides the config value (useful for scripted launches).
     """
+    import os as _os
+    env_skin = _os.environ.get("HERMES_SKIN", "").strip()
+    if env_skin:
+        set_active_skin(env_skin)
+        return
     display = config.get("display", {})
     if not isinstance(display, dict):
         display = {}

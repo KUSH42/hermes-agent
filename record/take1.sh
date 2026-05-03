@@ -27,7 +27,7 @@ obs_toggle
 for skin in "${SKINS[@]}"; do
     clear
     echo ">>> skin=$skin"
-    HERMES_SKIN="$skin" hermes &
+    HERMES_SKIN="$skin" hermes </dev/tty >/dev/tty 2>/dev/tty &
     HPID=$!
     sleep "$HOLD_S"
     # quit cleanly so terminal state stays sane for next skin

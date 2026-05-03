@@ -2175,11 +2175,11 @@ class HermesApp(App):
     def action_show_help(self) -> None:
         """Toggle the keyboard-shortcut reference overlay."""
         try:
-            overlay = self.query_one(KeymapOverlay)
-            if overlay.has_class("--visible"):
-                overlay.remove_class("--visible")
+            km = self.query_one(KeymapOverlay)
+            if km.has_class("--visible"):
+                km.action_dismiss()         # was: km.remove_class("--visible") — bypassed pop_modal
             else:
-                overlay.add_class("--visible")
+                km.show()                   # was: km.add_class("--visible")
         except NoMatches:
             pass
 
@@ -2309,7 +2309,7 @@ class HermesApp(App):
         try:
             ko = self.query_one(KeymapOverlay)
             if ko.has_class("--visible"):
-                ko.remove_class("--visible")
+                ko.action_dismiss()             # was: ko.remove_class("--visible") — bypassed pop_modal
         except NoMatches:
             pass
 

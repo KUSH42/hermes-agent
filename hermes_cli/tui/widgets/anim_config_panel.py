@@ -30,6 +30,8 @@ from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
+
 # Runtime imports — needed for query_one(), isinstance(), and direct function calls.
 # Note: _overlay_config is NOT imported here at module level; callers use
 # hermes_cli.tui.drawbraille_overlay._overlay_config lazily so that test patches
@@ -150,7 +152,7 @@ def _fields_to_dict(fields: list[_PanelField]) -> dict:
 
 # ── AnimConfigPanel ───────────────────────────────────────────────────────────
 
-class AnimConfigPanel(Widget):
+class AnimConfigPanel(ModalOverlayMixin, Widget):
     """Non-modal config overlay for the drawbraille animation.
 
     Pre-mounted in app compose. Toggled via ``--visible`` class.
@@ -209,9 +211,16 @@ class AnimConfigPanel(Widget):
 
     def show(self) -> None:
         """Show the panel and refresh fields from current config."""
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         self._build_fields()
         self._refresh_body()
-        self.add_class("--visible")
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("AnimConfigPanel.show: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
         self.focus()
 
     def _build_fields(self, cfg: DrawbrailleOverlayCfg | None = None) -> None:
@@ -279,10 +288,14 @@ class AnimConfigPanel(Widget):
             yield Static(self._build_text(), id="anim-config-body")
 
     def on_mount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per show() / action_dismiss() cycle.
         pass
 
     def on_unmount(self) -> None:
-        if self._preview_timer is not None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_unmount().
+        # stack/focus cleanup is owned by action_dismiss().
+        if self._preview_timer is not None:  # existing timer cleanup — must be preserved
             self._preview_timer.stop()
             self._preview_timer = None
 
@@ -356,12 +369,22 @@ class AnimConfigPanel(Widget):
 
     def action_dismiss(self) -> None:
         self._save_fields_only()  # persist without re-showing overlay
-        self.remove_class("--visible")
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass  # NoMatches: widget absent; ImportError: module not yet loaded — focus restoration is best-effort
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("AnimConfigPanel.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("AnimConfigPanel.dismiss_overlay: focus restore failed", exc_info=True)
 
     def on_blur(self, event: object) -> None:
         """Trap focus: while visible, never let focus escape the panel."""
@@ -728,7 +751,7 @@ class _GalleryPreview(Widget):
 
 # ── AnimGalleryOverlay ────────────────────────────────────────────────────────
 
-class AnimGalleryOverlay(Widget):
+class AnimGalleryOverlay(ModalOverlayMixin, Widget):
     """Non-modal gallery overlay for browsing and selecting animation engines (B2)."""
 
     DEFAULT_CSS = """
@@ -772,8 +795,15 @@ class AnimGalleryOverlay(Widget):
 
     def show(self) -> None:
         """Show the gallery and focus it."""
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         self._focus_idx = 0
-        self.add_class("--visible")
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("AnimGalleryOverlay.show: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
         self._refresh_list()
         self._update_preview()
         self.focus()
@@ -784,8 +814,14 @@ class AnimGalleryOverlay(Widget):
             yield _GalleryPreview(id="gallery-preview")
 
     def on_mount(self) -> None:
-        self._refresh_list()
-        self._update_preview()
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per show() / action_dismiss() cycle.
+        # show() owns initialization; on_mount must not duplicate those calls.
+        pass
+
+    def on_unmount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_unmount().
+        pass
 
     def _refresh_list(self) -> None:
         lines: list[str] = []
@@ -844,12 +880,22 @@ class AnimGalleryOverlay(Widget):
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("AnimGalleryOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("AnimGalleryOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
     def action_preview(self) -> None:
         """Force-show overlay with selected engine for 5s."""
@@ -879,8 +925,10 @@ class AnimGalleryOverlay(Widget):
             pass  # overlay absent or app not ready; preview is best-effort
 
     def action_open_config(self) -> None:
-        self.remove_class("--visible")
+        self.action_dismiss()  # was: self.remove_class("--visible") — bypassed pop_modal
         try:
             self.app.query_one(AnimConfigPanel).show()
-        except (NoMatches, Exception):
-            pass
+        except NoMatches:
+            pass  # AnimConfigPanel not yet mounted — best-effort open
+        except Exception:
+            _log.debug("AnimGalleryOverlay.action_open_config: show() failed", exc_info=True)

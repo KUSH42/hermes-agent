@@ -255,8 +255,10 @@ class TurnResultItem(Static):
 # KeymapOverlay
 # ---------------------------------------------------------------------------
 
-class KeymapOverlay(Widget):
+class KeymapOverlay(ModalOverlayMixin, Widget):
     """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape, F1, or q."""
+
+    can_focus = True
 
     DEFAULT_CSS = """
     KeymapOverlay {
@@ -361,7 +363,13 @@ class KeymapOverlay(Widget):
         yield Static("", id="keymap-content", markup=True)
 
     def on_mount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per show() / action_dismiss() cycle.
         self._update_content()
+
+    def on_unmount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_unmount().
+        pass
 
     def on_resize(self) -> None:
         self._update_content()
@@ -378,17 +386,39 @@ class KeymapOverlay(Widget):
         except NoMatches:
             pass
 
+    def show(self) -> None:
+        """Open the keymap reference; F1 / Esc / q dismiss."""
+        if self.has_class("--visible"):
+            return
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("KeymapOverlay.show: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
+        self._update_content()
+
     def dismiss(self) -> None:
         """Public close helper for widget overlays."""
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("KeymapOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("KeymapOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

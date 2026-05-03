@@ -1473,6 +1473,85 @@ def _ilm1_check_source(src: str, filename: str) -> list[str]:
     return violations
 
 
+def _ilm1w_check_source(src: str, filename: str) -> list[str]:
+    """IL-M1-W: AST walk to find class definitions that exhibit the focus-trap
+    triple (priority Esc binding + can_focus=True + 'layer: overlay' in
+    DEFAULT_CSS) without inheriting ModalOverlayMixin and without an explicit
+    '# il-m1: <reason>' exemption on the class def line.
+    """
+    tree = ast.parse(src, filename=filename)
+    violations: list[str] = []
+    lines = src.splitlines()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+
+        # (a) Inherits ModalOverlayMixin? -> skip
+        base_names = {b.id for b in node.bases if isinstance(b, ast.Name)}
+        base_names |= {
+            b.attr for b in node.bases if isinstance(b, ast.Attribute)
+        }
+        if "ModalOverlayMixin" in base_names:
+            continue
+
+        # (b) Exempt by # il-m1: comment on class def line? -> skip
+        defline = lines[node.lineno - 1] if node.lineno <= len(lines) else ""
+        if "# il-m1:" in defline:
+            continue
+
+        has_priority_escape = False
+        has_can_focus_true = False
+        has_layer_overlay = False
+
+        for stmt in node.body:
+            # can_focus = True
+            if isinstance(stmt, ast.Assign):
+                for tgt in stmt.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id == "can_focus":
+                        if isinstance(stmt.value, ast.Constant) and stmt.value.value is True:
+                            has_can_focus_true = True
+
+                # BINDINGS = [...]
+                for tgt in stmt.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id == "BINDINGS":
+                        if isinstance(stmt.value, (ast.List, ast.Tuple)):
+                            for elt in stmt.value.elts:
+                                if not isinstance(elt, ast.Call):
+                                    continue
+                                # Binding("escape", ..., priority=True)
+                                if not (isinstance(elt.func, ast.Name) and elt.func.id == "Binding"):
+                                    if not (isinstance(elt.func, ast.Attribute) and elt.func.attr == "Binding"):
+                                        continue
+                                key_arg = elt.args[0] if elt.args else None
+                                if not (isinstance(key_arg, ast.Constant) and key_arg.value == "escape"):
+                                    continue
+                                for kw in elt.keywords:
+                                    if (
+                                        kw.arg == "priority"
+                                        and isinstance(kw.value, ast.Constant)
+                                        and kw.value.value is True
+                                    ):
+                                        has_priority_escape = True
+
+                # DEFAULT_CSS = "..."
+                for tgt in stmt.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id == "DEFAULT_CSS":
+                        css_val = stmt.value
+                        if isinstance(css_val, ast.Constant) and isinstance(css_val.value, str):
+                            if "layer: overlay" in css_val.value:
+                                has_layer_overlay = True
+
+        if has_priority_escape and has_can_focus_true and has_layer_overlay:
+            violations.append(
+                f"{filename}:{node.lineno}: class {node.name} exhibits the "
+                f"focus-trap triple (priority esc + can_focus=True + layer: overlay) "
+                f"without ModalOverlayMixin and without '# il-m1:' exemption"
+            )
+
+    return violations
+
+
 class TestModalDiscipline:
     """IL-M1 — every raw --modal class manipulation must be annotated # il-m1:."""
 
@@ -1497,6 +1576,69 @@ class TestModalDiscipline:
 
         assert not violations, (
             "IL-M1: raw --modal manipulation without '# il-m1:' annotation:\n"
+            + "\n".join(violations)
+        )
+
+    def test_il_m1w_flags_triple_without_mixin(self) -> None:
+        """IL-M1-W — synthetic class with the focus-trap triple but no mixin is flagged."""
+        src = (
+            'from textual.binding import Binding\n'
+            'from textual.widget import Widget\n'
+            'class Foo(Widget):\n'
+            '    DEFAULT_CSS = """Foo { layer: overlay; }"""\n'
+            '    BINDINGS = [Binding("escape", "dismiss", priority=True)]\n'
+            '    can_focus = True\n'
+        )
+        violations = _ilm1w_check_source(src, "fake.py")
+        assert len(violations) == 1
+        assert "Foo" in violations[0]
+
+    def test_il_m1w_passes_with_mixin(self) -> None:
+        """IL-M1-W — same class but inheriting ModalOverlayMixin passes."""
+        src = (
+            'from textual.binding import Binding\n'
+            'from textual.widget import Widget\n'
+            'class Foo(ModalOverlayMixin, Widget):\n'
+            '    DEFAULT_CSS = """Foo { layer: overlay; }"""\n'
+            '    BINDINGS = [Binding("escape", "dismiss", priority=True)]\n'
+            '    can_focus = True\n'
+        )
+        violations = _ilm1w_check_source(src, "fake.py")
+        assert violations == []
+
+    def test_il_m1w_passes_with_il_m1_annotation(self) -> None:
+        """IL-M1-W — explicit '# il-m1:' annotation on class line opts out."""
+        src = (
+            'from textual.binding import Binding\n'
+            'from textual.widget import Widget\n'
+            'class Foo(Widget):  # il-m1: floating preview, not a modal\n'
+            '    DEFAULT_CSS = """Foo { layer: overlay; }"""\n'
+            '    BINDINGS = [Binding("escape", "dismiss", priority=True)]\n'
+            '    can_focus = True\n'
+        )
+        violations = _ilm1w_check_source(src, "fake.py")
+        assert violations == []
+
+    def test_il_m1w_repo_walk_passes_after_migrations(self) -> None:
+        """IL-M1-W — every class in hermes_cli/tui that exhibits the focus-trap
+        triple must either inherit ModalOverlayMixin or carry an explicit
+        '# il-m1: <reason>' annotation on the class def line."""
+        tui_dir = _REPO_ROOT / "hermes_cli" / "tui"
+        violations: list[str] = []
+        for py_file in sorted(tui_dir.rglob("*.py")):
+            if "__pycache__" in py_file.parts:
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            try:
+                file_violations = _ilm1w_check_source(source, str(py_file.relative_to(_REPO_ROOT)))
+            except SyntaxError:
+                continue
+            violations.extend(file_violations)
+        assert not violations, (
+            "IL-M1-W: focus-trap triple without ModalOverlayMixin or '# il-m1:' exemption:\n"
             + "\n".join(violations)
         )
 

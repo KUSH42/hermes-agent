@@ -1377,12 +1377,20 @@ class ResponseFlowEngine:
         latex_copy = latex  # avoid closure over mutable
 
         def _render_worker() -> None:
-            path = _get_math_renderer().render_block(latex_copy, dpi=dpi)
             _app2 = getattr(self._panel, "app", None)
             if _app2 is None:
                 return  # panel disappeared mid-render; drop result
+            try:
+                path = _get_math_renderer().render_block(latex_copy, dpi=dpi)
+            except Exception:
+                _log.exception("math render_block failed; falling back to unicode")
+                try:
+                    unicode_repr = _get_math_renderer().render_unicode(latex_copy)
+                    _app2.call_from_thread(self._mount_math_unicode, unicode_repr)
+                except Exception:
+                    _log.exception("math fallback render_unicode also failed; dropping block")
+                return
             if path is None:
-                # Fallback: write unicode on the app thread
                 unicode_repr = _get_math_renderer().render_unicode(latex_copy)
                 _app2.call_from_thread(self._mount_math_unicode, unicode_repr)
             else:

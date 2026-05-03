@@ -542,6 +542,10 @@ class DrawbrailleOverlay(Static):
     _drag_start_sx: int = 0
     _drag_start_sy: int = 0
 
+    # WRK-7 — engine failsafe
+    _engine_failure_count: int = 0
+    _failsafe_disable: bool = False
+
     # ── lifecycle ──────────────────────────────────────────────────────────
 
     def _ensure_orchestrator(self) -> None:
@@ -1037,6 +1041,8 @@ class DrawbrailleOverlay(Static):
         return False
 
     def _tick(self) -> None:
+        if self._failsafe_disable:
+            return
         self._ensure_orchestrator()
         self._ensure_renderer()
         if not self.has_class("-visible"):
@@ -1058,8 +1064,22 @@ class DrawbrailleOverlay(Static):
             resolved_color_b=self._renderer._resolved_color_b if self.gradient else None,
         )
 
-        with measure("drawbraille_frame"):
-            frame_str = engine.next_frame(params)
+        try:
+            with measure("drawbraille_frame"):
+                frame_str = engine.next_frame(params)
+        except Exception:
+            self._engine_failure_count += 1
+            _log.exception(
+                "drawbraille engine %s next_frame failed (count=%d)",
+                type(engine).__name__, self._engine_failure_count,
+            )
+            if self._engine_failure_count >= 3 and not self._failsafe_disable:
+                _log.error(
+                    "drawbraille: disabling overlay after 3 consecutive engine failures (engine=%s)",
+                    type(engine).__name__,
+                )
+                self._failsafe_disable = True
+            return
         params.t += params.dt
 
         # External trail for stateless engines (delegated to orchestrator)

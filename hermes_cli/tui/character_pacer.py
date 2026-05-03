@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import collections
+import logging
 import time
 from typing import Callable
+
+_log = logging.getLogger(__name__)
 
 
 class CharacterPacer:
@@ -36,6 +39,7 @@ class CharacterPacer:
         self._buf: collections.deque[str] = collections.deque()
         self._timer = None
         self._next_emit_at: float = 0.0
+        self._reveal_failure_count: int = 0
 
     def feed(self, chars: str) -> None:
         """Accept new characters. Pass-through if cps=0."""
@@ -72,8 +76,8 @@ class CharacterPacer:
         if self._timer is not None:
             try:
                 self._timer.stop()
-            except Exception:  # timer already stopped or collected — safe to ignore
-                pass
+            except (RuntimeError, AttributeError):
+                _log.debug("CharacterPacer._stop_timer: timer.stop raised", exc_info=True)
             self._timer = None
 
     def _start_timer(self) -> None:
@@ -115,7 +119,14 @@ class CharacterPacer:
                 break
 
         if batch:
-            self._on_reveal("".join(batch))
+            try:
+                self._on_reveal("".join(batch))
+            except Exception:
+                self._reveal_failure_count += 1
+                _log.exception("CharacterPacer._tick: on_reveal raised (failure %d)", self._reveal_failure_count)
+                if self._reveal_failure_count >= 3:
+                    _log.error("CharacterPacer: stopping after 3 consecutive on_reveal failures")
+                    self.stop()
             self._next_emit_at += len(batch) * interval
 
         if not self._buf:

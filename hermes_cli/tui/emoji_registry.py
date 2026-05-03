@@ -293,6 +293,7 @@ def _build_animated_emoji_widget() -> "type":
             self._img = InlineImage(max_rows=self._entry.cell_height)
             yield self._img
 
+        # il-w1: empty-list assignments are non-raising; GIF decode failure logged at line 310
         @work(thread=True)
         def on_mount(self) -> None:
             frames: list[Any] = []

@@ -539,9 +539,9 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
         Burst compensation batch-drains when the queue is deep, avoiding O(N)
         asyncio.sleep calls for fast model output.
         """
-        delay = self._tw_delay
-        burst = self._tw_burst
         try:
+            delay = self._tw_delay
+            burst = self._tw_burst
             while self.is_mounted:
                 try:
                     char = await asyncio.wait_for(
@@ -571,6 +571,8 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
 
                 if self._char_queue.empty():
                     self._animating = False
+        except Exception:
+            _log.exception("_drain_chars: drainer crashed")
         finally:
             self._animating = False
 

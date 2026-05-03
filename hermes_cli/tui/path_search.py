@@ -15,11 +15,14 @@ Candidate hierarchy
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+
+_log = logging.getLogger(__name__)
 
 from textual import log, work
 from textual.message import Message
@@ -119,55 +122,59 @@ class PathSearchProvider(Widget):
         # Torture test: hold '@' then type a deep path fragment rapidly.
         # Expected: worker count peaks at 2, then drops; no UI frame drops.
         # ----------------------------------------------------------------------
-        t_start = time.perf_counter()
-        first_batch_sent = False
-        total_files = 0
+        try:
+            t_start = time.perf_counter()
+            first_batch_sent = False
+            total_files = 0
 
-        BATCH = 512
-        _ignore = ignore if ignore is not None else frozenset({
-            ".git", "node_modules", "__pycache__", ".venv", "dist", "build"
-        })
-        buf: list[PathCandidate] = []
-        q_lower = match_query.lower()
-        root_str = str(root)
-        worker = get_current_worker()  # correct API; WorkerManager has no .current
+            BATCH = 512
+            _ignore = ignore if ignore is not None else frozenset({
+                ".git", "node_modules", "__pycache__", ".venv", "dist", "build"
+            })
+            buf: list[PathCandidate] = []
+            q_lower = match_query.lower()
+            root_str = str(root)
+            worker = get_current_worker()  # correct API; WorkerManager has no .current
 
-        for dirpath, _dirnames, filenames in self._iwalk(root, _ignore):
-            # Cooperative cancellation at directory granularity.
-            # Per-file checks cost more than the walk itself on warm caches.
-            if worker.is_cancelled:
-                t_cancel = (time.perf_counter() - t_start) * 1000
-                log(f"[PERF] path-walker cancelled after {t_cancel:.0f}ms, {total_files} files")
-                return
-            rel_dir = dirpath[len(root_str) + 1:] if dirpath != root_str else ""
-            for name in filenames:
-                total_files += 1
-                # Cheap prefilter BEFORE allocation — PathCandidate alloc is
-                # the dominant cost once the FS cache is warm.
-                if q_lower and q_lower not in name.lower() and q_lower not in rel_dir.lower():
-                    continue
-                rel = f"{rel_dir}/{name}" if rel_dir else name
-                buf.append(PathCandidate(
-                    display=rel,
-                    abs_path=os.path.join(dirpath, name),
-                    insert_text=f"{insert_prefix}{rel}" if insert_prefix else rel,
-                ))
-                if len(buf) >= BATCH:
-                    if not first_batch_sent:
-                        first_batch_ms = (time.perf_counter() - t_start) * 1000
-                        _log_first_batch(first_batch_ms)
-                        first_batch_sent = True
-                    self.post_message(self.Batch(query, buf, final=False))
-                    buf = []
+            for dirpath, _dirnames, filenames in self._iwalk(root, _ignore):
+                # Cooperative cancellation at directory granularity.
+                # Per-file checks cost more than the walk itself on warm caches.
+                if worker.is_cancelled:
+                    t_cancel = (time.perf_counter() - t_start) * 1000
+                    log(f"[PERF] path-walker cancelled after {t_cancel:.0f}ms, {total_files} files")
+                    return
+                rel_dir = dirpath[len(root_str) + 1:] if dirpath != root_str else ""
+                for name in filenames:
+                    total_files += 1
+                    # Cheap prefilter BEFORE allocation — PathCandidate alloc is
+                    # the dominant cost once the FS cache is warm.
+                    if q_lower and q_lower not in name.lower() and q_lower not in rel_dir.lower():
+                        continue
+                    rel = f"{rel_dir}/{name}" if rel_dir else name
+                    buf.append(PathCandidate(
+                        display=rel,
+                        abs_path=os.path.join(dirpath, name),
+                        insert_text=f"{insert_prefix}{rel}" if insert_prefix else rel,
+                    ))
+                    if len(buf) >= BATCH:
+                        if not first_batch_sent:
+                            first_batch_ms = (time.perf_counter() - t_start) * 1000
+                            _log_first_batch(first_batch_ms)
+                            first_batch_sent = True
+                        self.post_message(self.Batch(query, buf, final=False))
+                        buf = []
 
-        # Final batch (may be smaller than BATCH)
-        if not first_batch_sent:
-            first_batch_ms = (time.perf_counter() - t_start) * 1000
-            _log_first_batch(first_batch_ms)
+            # Final batch (may be smaller than BATCH)
+            if not first_batch_sent:
+                first_batch_ms = (time.perf_counter() - t_start) * 1000
+                _log_first_batch(first_batch_ms)
 
-        self.post_message(self.Batch(query, buf, final=True))
-        total_ms = (time.perf_counter() - t_start) * 1000
-        log(f"[PERF] path-walker done: {total_ms:.0f}ms, {total_files} files scanned")
+            self.post_message(self.Batch(query, buf, final=True))
+            total_ms = (time.perf_counter() - t_start) * 1000
+            log(f"[PERF] path-walker done: {total_ms:.0f}ms, {total_files} files scanned")
+        except Exception:
+            _log.exception("path_search._walk: scan crashed")
+            return
 
     @staticmethod
     def _iwalk(root: Path, ignore: set[str]) -> Iterator[tuple[str, list[str], list[str]]]:

@@ -236,63 +236,66 @@ class SessionsService(AppService):
     @work(thread=True)
     def create_new_session(self, branch: str, base: str, overlay: object) -> None:
         """Worker: git worktree add + spawn headless process + register in index."""
-        import subprocess as _sp
-        import sys as _sys
-        if not self.app._session_mgr:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), "Sessions not initialized."
-            )
-            return
-        new_id = self.app._session_mgr.new_id()
         try:
-            self.app._session_mgr.validate_socket_path(new_id)
-        except ValueError as exc:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), str(exc)
-            )
-            return
-        worktree_path = self.app._session_mgr.create_session_dir(new_id)
-        base_ref = "HEAD" if base == "current" else "main"
-        try:
-            _sp.run(
-                ["git", "worktree", "add", str(worktree_path), "-b", branch, base_ref],
-                capture_output=True, text=True, check=True,
-            )
-        except _sp.CalledProcessError as exc:
-            err = (exc.stderr or "").strip() or "git worktree add failed"
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), err
-            )
-            return
-        try:
-            _sp.Popen(
-                [_sys.argv[0], "--headless", "--worktree-session-id", new_id],
-                cwd=str(worktree_path),
-                start_new_session=True,
-            )
-        except OSError as exc:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), f"Spawn failed: {exc}"
-            )
-            return
-        rec = self.app._session_mgr.poll_state_until_pid(new_id, timeout=3.0)
-        if rec is None:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), "Session failed to start."
-            )
+            import subprocess as _sp
+            import sys as _sys
+            if not self.app._session_mgr:
+                self.app.call_from_thread(
+                    getattr(overlay, "_set_error", lambda m: None), "Sessions not initialized."
+                )
+                return
+            new_id = self.app._session_mgr.new_id()
+            try:
+                self.app._session_mgr.validate_socket_path(new_id)
+            except ValueError as exc:
+                self.app.call_from_thread(
+                    getattr(overlay, "_set_error", lambda m: None), str(exc)
+                )
+                return
+            worktree_path = self.app._session_mgr.create_session_dir(new_id)
+            base_ref = "HEAD" if base == "current" else "main"
             try:
                 _sp.run(
-                    ["git", "worktree", "remove", "--force", str(worktree_path)],
-                    capture_output=True, timeout=5,
+                    ["git", "worktree", "add", str(worktree_path), "-b", branch, base_ref],
+                    capture_output=True, text=True, check=True,
                 )
+            except _sp.CalledProcessError as exc:
+                err = (exc.stderr or "").strip() or "git worktree add failed"
+                self.app.call_from_thread(
+                    getattr(overlay, "_set_error", lambda m: None), err
+                )
+                return
+            try:
+                _sp.Popen(
+                    [_sys.argv[0], "--headless", "--worktree-session-id", new_id],
+                    cwd=str(worktree_path),
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                self.app.call_from_thread(
+                    getattr(overlay, "_set_error", lambda m: None), f"Spawn failed: {exc}"
+                )
+                return
+            rec = self.app._session_mgr.poll_state_until_pid(new_id, timeout=3.0)
+            if rec is None:
+                self.app.call_from_thread(
+                    getattr(overlay, "_set_error", lambda m: None), "Session failed to start."
+                )
+                try:
+                    _sp.run(
+                        ["git", "worktree", "remove", "--force", str(worktree_path)],
+                        capture_output=True, timeout=5,
+                    )
+                except Exception as exc:
+                    _log.warning("create_new_session: worktree cleanup failed", exc_info=True)
+                return
+            try:
+                self.app._session_mgr.index.add_session(rec)
             except Exception as exc:
-                _log.warning("create_new_session: worktree cleanup failed", exc_info=True)
-            return
-        try:
-            self.app._session_mgr.index.add_session(rec)
-        except Exception as exc:
-            _log.error("create_new_session: index.add_session failed", exc_info=True)
-        self.app.call_from_thread(self.on_session_created, new_id, overlay)
+                _log.error("create_new_session: index.add_session failed", exc_info=True)
+            self.app.call_from_thread(self.on_session_created, new_id, overlay)
+        except Exception:
+            _log.exception("sessions.create_new_session: failed")
 
     def on_session_created(self, new_id: str, overlay: object) -> None:
         """Event-loop: dismiss overlay and refresh session bar after create."""
@@ -304,58 +307,67 @@ class SessionsService(AppService):
     @work(thread=True)
     def kill_session_prompt(self, session_id: str) -> None:
         """Worker: find record and kill the session process."""
-        records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
-        rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
-        if rec is None:
-            self.app.call_from_thread(
-                self.app._flash_hint, "Session not found.", 2.0
-            )
-            return
         try:
-            if self.app._session_mgr:
-                self.app._session_mgr.kill_session(rec)
-            self.app._session_mgr.index.remove_session(session_id)
-        except Exception as exc:
-            _log.warning("kill_session_prompt: kill or index remove failed", exc_info=True)
-        self.app.call_from_thread(self.refresh_session_records_from_index)
+            records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
+            rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
+            if rec is None:
+                self.app.call_from_thread(
+                    self.app._flash_hint, "Session not found.", 2.0
+                )
+                return
+            try:
+                if self.app._session_mgr:
+                    self.app._session_mgr.kill_session(rec)
+                self.app._session_mgr.index.remove_session(session_id)
+            except Exception as exc:
+                _log.warning("kill_session_prompt: kill or index remove failed", exc_info=True)
+            self.app.call_from_thread(self.refresh_session_records_from_index)
+        except Exception:
+            _log.exception("sessions.kill_session_prompt: failed")
 
     @work(thread=True)
     def do_kill_session(self, session_id: str) -> None:
         """Worker: kill session process and remove from index."""
-        from pathlib import Path
-        from hermes_cli.config import CLI_CONFIG
-        from hermes_cli.tui.session_manager import SessionManager
-        sessions_cfg = CLI_CONFIG.get("sessions", {})
-        session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
-        mgr = SessionManager(session_dir)
-        for rec in mgr.index.get_sessions():
-            if rec.id == session_id:
-                mgr.kill_session(rec)
-                mgr.index.remove_session(session_id)
-                break
-        self.app.call_from_thread(
-            self.app._flash_hint, f"Session {session_id[:8]} killed", 1.5
-        )
+        try:
+            from pathlib import Path
+            from hermes_cli.config import CLI_CONFIG
+            from hermes_cli.tui.session_manager import SessionManager
+            sessions_cfg = CLI_CONFIG.get("sessions", {})
+            session_dir = Path(sessions_cfg.get("session_dir", "/tmp/hermes-sessions"))
+            mgr = SessionManager(session_dir)
+            for rec in mgr.index.get_sessions():
+                if rec.id == session_id:
+                    mgr.kill_session(rec)
+                    mgr.index.remove_session(session_id)
+                    break
+            self.app.call_from_thread(
+                self.app._flash_hint, f"Session {session_id[:8]} killed", 1.5
+            )
+        except Exception:
+            _log.exception("sessions.do_kill_session: failed")
 
     @work(thread=True)
     def open_merge_overlay(self, session_id: str) -> None:
         """Worker: fetch diff stat then show MergeConfirmOverlay."""
-        import subprocess as _sp
-        records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
-        rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
-        if rec is None:
-            return
-        branch = getattr(rec, "branch", "")
         try:
-            result = _sp.run(
-                ["git", "diff", "HEAD..." + branch, "--stat"],
-                capture_output=True, text=True, timeout=10,
-            )
-            diff_stat = result.stdout.strip() or "(no diff)"
+            import subprocess as _sp
+            records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
+            rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
+            if rec is None:
+                return
+            branch = getattr(rec, "branch", "")
+            try:
+                result = _sp.run(
+                    ["git", "diff", "HEAD..." + branch, "--stat"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                diff_stat = result.stdout.strip() or "(no diff)"
+            except Exception:
+                _log.debug("open_merge_overlay: git diff failed", exc_info=True)
+                diff_stat = "(error fetching diff)"
+            self.app.call_from_thread(self.show_merge_overlay, session_id, diff_stat)
         except Exception:
-            _log.debug("open_merge_overlay: git diff failed", exc_info=True)
-            diff_stat = "(error fetching diff)"
-        self.app.call_from_thread(self.show_merge_overlay, session_id, diff_stat)
+            _log.exception("sessions.open_merge_overlay: failed")
 
     def show_merge_overlay(self, session_id: str, diff_stat: str) -> None:
         """Event-loop: open MergeConfirm interrupt overlay for the given session."""
@@ -378,101 +390,110 @@ class SessionsService(AppService):
         overlay: object,
     ) -> None:
         """Worker: run git merge/squash/rebase for the session branch."""
-        import subprocess as _sp
-        records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
-        rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
-        if rec is None:
-            self.app.call_from_thread(
-                getattr(overlay, "_set_error", lambda m: None), "Session not found."
-            )
-            return
-        branch = getattr(rec, "branch", "")
-        if strategy == "squash":
-            cmd = ["git", "merge", "--squash", branch]
-        elif strategy == "rebase":
-            cmd = ["git", "rebase", branch]
-        else:
-            cmd = ["git", "merge", branch]
         try:
-            result = _sp.run(cmd, capture_output=True, text=True, timeout=60)
-            if result.returncode != 0:
-                err = (result.stderr or result.stdout or "merge failed").strip()
+            import subprocess as _sp
+            records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
+            rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
+            if rec is None:
                 self.app.call_from_thread(
-                    getattr(overlay, "_set_error", lambda m: None), err
+                    getattr(overlay, "_set_error", lambda m: None), "Session not found."
                 )
                 return
-        except Exception as exc:
-            _log.warning("run_merge: subprocess failed: %s", exc, exc_info=True)
-            self.app.call_from_thread(getattr(overlay, "_set_error", lambda m: None), str(exc))
-            return
-        if close_on_success:
+            branch = getattr(rec, "branch", "")
+            if strategy == "squash":
+                cmd = ["git", "merge", "--squash", branch]
+            elif strategy == "rebase":
+                cmd = ["git", "rebase", branch]
+            else:
+                cmd = ["git", "merge", branch]
             try:
-                if self.app._session_mgr:
-                    self.app._session_mgr.kill_session(rec)
-                    _sp.run(
-                        ["git", "worktree", "remove", "--force", getattr(rec, "worktree_path", "")],
-                        capture_output=True, timeout=10,
+                result = _sp.run(cmd, capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    err = (result.stderr or result.stdout or "merge failed").strip()
+                    self.app.call_from_thread(
+                        getattr(overlay, "_set_error", lambda m: None), err
                     )
-                    self.app._session_mgr.index.remove_session(session_id)
+                    return
             except Exception as exc:
-                _log.warning("run_merge: post-merge cleanup failed", exc_info=True)
-        self.app.call_from_thread(self.refresh_session_records_from_index)
-        self.app.call_from_thread(getattr(overlay, "action_dismiss", lambda: None))
+                _log.warning("run_merge: subprocess failed: %s", exc, exc_info=True)
+                self.app.call_from_thread(getattr(overlay, "_set_error", lambda m: None), str(exc))
+                return
+            if close_on_success:
+                try:
+                    if self.app._session_mgr:
+                        self.app._session_mgr.kill_session(rec)
+                        _sp.run(
+                            ["git", "worktree", "remove", "--force", getattr(rec, "worktree_path", "")],
+                            capture_output=True, timeout=10,
+                        )
+                        self.app._session_mgr.index.remove_session(session_id)
+                except Exception as exc:
+                    _log.warning("run_merge: post-merge cleanup failed", exc_info=True)
+            self.app.call_from_thread(self.refresh_session_records_from_index)
+            self.app.call_from_thread(getattr(overlay, "action_dismiss", lambda: None))
+        except Exception:
+            _log.exception("sessions.run_merge: failed")
 
     @work(thread=True)
     def reopen_orphan_session(self, session_id: str) -> None:
         """Worker: spawn new headless process in an orphan worktree."""
-        import subprocess as _sp
-        import sys as _sys
-        records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
-        rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
-        if rec is None:
-            return
-        worktree_path = getattr(rec, "worktree_path", "")
         try:
-            _sp.Popen(
-                [_sys.argv[0], "--headless", "--worktree-session-id", session_id],
-                cwd=worktree_path,
-                start_new_session=True,
-            )
-        except Exception as exc:
-            _log.error("reopen_orphan_session: Popen failed", exc_info=True)
-            return
-        new_rec = self.app._session_mgr.poll_state_until_pid(session_id, timeout=3.0) if self.app._session_mgr else None
-        if new_rec:
+            import subprocess as _sp
+            import sys as _sys
+            records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
+            rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
+            if rec is None:
+                return
+            worktree_path = getattr(rec, "worktree_path", "")
             try:
-                self.app._session_mgr.index.add_session(new_rec)
+                _sp.Popen(
+                    [_sys.argv[0], "--headless", "--worktree-session-id", session_id],
+                    cwd=worktree_path,
+                    start_new_session=True,
+                )
             except Exception as exc:
-                _log.warning("reopen_orphan_session: index.add_session failed", exc_info=True)
-        self.app.call_from_thread(self.refresh_session_records_from_index)
+                _log.error("reopen_orphan_session: Popen failed", exc_info=True)
+                return
+            new_rec = self.app._session_mgr.poll_state_until_pid(session_id, timeout=3.0) if self.app._session_mgr else None
+            if new_rec:
+                try:
+                    self.app._session_mgr.index.add_session(new_rec)
+                except Exception as exc:
+                    _log.warning("reopen_orphan_session: index.add_session failed", exc_info=True)
+            self.app.call_from_thread(self.refresh_session_records_from_index)
+        except Exception:
+            _log.exception("sessions.reopen_orphan_session: failed")
 
     @work(thread=True)
     def delete_orphan_session(self, session_id: str) -> None:
         """Worker: remove worktree dir and session index entry."""
-        import subprocess as _sp
-        records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
-        rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
-        worktree_path = getattr(rec, "worktree_path", "") if rec else ""
-        if worktree_path:
-            try:
-                _sp.run(
-                    ["git", "worktree", "remove", "--force", worktree_path],
-                    capture_output=True, timeout=10,
-                )
-            except Exception as exc:
-                _log.warning("delete_orphan_session: worktree remove failed %r", worktree_path, exc_info=True)
         try:
-            if self.app._session_mgr:
-                self.app._session_mgr.index.remove_session(session_id)
-        except Exception as exc:
-            _log.warning("delete_orphan_session: index.remove_session failed", exc_info=True)
-        self.app.call_from_thread(self.refresh_session_records_from_index)
+            import subprocess as _sp
+            records = self.app._session_mgr.index.get_sessions() if self.app._session_mgr else []
+            rec = next((r for r in records if getattr(r, "id", None) == session_id), None)
+            worktree_path = getattr(rec, "worktree_path", "") if rec else ""
+            if worktree_path:
+                try:
+                    _sp.run(
+                        ["git", "worktree", "remove", "--force", worktree_path],
+                        capture_output=True, timeout=10,
+                    )
+                except Exception as exc:
+                    _log.warning("delete_orphan_session: worktree remove failed %r", worktree_path, exc_info=True)
+            try:
+                if self.app._session_mgr:
+                    self.app._session_mgr.index.remove_session(session_id)
+            except Exception as exc:
+                _log.warning("delete_orphan_session: index.remove_session failed", exc_info=True)
+            self.app.call_from_thread(self.refresh_session_records_from_index)
+        except Exception:
+            _log.exception("sessions.delete_orphan_session: failed")
 
     @work(thread=True)
     def resume_session(self, session_id: str) -> None:
         """Resume a session by ID (runs in worker thread)."""
-        cli = self.app.cli
         try:
+            cli = self.app.cli
             if hasattr(cli, "_handle_resume_command"):
                 cli._handle_resume_command(f"/resume {session_id}")
                 db = getattr(cli, "_session_db", None)

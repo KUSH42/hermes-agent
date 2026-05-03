@@ -57,80 +57,87 @@ class IOService(AppService):
         app = self.app
         _first_chunk_in_turn: bool = True
         while True:
-            chunk = await app._output_queue.get()
-            if chunk is None:
-                was_streaming = not _first_chunk_in_turn
-                _first_chunk_in_turn = True
-                if was_streaming:
-                    # D2: if compaction progress is stuck > 0 when stream ends, signal done
-                    if getattr(app, "status_compaction_progress", 0.0) > 0.0:
-                        app.status_compaction_progress = 0.0
-                    app.hooks.fire("on_streaming_end")
-                    # A1: revert to REASONING (or IDLE if turn already ended)
-                    from hermes_cli.tui.agent_phase import Phase as _Phase
-                    if getattr(app, "agent_running", False):
-                        app.status_phase = _Phase.REASONING
-                    else:
-                        app.status_phase = _Phase.IDLE
-                try:
-                    panel = app._output_panel
-                    panel.flush_live()
-                    panel.scroll_end_if_pinned()
-                except Exception:
-                    pass
-                continue
-            if _first_chunk_in_turn:
-                _first_chunk_in_turn = False
-                # A1: mark STREAMING phase on first token
-                from hermes_cli.tui.agent_phase import Phase as _Phase
-                app.status_phase = _Phase.STREAMING
-                app.hooks.fire("on_streaming_start")
-                try:
-                    app.query_one(ThinkingWidget).deactivate()
-                except NoMatches:
-                    pass
-                # D-4: clear layout-reserve row on first stream chunk
-                try:
-                    app.query_one(ThinkingWidget).clear_reserve()
-                except NoMatches:
-                    pass
-            _seq = getattr(app, "_perf_chunk_seq", 0) + 1
-            app._perf_chunk_seq = _seq
-            logger.debug("[STREAM-SEQ] seq=%d size=%d", _seq, len(chunk))
-            with measure("io.consume_chunk", budget_ms=8.0, silent=True):
-                try:
-                    panel = app._output_panel
-                    panel.record_raw_output(chunk)
-                    panel.live_line.feed(chunk)
+            try:
+                chunk = await app._output_queue.get()
+                if chunk is None:
+                    was_streaming = not _first_chunk_in_turn
+                    _first_chunk_in_turn = True
+                    if was_streaming:
+                        # D2: if compaction progress is stuck > 0 when stream ends, signal done
+                        if getattr(app, "status_compaction_progress", 0.0) > 0.0:
+                            app.status_compaction_progress = 0.0
+                        app.hooks.fire("on_streaming_end")
+                        # A1: revert to REASONING (or IDLE if turn already ended)
+                        from hermes_cli.tui.agent_phase import Phase as _Phase
+                        if getattr(app, "agent_running", False):
+                            app.status_phase = _Phase.REASONING
+                        else:
+                            app.status_phase = _Phase.IDLE
                     try:
-                        msg = panel.current_message
-                        if msg is not None:
-                            msg.record_raw(chunk)
-                            engine = getattr(msg, "_response_engine", None)
-                            if engine is not None:
-                                with measure("io.engine_feed", budget_ms=4.0, silent=True):
-                                    engine.feed(chunk)
+                        panel = app._output_panel
+                        panel.flush_live()
+                        panel.scroll_end_if_pinned()
                     except Exception:
-                        # Suppress per-chunk record_raw / engine.feed failures so the stream stays alive;
-                        # log full traceback so the failure is recoverable from the log.
-                        logger.warning(
-                            "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
-                            len(chunk), chunk[:80], exc_info=True,
-                        )
-                    # Throttle: at most one deferred layout refresh per render frame.
-                    # Direct refresh(layout=True) on every chunk floods the compositor
-                    # with O(n_children) layout passes; call_after_refresh coalesces them.
-                    if not getattr(panel, "_layout_refresh_pending", False):
-                        panel._layout_refresh_pending = True
-                        def _do_layout_refresh(_p: "OutputPanel" = panel) -> None:
-                            _p._layout_refresh_pending = False
-                            with measure("io.panel_refresh", budget_ms=6.0, silent=True):
-                                _p.refresh(layout=True)
-                        app.call_after_refresh(_do_layout_refresh)
-                    panel.scroll_end_if_pinned()
-                except NoMatches:
-                    pass
-            await asyncio.sleep(0)
+                        logger.warning("io.consume: end-of-turn flush_live failed", exc_info=True)
+                    continue
+                if _first_chunk_in_turn:
+                    _first_chunk_in_turn = False
+                    # A1: mark STREAMING phase on first token
+                    from hermes_cli.tui.agent_phase import Phase as _Phase
+                    app.status_phase = _Phase.STREAMING
+                    app.hooks.fire("on_streaming_start")
+                    try:
+                        app.query_one(ThinkingWidget).deactivate()
+                    except NoMatches:
+                        pass
+                    # D-4: clear layout-reserve row on first stream chunk
+                    try:
+                        app.query_one(ThinkingWidget).clear_reserve()
+                    except NoMatches:
+                        pass
+                _seq = getattr(app, "_perf_chunk_seq", 0) + 1
+                app._perf_chunk_seq = _seq
+                logger.debug("[STREAM-SEQ] seq=%d size=%d", _seq, len(chunk))
+                with measure("io.consume_chunk", budget_ms=8.0, silent=True):
+                    try:
+                        panel = app._output_panel
+                        panel.record_raw_output(chunk)
+                        panel.live_line.feed(chunk)
+                        try:
+                            msg = panel.current_message
+                            if msg is not None:
+                                msg.record_raw(chunk)
+                                engine = getattr(msg, "_response_engine", None)
+                                if engine is not None:
+                                    with measure("io.engine_feed", budget_ms=4.0, silent=True):
+                                        engine.feed(chunk)
+                        except Exception:
+                            # Suppress per-chunk record_raw / engine.feed failures so the stream stays alive;
+                            # log full traceback so the failure is recoverable from the log.
+                            logger.warning(
+                                "io.consume: per-chunk msg.record_raw / engine.feed failed: chunk_len=%d head=%r",
+                                len(chunk), chunk[:80], exc_info=True,
+                            )
+                        # Throttle: at most one deferred layout refresh per render frame.
+                        # Direct refresh(layout=True) on every chunk floods the compositor
+                        # with O(n_children) layout passes; call_after_refresh coalesces them.
+                        if not getattr(panel, "_layout_refresh_pending", False):
+                            panel._layout_refresh_pending = True
+                            def _do_layout_refresh(_p: "OutputPanel" = panel) -> None:
+                                _p._layout_refresh_pending = False
+                                with measure("io.panel_refresh", budget_ms=6.0, silent=True):
+                                    _p.refresh(layout=True)
+                            app.call_after_refresh(_do_layout_refresh)
+                        panel.scroll_end_if_pinned()
+                    except NoMatches:
+                        # NoMatches expected during teardown; panel may unmount mid-chunk
+                        pass
+                await asyncio.sleep(0)
+            except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+                raise
+            except Exception:
+                logger.exception("consume_output: chunk dispatch failed; continuing")
+                continue
 
     # --- Thread-safe output writing ---
 

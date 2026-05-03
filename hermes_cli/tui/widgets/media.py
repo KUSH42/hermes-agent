@@ -158,25 +158,28 @@ class InlineMediaWidget(Widget):
 
     @work(thread=True)
     def _prepare(self) -> None:
-        from hermes_cli.tui.media_player import (
-            MpvController,
-            _resolve_youtube_url,
-            _fetch_youtube_thumbnail,
-            _extract_video_thumbnail,
-        )
-        cfg = self._cfg
-        resolved_url: str | None = None
-        if self._kind == "youtube":
-            resolved_url = _resolve_youtube_url(self._url)
-        ctrl = MpvController(
-            url=self._url, kind=self._kind, cfg=cfg, resolved_url=resolved_url
-        )
-        thumb_path: str | None = None
-        if self._kind == "youtube" and cfg.video_thumbs:
-            thumb_path = _fetch_youtube_thumbnail(self._url)
-        elif self._kind == "video" and cfg.video_thumbs:
-            thumb_path = _extract_video_thumbnail(self._url)
-        self.app.call_from_thread(self._on_ready, ctrl, thumb_path)
+        try:
+            from hermes_cli.tui.media_player import (
+                MpvController,
+                _resolve_youtube_url,
+                _fetch_youtube_thumbnail,
+                _extract_video_thumbnail,
+            )
+            cfg = self._cfg
+            resolved_url: str | None = None
+            if self._kind == "youtube":
+                resolved_url = _resolve_youtube_url(self._url)
+            ctrl = MpvController(
+                url=self._url, kind=self._kind, cfg=cfg, resolved_url=resolved_url
+            )
+            thumb_path: str | None = None
+            if self._kind == "youtube" and cfg.video_thumbs:
+                thumb_path = _fetch_youtube_thumbnail(self._url)
+            elif self._kind == "video" and cfg.video_thumbs:
+                thumb_path = _extract_video_thumbnail(self._url)
+            self.app.call_from_thread(self._on_ready, ctrl, thumb_path)
+        except Exception:
+            _log.exception("media._prepare crashed")
 
     def _on_ready(self, ctrl: Any, thumb_path: "str | None") -> None:
         if not self.is_mounted:

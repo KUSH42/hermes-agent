@@ -154,6 +154,7 @@ class PreviewPanel(RichLog):
         if self._syntax_abs_path and self._syntax_head is not None:
             self._render_syntax(self._syntax_abs_path, self._syntax_head)
 
+    # il-w1: cancellation early-return is non-raising; OSError handled at line 204
     @work(thread=True, exclusive=True, group="preview")
     def _load_preview(self, abs_path: str) -> None:
         # P0-C: check cancellation before any I/O — rapid selection changes

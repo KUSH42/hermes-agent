@@ -1058,7 +1058,12 @@ class HermesApp(App):
         """Thread adapter for BashService. exclusive=True serialises within group.
         NOTE: exclusive cancels the Worker object only — does NOT kill the OS
         subprocess. The is_running guard in BashService.run() is the real gate."""
-        self._svc_bash._exec_sync(cmd, block)
+        try:
+            self._svc_bash._exec_sync(cmd, block)
+        except Exception:
+            logger.exception("_start_bash_worker: exec failed")
+        finally:
+            self._svc_bash._running = False
 
     def _mount_bash_block(self, cmd: str) -> "Any":
         """Mount a BashOutputBlock into OutputPanel before the live-output duo."""
@@ -1074,6 +1079,7 @@ class HermesApp(App):
 
     # --- Workspace tracker ---
 
+    # il-w1: stdlib imports + git rev-parse failure logged inside (line 1090)
     @work(thread=True)
     def _init_workspace_tracker(self) -> None:
         """Resolve repo root in a worker thread, then set tracker on event loop."""
@@ -1126,6 +1132,13 @@ class HermesApp(App):
         self._git_poll_in_flight = True
         self._run_git_poll()
 
+    def _clear_git_poll_inflight(self) -> None:
+        """App-thread: clear in-flight flag and re-trigger if a poll was queued."""
+        self._git_poll_in_flight = False
+        if self._git_poll_retrigger:
+            self._git_poll_retrigger = False
+            self._trigger_git_poll()
+
     @work(thread=True, group="git-poll")
     def _run_git_poll(self) -> None:
         import time as _t
@@ -1133,7 +1146,12 @@ class HermesApp(App):
         if poller is None:
             return
         _t0 = _t.perf_counter()
-        snapshot = poller.poll()
+        try:
+            snapshot = poller.poll()
+        except Exception:
+            logger.exception("_run_git_poll: poller.poll() failed")
+            self.call_from_thread(self._clear_git_poll_inflight)
+            return
         elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
         self.post_message(WorkspaceUpdated(snapshot, poll_elapsed_ms=elapsed_ms))
 
@@ -1163,7 +1181,11 @@ class HermesApp(App):
         tracker = getattr(self, "_workspace_tracker", None)
         if tracker is None:
             return
-        warning = analyze_complexity(path)
+        try:
+            warning = analyze_complexity(path)
+        except Exception:
+            logger.exception("_analyze_complexity: analyze_complexity(%r) failed", path)
+            return
         self.call_from_thread(tracker.set_complexity, path, warning)
         self.call_from_thread(self._refresh_workspace_overlay)
 
@@ -2314,7 +2336,13 @@ class HermesApp(App):
     @work(exclusive=True)
     async def _consume_output(self) -> None:
         """Async worker — delegates body to IOService.consume_output."""
-        await self._svc_io.consume_output()
+        try:
+            await self._svc_io.consume_output()
+        except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+            raise
+        except Exception:
+            logger.exception("_consume_output adapter: IOService.consume_output raised")
+            raise  # surface to Textual worker manager — consumer is invoked once at startup; swallowing kills output for the session
 
     def write_output(self, text: str) -> None:
         """Thread-safe: enqueue text for the output consumer."""
@@ -2340,7 +2368,13 @@ class HermesApp(App):
         params: "dict[str, object] | None" = None,
     ) -> None:
         """Suspend Textual, run a TTE animation, then resume."""
-        await self._svc_io.play_effects_async(effect_name, text, params)
+        try:
+            await self._svc_io.play_effects_async(effect_name, text, params)
+        except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
+            raise
+        except Exception:
+            logger.exception("_play_effects adapter: play_effects_async raised")
+            raise  # symmetry with _consume_output; per-call, recoverable on next playback
 
     def play_effects_blocking(
         self,

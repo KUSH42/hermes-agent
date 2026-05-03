@@ -217,10 +217,13 @@ class InlineProseLog(CopyableRichLog):
     def _prerender_halfblock(self, mode: "Any", wid: int, spans: "list") -> None:
         """Worker: PIL resize for halfblock emoji renders, then trigger repaint."""
         from hermes_cli.tui.inline_prose import ImageSpan
-        for span in spans:
-            if isinstance(span, ImageSpan):
-                self._image_cache.get_strips(span, mode, wid)
-        self.app.call_from_thread(self.refresh)
+        try:
+            for span in spans:
+                if isinstance(span, ImageSpan):
+                    self._image_cache.get_strips(span, mode, wid)
+            self.app.call_from_thread(self.refresh)
+        except Exception:
+            _log.exception("_prerender_halfblock: PIL resize or refresh failed")
 
     # ------------------------------------------------------------------ #
     # Helpers

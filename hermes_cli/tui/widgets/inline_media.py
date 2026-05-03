@@ -262,13 +262,16 @@ class InlineThumbnail(TooltipMixin, Widget):
 
     @work(thread=True)
     def _load_strips(self) -> None:
-        from hermes_cli.tui.kitty_graphics import _load_image, render_halfblock
-        img = _load_image(self._path)
-        if img is not None:
-            strips = render_halfblock(img, max_cols=10, max_rows=6)
-        else:
-            strips = []
-        self.app.call_from_thread(self._apply_strips, strips)
+        try:
+            from hermes_cli.tui.kitty_graphics import _load_image, render_halfblock
+            img = _load_image(self._path)
+            if img is not None:
+                strips = render_halfblock(img, max_cols=10, max_rows=6)
+            else:
+                strips = []
+            self.app.call_from_thread(self._apply_strips, strips)
+        except Exception:
+            _log.exception("inline_media._load_strips: image load failed")
 
     def _apply_strips(self, strips: list[Strip]) -> None:
         self._strips = strips

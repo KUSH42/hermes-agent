@@ -179,6 +179,7 @@ class AnimationClock:
         self._subscribers: dict[int, tuple[int, Callable[[], None]]] = {}
         self._sub_names: dict[int, str] = {}
         self._next_id: int = 0
+        self._subscriber_failures: dict[int, int] = {}
 
     def subscribe(self, divisor: int, callback: Callable[[], None]) -> _ClockSubscription:
         """Register *callback* to fire every *divisor* ticks. Returns a stoppable handle."""
@@ -202,6 +203,7 @@ class AnimationClock:
     def unsubscribe(self, sub_id: int) -> None:
         self._subscribers.pop(sub_id, None)
         self._sub_names.pop(sub_id, None)
+        self._subscriber_failures.pop(sub_id, None)
 
     def tick(self) -> None:
         """15Hz interval callback — must be plain def, registered via set_interval(1/15, ...)."""
@@ -212,13 +214,26 @@ class AnimationClock:
         slowest_ms = 0.0
         slowest_id = -1
         for sub_id, (divisor, callback) in list(self._subscribers.items()):
-            if self._tick % divisor == 0:
-                _s0 = _t.perf_counter()
+            if self._tick % divisor != 0:
+                continue
+            _s0 = _t.perf_counter()
+            try:
                 callback()
-                _s_ms = (_t.perf_counter() - _s0) * 1000
-                if _s_ms > slowest_ms:
-                    slowest_ms = _s_ms
-                    slowest_id = sub_id
+            except Exception:
+                n = self._subscriber_failures.get(sub_id, 0) + 1
+                self._subscriber_failures[sub_id] = n
+                name = self._sub_names.get(sub_id, repr(callback))
+                _log.exception("AnimationClock: subscriber #%d %s raised (count=%d)", sub_id, name, n)
+                if n >= 5:
+                    _log.error("AnimationClock: unsubscribing #%d %s after 5 failures", sub_id, name)
+                    self._subscribers.pop(sub_id, None)
+                    self._sub_names.pop(sub_id, None)
+                    self._subscriber_failures.pop(sub_id, None)
+                continue
+            _s_ms = (_t.perf_counter() - _s0) * 1000
+            if _s_ms > slowest_ms:
+                slowest_ms = _s_ms
+                slowest_id = sub_id
         _dt = (_t.perf_counter() - _t0) * 1000
         if _dt > 16 or n_subs > 50:
             try:

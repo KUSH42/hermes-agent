@@ -5219,7 +5219,6 @@ class HermesCLI:
         _prelaunch = getattr(self, "_prelaunch_banner_thread", None)
         if _prelaunch is not None and _prelaunch.is_alive():
             _prelaunch.join(timeout=0.3)   # almost always done; 300ms cap avoids stall
-        _prelaunch_done = _prelaunch is not None and not _prelaunch.is_alive()
 
         # _ensure_startup_banner_artefacts is now a no-op if worker finished
         self._ensure_startup_banner_artefacts(plain_hero)
@@ -5235,7 +5234,10 @@ class HermesCLI:
         # generator is handed to _produce so iteration continues without
         # restarting the effect (TTE effects are not deterministic across
         # generators — frames must come from the same iter_frames() call).
-        if not _cache_hit and _prelaunch_done:
+        # Re-check is_alive() here: the 300ms join may have timed out while
+        # _ensure_startup_banner_artefacts() was running on this thread;
+        # the worker may have finished in the meantime.
+        if not _cache_hit and (_prelaunch is None or not _prelaunch.is_alive()):
             _ps = getattr(self, "_prelaunch_tte_state", None)
             self._prelaunch_tte_state = None  # one-shot consume
             if (

@@ -14,13 +14,17 @@ logger = logging.getLogger(__name__)
 
 
 class OutputJSONLWriter:
-    """Ring-buffered output.jsonl writer. Plain text only (ANSI stripped)."""
+    """Append-only output.jsonl writer with ring-buffer rotation. Plain text only (ANSI stripped)."""
+
+    _MAX_ROWS: int = 2000
 
     def __init__(self, path: Path, max_lines: int = 2000) -> None:
         self._path = path
-        self._max = max_lines
-        self._buf: deque[dict] = deque()
+        self._MAX_ROWS = max_lines  # allow override per-instance
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fp = open(self._path, "a")  # append-only; creates if absent  # allow-sync-io: long-lived writer, headless only
+        self._row_count = 0
+        self._ring: deque[str] = deque(maxlen=self._MAX_ROWS)
 
     def write(self, text: str, role: str = "assistant") -> None:
         import re as _re
@@ -29,15 +33,33 @@ class OutputJSONLWriter:
         # Strip Rich markup tags (handles [bold], [bold red], [link=x], [#ff0000], etc.)
         plain = _re.sub(r'\[[^\[\]\n]*\]', '', plain)
         entry = {"ts": time.time(), "text": plain, "role": role}
-        self._buf.append(entry)
-        while len(self._buf) > self._max:
-            self._buf.popleft()
+        line = json.dumps(entry) + "\n"
+        self._ring.append(line)
         try:
-            with open(self._path, "w") as f:  # allow-sync-io: init-time, one-shot, no event loop running
-                for e in self._buf:
-                    f.write(json.dumps(e) + "\n")
+            self._fp.write(line)
+            self._row_count += 1
+            if self._row_count > self._MAX_ROWS:
+                self._rotate()
         except OSError:
             logger.warning("HeadlessSession: failed to write output.jsonl", exc_info=True)
+
+    def _rotate(self) -> None:
+        """Truncate file and re-write the last _MAX_ROWS lines from the ring."""
+        try:
+            self._fp.close()
+            with open(self._path, "w") as f:  # allow-sync-io: rotation is infrequent, headless only
+                f.writelines(self._ring)
+            self._fp = open(self._path, "a")  # allow-sync-io: reopen after rotation
+            self._row_count = len(self._ring)
+        except OSError:
+            logger.warning("HeadlessSession: failed to rotate output.jsonl", exc_info=True)
+
+    def close(self) -> None:
+        try:
+            self._fp.flush()
+            self._fp.close()
+        except OSError:
+            logger.debug("HeadlessSession: failed to close output.jsonl", exc_info=True)
 
     def load_lines(self) -> list[dict]:
         if not self._path.exists():

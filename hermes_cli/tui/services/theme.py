@@ -61,6 +61,11 @@ class ThemeService(AppService):
         return ok
 
     def _refresh_runtime_skin_consumers(self) -> None:
+        """Schedule a deferred skin refresh; returns immediately (SVC-13)."""
+        self.app.call_after_refresh(self._do_refresh_runtime_skin_consumers)
+
+    def _do_refresh_runtime_skin_consumers(self) -> None:
+        """One DOM walk; refresh all skin consumers after current frame (SVC-13)."""
         from hermes_cli.tui.widgets import _hint_cache, StatusBar, StreamingCodeBlock
         from hermes_cli.tui.tool_blocks import ToolBlock
         app = self.app

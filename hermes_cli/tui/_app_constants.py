@@ -1,12 +1,16 @@
 """Shared constants used by app.py and its mixin modules.
 
-Skill names are validated against ``KNOWN_SKILLS``, which holds bare names
-populated at runtime by ``theme.populate_skills``.  ``KNOWN_SLASH_COMMANDS``
-is a registry-derived snapshot used by tests and slash-command metadata; the
-submit-time unknown-command gate resolves against the live registry.
+Skill names are validated against ``_known_skills``, which holds bare names
+populated at runtime by ``theme.populate_skills``.  Access via
+``get_known_skills()``; update via ``refresh_known_skills()``.
+
+``KNOWN_SLASH_COMMANDS`` is a registry-derived snapshot used by tests and
+slash-command metadata; the submit-time unknown-command gate resolves against
+the live registry.
 """
 from __future__ import annotations
 
+import threading
 from typing import Iterable
 
 from hermes_cli.commands import COMMAND_REGISTRY
@@ -30,23 +34,26 @@ _KNOWN_SLASH_BARE: frozenset[str] = frozenset(
     c.lstrip("/") for c in KNOWN_SLASH_COMMANDS
 )
 
-# Mutable set updated at runtime after each skill scan.
-# Keys are bare names (no / or $ prefix), e.g. "review-pr".
-KNOWN_SKILLS: set[str] = set()
+# SVC-9: thread-safe skill set — replace-not-mutate under lock.
+# All readers must use get_known_skills(); direct access to _known_skills
+# captures the frozenset reference atomically (single pointer read in CPython).
+_KNOWN_SKILLS_LOCK = threading.Lock()
+_known_skills: frozenset[str] = frozenset()
+
+
+def get_known_skills() -> frozenset[str]:
+    """Return current snapshot; always a complete, consistent set."""
+    return _known_skills
 
 
 def refresh_known_skills(names: Iterable[str]) -> None:
-    """Replace KNOWN_SKILLS contents (clear + update, two-op).
-
-    Acceptable race window: keys.py reads KNOWN_SKILLS once per submitted
-    user line — not a hot loop.  Worst case during the momentary empty window
-    between clear() and update() is a single "Unknown skill" flash for a real
-    skill; user retypes and it succeeds.  No data corruption possible.
-    """
-    new = {n.lstrip("/$") for n in names}
-    KNOWN_SKILLS.clear()
-    KNOWN_SKILLS.update(new)
-    assert _KNOWN_SLASH_BARE.isdisjoint(KNOWN_SKILLS), (
-        f"Skill name collides with built-in slash command: "
-        f"{_KNOWN_SLASH_BARE & KNOWN_SKILLS}"
-    )
+    """Replace known skills atomically. Raises ValueError on slash-command collision."""
+    new_known = frozenset(n.lstrip("/$") for n in names)
+    if not _KNOWN_SLASH_BARE.isdisjoint(new_known):
+        raise ValueError(
+            f"refresh_known_skills: overlap with _KNOWN_SLASH_BARE: "
+            f"{_KNOWN_SLASH_BARE & new_known!r}"
+        )
+    with _KNOWN_SKILLS_LOCK:
+        global _known_skills
+        _known_skills = new_known

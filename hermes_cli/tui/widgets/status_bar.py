@@ -6,10 +6,13 @@ SourcesBar, plus their helper functions and cache variables.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time as _time  # S1-C: module top — not inside render() or callbacks
 from typing import TYPE_CHECKING, Any, Callable
+
+_log = logging.getLogger(__name__)
 
 from rich.style import Style
 from rich.text import Text
@@ -336,6 +339,12 @@ class HintBar(Widget):
 
     def on_unmount(self) -> None:
         self._shimmer_stop()
+        if self._flash_timer is not None:
+            try:
+                self._flash_timer.stop()
+            except Exception:
+                _log.debug("HintBar.on_unmount: _flash_timer stop failed", exc_info=True)
+            self._flash_timer = None
 
     def _on_streaming_change(self, streaming: bool = False) -> None:
         """S0-C: suppress shimmer while streaming; restore when done."""

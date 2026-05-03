@@ -9,7 +9,7 @@ from textual.css.query import NoMatches
 from rich.text import Text
 
 from hermes_cli.tui._browse_types import BrowseAnchorType
-from hermes_cli.tui._app_constants import KNOWN_SKILLS as _KNOWN_SKILLS
+from hermes_cli.tui._app_constants import get_known_skills as _get_known_skills
 from .base import AppService
 
 if TYPE_CHECKING:
@@ -631,7 +631,7 @@ class KeyDispatchService(AppService):
 
         if isinstance(text, str) and text.startswith("$"):
             name = text.lstrip("$").split()[0].lower() if len(text) > 1 else ""
-            if not name or name not in _KNOWN_SKILLS:
+            if not name or name not in _get_known_skills():
                 self.app._flash_hint(f"Unknown skill: ${name}  (Alt+$ for picker)", 3.0)
                 return
 

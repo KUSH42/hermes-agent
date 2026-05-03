@@ -421,6 +421,12 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
         self._animating = False
         super().on_unmount()  # ManagedTimerMixin.on_unmount → _stop_all_managed
 
+    def get_content_height(self, container, viewport, width: int) -> int:
+        # Collapse to 0 when idle so it doesn't add a blank row below the banner.
+        if not self._buf and not self._animating:
+            return 0
+        return super().get_content_height(container, viewport, width)
+
     def render(self) -> RenderResult:
         if not self._buf and not self._animating:
             return Text("")

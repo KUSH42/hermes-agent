@@ -4747,7 +4747,10 @@ class HermesCLI:
         _ex_t0 = time.monotonic()
         # Strip embedded background ANSI codes so StartupBannerWidget's CSS
         # `background: $app-bg` shows through — same approach as TTE frames.
-        ansi_text = _strip_ansi_bg(capture.export_text(styles=True))
+        # rstrip('\n'): export_text always adds a trailing newline; when converted
+        # to a Text object that becomes a blank row at the bottom of the widget,
+        # creating unwanted empty space above the HintBar.
+        ansi_text = _strip_ansi_bg(capture.export_text(styles=True)).rstrip('\n')
         rendered = Text.from_ansi(ansi_text)
         logger.info("RENDER-BANNER: export+from_ansi +%.0fms total=%.0fms",
                     (time.monotonic() - _ex_t0) * 1000,

@@ -867,6 +867,18 @@ The renderer classifier uses `concurrent.futures.Future.result(timeout=...)` whi
 
 `services/tools.py` exposes `set_user_kind_override(tool_call_id, kind_value)` as the freeze-compliant way to override the KIND axis on a live tool call. Do NOT add new `AxisName` enum values (concept doc frozen). Use this helper for per-call kind overrides in tests and production code.
 
+## ToolPanel._apply_layout: call sibling helpers via ToolPanel in MagicMock tests (2026-05-03)
+
+`tests/tui/test_density_unification.py` exercises
+`ToolPanel._apply_layout(...)` as an unbound method with a `MagicMock` passed
+as `self`. In that shape, `self._publish_layout_axis(...)` or
+`self._replay_pending_layout(...)` resolves to mock attributes instead of the
+real helper methods, which silently skips the density axis-bus write and
+breaks the "axis first, reactive second" contract. When a `ToolPanel` helper
+must stay unit-testable with mocked `self`, call sibling helpers via the class
+(`ToolPanel._publish_layout_axis(self, ...)`,
+`ToolPanel._replay_pending_layout(self, ...)`) instead of `self.helper(...)`.
+
 ## TmuxDriver.wait_for() returns False on timeout, not exception (2026-04-28)
 
 `TmuxDriver.wait_for(pattern, timeout=5.0)` returns `False` if the pattern is not found within the timeout. It does NOT raise `TimeoutError`. Test assertions must check the return value: `assert driver.wait_for("ready", timeout=2.0), "Timed out waiting for ready"`.

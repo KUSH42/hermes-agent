@@ -91,6 +91,17 @@ _TIER_CLASS_NAMES: dict["DensityTier", str] = {
 }
 
 
+def set_axis(view: "Any", axis: str, value: Any) -> None:
+    """Delegate to the canonical axis mutator.
+
+    Kept as a module-level shim so tests can patch either this module or the
+    services module and still intercept ToolPanel's density-axis writes.
+    """
+    from hermes_cli.tui.services.tools import set_axis as _set_axis
+
+    _set_axis(view, axis, value)
+
+
 def density_flash_text(
     last: "DensityResult | None",
     new_tier: "DensityTier",
@@ -397,7 +408,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         # _apply_layout decisions that arrived before it was wired so the
         # axis bus catches up.
         if vs is not None and self._pending_layout_decisions:
-            self._replay_pending_layout(vs)
+            ToolPanel._replay_pending_layout(self, vs)
         return vs
 
     def _on_tier_change(self, decision: LayoutDecision) -> None:
@@ -406,7 +417,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
     def _publish_layout_axis(self, vs: "Any", decision: LayoutDecision) -> None:
         """TBM-5: write density tier + density_reason to the view-state axis bus."""
-        from hermes_cli.tui.services.tools import set_axis
         set_axis(vs, "density", decision.tier)
         # LL-1/LL-3: write density_reason to view so header can read it.
         # Map "parent_clamp" → "user" for the 4-value density_reason type.
@@ -450,7 +460,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         if vs is None:
             self._pending_layout_decisions.append(decision)
         else:
-            self._publish_layout_axis(vs, decision)
+            ToolPanel._publish_layout_axis(self, vs, decision)
 
         # SLR-1: toggle tier class for CSS margin contract; mutual exclusion.
         for _cls in _TIER_CLASS_NAMES.values():

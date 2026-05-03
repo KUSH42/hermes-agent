@@ -48,6 +48,7 @@ class BrowseService(AppService):
             self.clear_browse_highlight()
             app.remove_class("--browse-active")
             self.clear_browse_pips()
+            self._refresh_minimap()
         try:
             inp = app.query_one("#input-area")
             inp.disabled = value
@@ -68,7 +69,7 @@ class BrowseService(AppService):
             output = app.query_one(OutputPanel)
             app.call_later(output.mount, _BM())
             app._browse_minimap = True
-        except Exception:
+        except (ImportError, NoMatches, AttributeError):
             _log.debug("mount_minimap_default: failed to mount BrowseMinimap", exc_info=True)
 
     async def action_toggle_minimap(self) -> None:
@@ -87,12 +88,21 @@ class BrowseService(AppService):
                 output = app.query_one(OutputPanel)
                 await output.mount(_BM())
                 app._browse_minimap = True
-            except Exception:
+            except (NoMatches, AttributeError):
                 _log.debug("action_toggle_minimap: mount failed", exc_info=True)
+
+    def _refresh_minimap(self) -> None:
+        """Refresh the minimap if mounted. No-op otherwise."""
+        from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
+        try:
+            self.app.query_one(_BM).refresh()
+        except NoMatches:
+            pass  # minimap not mounted; nothing to refresh
 
     def on_browse_index(self, _value: int) -> None:
         """Called by App.watch_browse_index."""
         self.apply_browse_focus()
+        self._refresh_minimap()
 
     # --- Core browse methods ---
 
@@ -131,7 +141,7 @@ class BrowseService(AppService):
             from hermes_cli.tui.tool_group import ToolGroup as _TG, GroupBody as _GB
             _tool_group_cls = _TG
             _group_body_cls = _GB
-        except Exception:
+        except ImportError:
             _log.debug("rebuild_browse_anchors: ToolGroup import failed", exc_info=True)
             _group_body_cls = None
         for widget in output.walk_children(with_self=False):
@@ -151,7 +161,7 @@ class BrowseService(AppService):
                     try:
                         from hermes_cli.tui.tool_panel import ToolPanel as _TP
                         child_count = sum(1 for c in widget._body.children if isinstance(c, _TP))
-                    except Exception:
+                    except AttributeError:
                         # child_count is best-effort; zero is a safe fallback for display
                         pass
                 collapsed_mark = " ▸" if widget.collapsed else " ▾"
@@ -193,7 +203,7 @@ class BrowseService(AppService):
                         if hdr_label is not None:
                             try:
                                 hdr_text = str(hdr_label.renderable)
-                            except Exception:
+                            except (AttributeError, TypeError):
                                 # hdr_text string conversion failed; empty label is a safe display fallback
                                 pass
                         anchors.append(BrowseAnchor(
@@ -204,8 +214,8 @@ class BrowseService(AppService):
                         ))
                         if widget.collapse_state == _CS.COLLAPSED:
                             continue
-                except Exception:
-                    pass
+                except (ImportError, AttributeError):
+                    pass  # SubAgentPanel not available in this build or widget unmounted; skip anchor safely
                 try:
                     from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
                     from hermes_cli.tui.media_player import _short_url as _su
@@ -216,7 +226,7 @@ class BrowseService(AppService):
                             label=f"Media · {widget._kind} · {_su(widget._url)}",
                             turn_id=turn_id,
                         ))
-                except Exception:
+                except (ImportError, AttributeError):
                     _log.debug("rebuild_browse_anchors: InlineMediaWidget import failed", exc_info=True)
         self._browse_anchors = anchors
         # Keep app-level alias in sync
@@ -231,6 +241,7 @@ class BrowseService(AppService):
             app._flash_hint("No turns to browse — start a conversation first", 2.0)
         if app.browse_mode:
             self.apply_browse_pips()
+        self._refresh_minimap()
 
     def jump_anchor(
         self,
@@ -287,6 +298,7 @@ class BrowseService(AppService):
         self.clear_browse_highlight()
         w.add_class("--browse-focused")
         self.update_browse_status(anchor)
+        self._refresh_minimap()
 
     def clear_browse_highlight(self) -> None:
         """Remove --browse-focused CSS class from all widgets."""
@@ -306,13 +318,13 @@ class BrowseService(AppService):
                     "--anchor-pip-diff",
                     "--anchor-pip-media",
                 )
-            except Exception:
+            except (AttributeError, NoMatches):
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 pass
         for w in app._browse_badge_widgets:
             try:
                 w._browse_badge = ""
-            except Exception:
+            except (AttributeError, NoMatches):
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 pass
         app._browse_badge_widgets = []
@@ -332,7 +344,7 @@ class BrowseService(AppService):
             try:
                 if not w.is_mounted:
                     continue
-            except Exception:
+            except (AttributeError, NoMatches):
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 continue
             in_reasoning = _is_in_reasoning(w)
@@ -345,15 +357,15 @@ class BrowseService(AppService):
             elif anchor.anchor_type == BrowseAnchorType.TOOL_BLOCK:
                 try:
                     pip_cls = "--anchor-pip-diff" if w.has_class("--diff-header") else "--anchor-pip-tool"
-                except Exception:
-                    pip_cls = "--anchor-pip-tool"
+                except AttributeError:
+                    pip_cls = "--anchor-pip-tool"  # has_class() unavailable on unmounted widget; fall back to tool pip
             elif anchor.anchor_type == BrowseAnchorType.MEDIA:
                 pip_cls = "--anchor-pip-media"
             else:
                 continue
             try:
                 w.add_class("--has-pip", pip_cls)
-            except Exception:
+            except (AttributeError, NoMatches):
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 continue
             if anchor.anchor_type == BrowseAnchorType.CODE_BLOCK and len(app._browse_badge_widgets) < 200:
@@ -363,7 +375,7 @@ class BrowseService(AppService):
                 try:
                     w._browse_badge = badge
                     app._browse_badge_widgets.append(w)
-                except Exception:
+                except (AttributeError, NoMatches):
                     # Widget unmounted between is_mounted check and mutation; skip safely
                     pass
             elif pip_cls == "--anchor-pip-diff" and len(app._browse_badge_widgets) < 200:
@@ -371,7 +383,7 @@ class BrowseService(AppService):
                     w._browse_badge = "± diff"
                     app._browse_badge_widgets.append(w)
                     w.refresh()
-                except Exception:
+                except (AttributeError, NoMatches):
                     # Widget unmounted between is_mounted check and mutation; skip safely
                     pass
 
@@ -412,7 +424,7 @@ class BrowseService(AppService):
         except NoMatches:
             # OutputPanel not mounted; scroll unavailable — correct to skip
             pass
-        except Exception:
+        except (AttributeError, TypeError):
             _log.debug("scroll_to_tool: scroll failed for tool_call_id=%r", tool_call_id, exc_info=True)
         return False
 
@@ -432,7 +444,8 @@ class BrowseService(AppService):
         from hermes_cli.tui.tool_panel import ToolPanel as _TP
         try:
             navigable = [w for w in app.query(_TP) if w.is_attached]
-        except Exception:
+        except AttributeError:
+            _log.debug("focus_tool_panel: is_attached check failed", exc_info=True)
             return
         if not navigable:
             return

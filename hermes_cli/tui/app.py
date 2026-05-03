@@ -1359,11 +1359,11 @@ class HermesApp(App):
                 # Fallback: update display-side only (CLI will sync on next turn)
                 self.status_model = name
         except Exception:
-            _log.debug("_apply_model_inline: routing failed", exc_info=True)
+            logger.debug("_apply_model_inline: routing failed", exc_info=True)
             try:
                 self.status_model = name
             except Exception:
-                pass
+                logger.warning("_apply_model_inline: status_model fallback failed", exc_info=True)
 
     def action_dismiss_update_banner(self) -> None:
         """Write banner ack file to suppress the update warning for the current behind count."""
@@ -1372,7 +1372,7 @@ class HermesApp(App):
             if _session_update_behind > 0:
                 write_banner_ack(_session_update_behind)
         except Exception:
-            _log.debug("dismiss_update_banner failed", exc_info=True)
+            logger.debug("dismiss_update_banner failed", exc_info=True)
 
     def action_dismiss_all_error_banners(self) -> None:
         """E5: query all .error-banner widgets in the screen and remove each."""
@@ -1423,7 +1423,7 @@ class HermesApp(App):
             except NoMatches:
                 output.mount(widget)
         except Exception:
-            pass
+            logger.exception("_mount_inline_media_widget: mount failed")
 
     # IO methods extracted → _app_io.py
 
@@ -1500,7 +1500,8 @@ class HermesApp(App):
                     img.image = entry.pil_image
                     panel.mount(img)
             except Exception:
-                pass
+                logger.warning("image replay mount failed for entry %r", entry, exc_info=True)
+                continue
 
     # Hint phase + drawbraille methods extracted → _app_spinner.py
 
@@ -1512,8 +1513,10 @@ class HermesApp(App):
                 chevron.add_class("--yolo-active")
             else:
                 chevron.remove_class("--yolo-active")
+        except NoMatches:
+            pass  # chevron not yet mounted or already unmounted
         except Exception:
-            pass
+            logger.warning("watch_yolo_mode: CSS swap failed", exc_info=True)
         # E5: flash confirmation — skip initial reactive fire (old == value at init)
         if old == value:
             return
@@ -1529,15 +1532,19 @@ class HermesApp(App):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             if isinstance(focused, _HI) or (hasattr(focused, "parent") and isinstance(focused.parent, _HI)):
                 zone_name = "compose"
+        except ImportError:
+            pass  # input_widget not available — compose zone detection skipped
         except Exception:
-            pass
+            logger.warning("watch_focused: compose zone detect failed", exc_info=True)
         if zone_name is None:
             try:
                 op = self.query_one(OutputPanel)
                 if op.is_ancestor_of(focused) or focused is op:
                     zone_name = "output"
+            except NoMatches:
+                pass  # OutputPanel not yet mounted
             except Exception:
-                pass
+                logger.warning("watch_focused: output zone detect failed", exc_info=True)
         if zone_name is None:
             try:
                 from hermes_cli.tui.tool_panel import ToolPanel as _TP
@@ -1545,8 +1552,10 @@ class HermesApp(App):
                     if tp.is_ancestor_of(focused) or focused is tp:
                         zone_name = "tool"
                         break
+            except ImportError:
+                pass  # tool_panel not available — tool zone detection skipped
             except Exception:
-                pass
+                logger.warning("watch_focused: tool zone detect failed", exc_info=True)
         if zone_name and zone_name not in self._zones_first_entry_seen:
             hint = EXTENDED_HINT.get(zone_name, "")
             if hint:
@@ -1600,8 +1609,10 @@ class HermesApp(App):
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
                 ov = self.query_one(DrawbrailleOverlay)
                 ov.signal("complete")
+            except NoMatches:
+                pass  # DrawbrailleOverlay disabled or not in DOM
             except Exception:
-                pass
+                logger.debug("drawbraille signal failed", exc_info=True)
             # Rebuild unified browse anchor list now that all blocks are mounted.
             # Deferred: CPU cost is proportional to output size; browse nav can update 1 frame later.
             if self.browse_mode:
@@ -1760,7 +1771,7 @@ class HermesApp(App):
                 else:
                     osc_progress_end()
         except Exception:
-            pass
+            logger.debug("_osc_progress_update: dispatch failed", exc_info=True)
 
     # ── RX4: lifecycle hook registry + callbacks ──────────────────────────────
 

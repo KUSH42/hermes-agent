@@ -7,12 +7,12 @@ from typing import Any
 
 from textual.css.query import NoMatches
 
-from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger, detect_context, _SKILL_RE
+from hermes_cli.tui.completion_context import CompletionContext, CompletionTrigger, detect_context
 from hermes_cli.tui.completion_list import VirtualCompletionList
 from hermes_cli.tui.fuzzy import fuzzy_rank
 from hermes_cli.tui.path_search import PathCandidate, SlashCandidate
 
-from ._assist import AssistKind, SKILL_PICKER_TRIGGER_PREFIX
+from ._assist import AssistKind
 from ._constants import _SLASH_FULL_RE
 
 _log = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ class _AutocompleteMixin:
     _current_trigger: Any
     _raw_candidates: list
     _slash_commands: list[str]
+    _skills: list  # SkillCandidate list; always initialised in HermesInput.__init__
     _suppress_autocomplete_once: bool
 
     # --- Dispatch ---
@@ -72,29 +73,8 @@ class _AutocompleteMixin:
             self._raw_candidates = []
 
             if trigger.context is CompletionContext.SKILL_INVOKE:
-                # $-typed path: open (or update) the skill picker.
-                # Do NOT mount the inline completion overlay — the picker IS
-                # the completion surface for $-prefixed input.
-                try:
-                    self._resolve_assist(AssistKind.PICKER)  # type: ignore[attr-defined]
-                except Exception:
-                    _log.exception("skill picker open failed for fragment=%r", trigger.fragment)
-                    try:
-                        self.app._flash_hint("skill picker unavailable", 2.0)  # type: ignore[attr-defined]
-                    except Exception as exc:  # app._flash_hint unavailable — fallback hint not shown
-                        _log.debug("skill picker fallback flash failed: %s", exc, exc_info=True)
+                self._show_skill_completions(trigger.fragment)
                 return
-
-            # Auto-dismiss a prefix-triggered picker when the regex no longer matches.
-            if not _bash_mode and not _SKILL_RE.match(self.value):  # type: ignore[attr-defined]
-                try:
-                    from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
-                    picker = self.app.query_one(SkillPickerOverlay)  # type: ignore[attr-defined]
-                    if getattr(picker, "_trigger", None) == SKILL_PICKER_TRIGGER_PREFIX:
-                        picker.dismiss()
-                except Exception:
-                    # NoMatches or SkillPickerOverlay not yet imported — fine
-                    pass
 
             if trigger.context is CompletionContext.SLASH_COMMAND:
                 self._show_slash_completions(trigger.fragment)
@@ -146,6 +126,42 @@ class _AutocompleteMixin:
                 except AttributeError as exc:
                     # AttributeError: test harness or early-mount context without _flash_hint.
                     _log.debug("flash_hint unavailable: %s", exc, exc_info=True)
+            self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
+            return
+        self._set_overlay_mode(slash_only=True)  # type: ignore[attr-defined]
+        self._push_to_list(ranked)  # type: ignore[attr-defined]
+        self._resolve_assist(AssistKind.OVERLAY)  # type: ignore[attr-defined]
+
+    def _show_skill_completions(self, fragment: str) -> None:
+        """Show inline CompletionOverlay with skill candidates matching *fragment*.
+
+        _current_trigger is written by _update_autocomplete before this call;
+        re-entry is suppressed by the outer trigger-equality guard.
+        """
+        items = [
+            SlashCandidate(
+                display=c.name,
+                command="$" + c.name,
+                description=c.description,
+            )
+            for c in self._skills
+            if c.enabled and c.name.startswith(fragment)
+        ]
+        from hermes_cli.tui.perf import measure
+        with measure("skill_completions.fuzzy_rank", budget_ms=2.0, silent=True):
+            ranked = fuzzy_rank(fragment, items, limit=len(items))
+        if not ranked:
+            if fragment:
+                now = time.monotonic()
+                last_frag = getattr(self, "_last_skill_hint_fragment", None)
+                last_time = getattr(self, "_last_skill_hint_time", 0.0)
+                if not (last_frag == fragment and now - last_time < 2.0):
+                    self._last_skill_hint_fragment = fragment  # type: ignore[attr-defined]
+                    self._last_skill_hint_time = now  # type: ignore[attr-defined]
+                    try:
+                        self.app._flash_hint(f"Unknown skill: ${fragment}", 1.5)  # type: ignore[attr-defined]
+                    except AttributeError as exc:
+                        _log.debug("flash_hint unavailable: %s", exc, exc_info=True)
             self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
             return
         self._set_overlay_mode(slash_only=True)  # type: ignore[attr-defined]

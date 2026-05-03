@@ -6,8 +6,8 @@ source "$(dirname "$0")/_lib.sh"
 # Order chosen for visual contrast: bold first, then warm/cool/neutral mix.
 SKINS=(matrix charizard poseidon ares hermes tokyo-night)
 
-# Per-skin hold (seconds): ~2s hermes boot + ~4s TTE (240 frames @ 60fps) + 3s settled banner dwell.
-HOLD_S=12.5
+# Per-skin hold (seconds): ~2s hermes boot + ~6s TTE (360 frames @ 60fps) + 3s settled banner dwell.
+HOLD_S=15
 
 # Gap between skins (seconds). Long enough to make cut points obvious.
 GAP_S=1

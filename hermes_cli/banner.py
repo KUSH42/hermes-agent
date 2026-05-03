@@ -886,14 +886,13 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
             warn_color = _skin_color("banner_warning", "#FF8C00")
             warn_dim = _skin_color("banner_warning_dim", "#CD6500")
             key_color = _skin_color("banner_key", "#FFD700")
-            # NOTE: hidden for recording — re-enable after showcase
-            # right_lines.append(
-            #     f"[bold {warn_color}]⚠ {behind} {commits_word} behind[/]"
-            #     f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
-            # )
-            # right_lines.append(
-            #     f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
-            # )
+            right_lines.append(
+                f"[bold {warn_color}]⚠ {behind} {commits_word} behind[/]"
+                f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
+            )
+            right_lines.append(
+                f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
+            )
     except Exception:
         logger.debug("update check failed", exc_info=True)
 
@@ -926,12 +925,20 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     term_width = term_size.columns
     term_rows = term_size.lines
     if print_logo and term_width >= 95:
-        if term_rows >= 20:
+        if term_rows >= 32:
             markup_logo, _ = resolve_banner_logo_assets()
             logo_text = render_banner_logo_text(markup_logo)
             logo_text.no_wrap = True
             logo_text.overflow = "ignore"
-            console.print(logo_text, justify="center", no_wrap=True)
+            # Compute content width from the widest non-trailing-space line so that
+            # all rows share the same centering anchor.  justify="center" strips
+            # trailing spaces per-line before measuring, causing rows with trailing
+            # padding (e.g. rows 2-5 of the block-letter logo) to get 1 extra left-
+            # pad space compared to rows with no trailing spaces (rows 0-1).
+            from rich.cells import cell_len as _cell_len
+            _logo_lines = logo_text.split("\n", allow_blank=True)
+            _content_w = max((_cell_len(ln.plain.rstrip()) for ln in _logo_lines), default=1)
+            console.print(Align(logo_text, align="center", width=_content_w))
         else:
             wordmark = f"[bold {title_color}]{agent_name.upper()}[/]"
             console.print(Align.center(Text.from_markup(wordmark)))

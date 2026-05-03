@@ -2,7 +2,6 @@
 version: alpha
 name: tokyo-night
 description: Tokyo Night — deep navy dark theme with blue-purple neon accents
-stream_effect: nier
 colors:
   foreground: '#c0caf5'
   background: '#1a1b26'
@@ -34,10 +33,6 @@ components:
     backgroundColor: '{colors.background}'
     textColor: '{colors.foreground}'
 x-hermes:
-  startup_tte:
-    effect: decrypt
-    max_wall_s: 7.0
-    max_frames: 360
   schema: 1
   vars:
     preview-syntax-theme: tokyo-night
@@ -161,12 +156,6 @@ x-hermes:
     tool-tier-file-accent: '#73daca'
     tool-tier-query-accent: '#7dcfff'
     tool-tier-agent-accent: '#bb9af7'
-    thinking-spinner-dim: '#4a4a4a'
-    thinking-spinner-peak: '#d8d8d8'
-    thinking-chroma-a: '#7aa2f7'
-    thinking-chroma-b: '#bb9af7'
-    thinking-hue-shift-speed: '0.12'
-    tool-header-max-gap: '8'
 ---
 
 # Tokyo-Night

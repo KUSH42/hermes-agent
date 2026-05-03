@@ -9,7 +9,7 @@ import hashlib, json, logging, os
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
-_GEO_CACHE_FORMAT_VER = 2  # bumped: print_logo removed from TUI capture path
+_GEO_CACHE_FORMAT_VER = 3  # bumped: print_logo re-enabled; cached hero_row offsets now include logo rows
 
 
 def is_cache_disabled() -> bool:

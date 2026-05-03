@@ -1,9 +1,7 @@
 ---
 version: alpha
 name: solarized-dark
-description: Solarized Dark — precision-crafted warm dark theme with teal/blue/amber
-stream_effect: shimmer
-  accents
+description: Solarized Dark — precision-crafted warm dark theme with teal/blue/amber accents
 colors:
   foreground: '#839496'
   background: '#002b36'
@@ -35,10 +33,6 @@ components:
     backgroundColor: '{colors.background}'
     textColor: '{colors.foreground}'
 x-hermes:
-  startup_tte:
-    effect: spotlights
-    max_wall_s: 7.0
-    max_frames: 360
   schema: 1
   vars:
     preview-syntax-theme: solarized-dark
@@ -162,12 +156,6 @@ x-hermes:
     tool-tier-file-accent: '#2aa198'
     tool-tier-query-accent: '#268bd2'
     tool-tier-agent-accent: '#6c71c4'
-    thinking-spinner-dim: '#4a4a4a'
-    thinking-spinner-peak: '#d8d8d8'
-    thinking-chroma-a: '#268bd2'
-    thinking-chroma-b: '#2aa198'
-    thinking-hue-shift-speed: '0.08'
-    tool-header-max-gap: '8'
 ---
 
 # Solarized-Dark

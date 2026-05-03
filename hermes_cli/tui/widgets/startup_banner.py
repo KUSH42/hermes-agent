@@ -30,6 +30,7 @@ class StartupBannerWidget(Static):
         margin: 1 0 0 0;
         text-wrap: nowrap;
         background: $app-bg;
+        display: none;
     }
     """
 
@@ -60,4 +61,6 @@ class StartupBannerWidget(Static):
         # frame, height:auto stays locked to the first animation frame's height,
         # making max_scroll_y=0 so scroll_end is a no-op.
         self._frame_count += 1
+        if not self.display:
+            self.display = True
         self.update(rich_text, layout=True)

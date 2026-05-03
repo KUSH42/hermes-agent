@@ -26,9 +26,9 @@ colors:
   rule-end: '#1a2a40'
 x-hermes:
   startup_tte:
-    effect: slide
-    max_wall_s: 5.0
-    max_frames: 240
+    effect: binarypath
+    max_wall_s: 7.0
+    max_frames: 360
   schema: 1
   branding:
     agent_name: Hermes Agent

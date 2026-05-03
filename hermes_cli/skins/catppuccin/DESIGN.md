@@ -42,8 +42,8 @@ components:
 x-hermes:
   startup_tte:
     effect: bubbles
-    max_wall_s: 5.0
-    max_frames: 240
+    max_wall_s: 7.0
+    max_frames: 360
   schema: 1
   vars:
     preview-syntax-theme: catppuccin

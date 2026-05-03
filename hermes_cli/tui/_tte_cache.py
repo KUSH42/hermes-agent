@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import pickle
+import threading
 import time
 from pathlib import Path
 
@@ -26,6 +27,9 @@ _TTE_CACHE_FORMAT_VER: int = 1
 _GC_MAX_AGE_S: int = 7 * 86400  # 7 days
 _GC_MAX_FILES: int = 10
 _NO_CACHE_VALUES: frozenset = frozenset(("1", "true", "yes", "on"))
+
+# Set when a corrupt cache file cannot be unlinked; disables cache for the remainder of this run
+_CACHE_DISABLED_FOR_RUN: threading.Event = threading.Event()
 
 
 def _no_cache() -> bool:
@@ -90,6 +94,8 @@ def tte_cache_key(
 def load_tte_frames(key: str) -> list[str] | None:
     if _no_cache():
         return None
+    if _CACHE_DISABLED_FOR_RUN.is_set():
+        return None
     try:
         path = tte_cache_dir() / f"{key}.pkl.gz"
     except Exception:
@@ -122,13 +128,21 @@ def load_tte_frames(key: str) -> list[str] | None:
         _log.debug("tte_cache: load failed for key=%s", key, exc_info=True)
         try:
             path.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass  # raced with another process — fine
         except OSError:
-            pass  # file may have been deleted between check and unlink — ignore
+            _log.warning(
+                "tte_cache: cannot unlink corrupt cache file %s; disabling cache for this run",
+                path, exc_info=True,
+            )
+            _CACHE_DISABLED_FOR_RUN.set()
         return None
 
 
 def save_tte_frames(key: str, frames: list[str]) -> None:
     if not frames or _no_cache():
+        return
+    if _CACHE_DISABLED_FOR_RUN.is_set():
         return
     try:
         cache_dir = tte_cache_dir()

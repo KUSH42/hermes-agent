@@ -171,7 +171,11 @@ class InlineImageCache:
     def invalidate_for_resize(self) -> None:
         """Flush entries whose stored cell_px dims differ from current."""
         from hermes_cli.tui.kitty_graphics import _cell_px
-        cw, ch = _cell_px()
+        try:
+            cw, ch = _cell_px()
+        except Exception:
+            logger.exception("invalidate_for_resize: _cell_px failed; skipping resize invalidation")
+            return
         stale = [
             k for k in self._entries
             if k[3].cell_px_w != cw or k[3].cell_px_h != ch

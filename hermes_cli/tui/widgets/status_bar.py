@@ -1146,12 +1146,16 @@ class SourcesBar(Widget):
         background: $accent;
         color: $background;
     }
+    SourcesBar .--cite-overflow {
+        color: $text-muted;
+    }
     """
 
-    def __init__(self, entries: list[tuple[int, str, str]]) -> None:
+    def __init__(self, entries: list[tuple[int, str, str]], *, dropped: int = 0) -> None:
         """entries: list of (N, title, url) in display order."""
         super().__init__()
         self._entries = entries
+        self._dropped = dropped
         # Build URL lookup in __init__ — available before compose() runs
         self._urls: dict[str, str] = {f"cite-{n}": url for n, _, url in entries}
 
@@ -1163,6 +1167,8 @@ class SourcesBar(Widget):
             if title:
                 label_text += f" — {_truncate(title, 40)}"
             yield Button(label_text, classes="--cite-chip", id=f"cite-{n}")
+        if self._dropped > 0:
+            yield Label(f"+{self._dropped} more sources truncated", classes="--cite-overflow")
 
     def on_button_pressed(self, event: "Any") -> None:
         event.stop()

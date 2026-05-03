@@ -1,6 +1,10 @@
 """Incremental partial-JSON string field extractor for tool_gen_args_delta streaming."""
 from __future__ import annotations
 
+import logging
+
+_log = logging.getLogger(__name__)
+
 
 class PartialJSONCodeExtractor:
     """Extracts the value of a named string field from streaming JSON chunks.
@@ -130,7 +134,11 @@ class PartialJSONCodeExtractor:
                         try:
                             out.append(chr(int(self._unicode_buf, 16)))
                         except ValueError:
-                            out.append(self._unicode_buf)
+                            _log.warning(
+                                "partial_json: bad \\u escape %r — emitting literal",
+                                self._unicode_buf,
+                            )
+                            out.append("\\u" + self._unicode_buf)  # explicitly literal, not garbled
                         self._unicode_buf = ""
                         self._state = "in_string"
                         break

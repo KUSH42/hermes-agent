@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from functools import lru_cache
 
 from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
+
+_log = logging.getLogger(__name__)
+
+_CLASSIFY_MAX_BYTES: int = 65536
 
 _LOG_RE = re.compile(
     r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}"
@@ -38,9 +44,12 @@ def _is_table(lines: list[str]) -> bool:
 
 @lru_cache(maxsize=32)
 def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> ClassificationResult:
-    text = output_raw
+    # STR-7: length cap — truncate before any processing; also prevents large strings being pinned in cache
+    text = output_raw[:_CLASSIFY_MAX_BYTES]
     if not text.strip():
         return ClassificationResult(ResultKind.EMPTY, 1.0)
+
+    _deadline = time.monotonic() + 0.050
 
     # Binary check: ASCII control chars (< 0x20) excluding tab/newline/CR/ESC
     sample = text[:4096].encode("utf-8", errors="replace")
@@ -52,6 +61,11 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
     if re.search(r"^(---|\+\+\+|@@)", text, re.MULTILINE):
         return ClassificationResult(ResultKind.DIFF, 0.9)
 
+    # Deadline check before heavy regex
+    if time.monotonic() > _deadline:
+        _log.warning("classify_content: 50ms budget exceeded for %d-byte payload", len(text))
+        return ClassificationResult(ResultKind.TEXT, 0.0)
+
     # Search: ≥ 3 lines with line-number prefix
     hits = len(re.findall(r"^\s*\d+[:\-]\s", text, re.MULTILINE))
     if hits >= 3:
@@ -59,6 +73,11 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
             ResultKind.SEARCH, 0.85,
             {"hit_count": hits, "query": arg_query}
         )
+
+    # Deadline check before JSON parse
+    if time.monotonic() > _deadline:
+        _log.warning("classify_content: 50ms budget exceeded for %d-byte payload", len(text))
+        return ClassificationResult(ResultKind.TEXT, 0.0)
 
     # JSON: only if starts with { or [ and has some content
     s = text.lstrip()
@@ -102,6 +121,11 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
         except (json.JSONDecodeError, MemoryError):
             pass
 
+    # Deadline check before table check
+    if time.monotonic() > _deadline:
+        _log.warning("classify_content: 50ms budget exceeded for %d-byte payload", len(text))
+        return ClassificationResult(ResultKind.TEXT, 0.0)
+
     # Table: consistent column structure
     lines = [l for l in text.splitlines() if l.strip() and not l.startswith("#")]
     if len(lines) >= 3 and _is_table(lines):
@@ -137,7 +161,8 @@ def classify_content(payload: object) -> ClassificationResult:
         # Also check path for code extension detection
         if not query:
             query = str(args.get("path", "")) or None
-    return _cached_classify(output_raw, tool_name, query)
+    # STR-7: truncate before passing to cached function; prevents large string cache pinning
+    return _cached_classify(output_raw[:_CLASSIFY_MAX_BYTES], tool_name, query)
 
 
 # Expose cache_clear for tests

@@ -34,8 +34,8 @@ from hermes_cli.tui.overlays._legacy import (
     _cfg_read_raw_config,
     _cfg_save_config,
     _cfg_set_nested,
-    _dismiss_overlay_and_focus_input,
 )
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 if TYPE_CHECKING:
     pass
@@ -62,7 +62,7 @@ _VERBOSE_CHOICES: list[tuple[str, str]] = [
 ]
 
 
-class ConfigOverlay(Widget):
+class ConfigOverlay(ModalOverlayMixin, Widget):
     """Tabbed config overlay replacing 5 standalone picker overlays."""
 
     can_focus = True
@@ -183,7 +183,8 @@ class ConfigOverlay(Widget):
             yield Static("[dim]Space · Esc close[/dim]", classes="co-footer")
 
     def on_mount(self) -> None:
-        self.add_class("--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per show_overlay() / dismiss_overlay() cycle.
         self.border_title = "Config"
         self._update_tab_bar()
         self._update_body_visibility()
@@ -195,19 +196,47 @@ class ConfigOverlay(Widget):
         except NoMatches:
             pass  # widget not yet in DOM during deferred mount; options absent but non-fatal
 
+    def on_unmount(self) -> None:
+        # Permanent widget: never removed from DOM. ModalOverlayMixin.on_unmount must NOT
+        # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
+        pass
+
     # ── Visibility / tab switching ────────────────────────────────────────
 
     def show_overlay(self, tab: str = "model") -> None:
         """Open ConfigOverlay focused on the given tab."""
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         if tab not in _TAB_KEYS:
             tab = "model"
         self.active_tab = tab
-        self.add_class("--visible")
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("ConfigOverlay.show_overlay: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by show_overlay (permanent widget override)
         self._refresh_active_tab()
         self.call_after_refresh(self._focus_active_tab)
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()  # capture focus target before any DOM/CSS mutation
+        self._revert_skin_preview_if_any()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("ConfigOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("ConfigOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
     def refresh_data(self, cli: object) -> None:
         """Populate active tab from config/app state. Called by slash handlers."""
@@ -283,12 +312,11 @@ class ConfigOverlay(Widget):
     # ── Bindings ──────────────────────────────────────────────────────────
 
     def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
-        self.action_dismiss()
+        """Public close helper; delegates to dismiss_overlay()."""
+        self.dismiss_overlay()
 
     def action_dismiss(self) -> None:
-        self._revert_skin_preview_if_any()
-        _dismiss_overlay_and_focus_input(self)
+        self.dismiss_overlay()
 
     def action_next_tab(self) -> None:
         i = _TAB_KEYS.index(self.active_tab)
@@ -463,7 +491,7 @@ class ConfigOverlay(Widget):
             self.app._flash_hint(msg, 2.0)  # type: ignore[attr-defined]
         except Exception:
             pass  # flash hint is best-effort UI decoration; action already applied
-        _dismiss_overlay_and_focus_input(self)
+        self.dismiss_overlay()
 
     # ── Skin tab (+ snapshot) ─────────────────────────────────────────────
 
@@ -681,7 +709,7 @@ class ConfigOverlay(Widget):
         elif bid == "co-yolo-disable":
             self._set_yolo(False)
         elif bid == "co-yolo-cancel":
-            _dismiss_overlay_and_focus_input(self)
+            self.dismiss_overlay()
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         event.stop()
@@ -727,7 +755,7 @@ class ConfigOverlay(Widget):
             self.app._flash_hint(f"  Model → {label}", 2.0)  # type: ignore[attr-defined]
         except Exception:
             pass  # flash hint is best-effort UI decoration; action already applied
-        _dismiss_overlay_and_focus_input(self)
+        self.dismiss_overlay()
 
     def _confirm_verbose(self, value: str) -> None:
         try:
@@ -740,7 +768,7 @@ class ConfigOverlay(Widget):
             self.app._flash_hint(f"  Tool progress → {value}", 2.0)  # type: ignore[attr-defined]
         except Exception:
             pass  # flash hint is best-effort UI decoration; action already applied
-        _dismiss_overlay_and_focus_input(self)
+        self.dismiss_overlay()
 
     def _confirm_skin(self, name: str) -> None:
         self._current_skin = name
@@ -816,7 +844,7 @@ class ConfigOverlay(Widget):
             inp.action_submit()
         except Exception:
             _log.warning("_inject_reasoning_command: command injection failed for %r", level, exc_info=True)
-        _dismiss_overlay_and_focus_input(self)
+        self.dismiss_overlay()
 
 
 # Register aliases into ConfigOverlay's CSS type names so `query_one(Alias)`

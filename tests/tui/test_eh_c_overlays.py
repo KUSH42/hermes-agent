@@ -201,23 +201,25 @@ class TestConfigOverlay:
 
     def test_config_confirm_model_apply_error(self) -> None:
         """EH-C-12: model apply failure logs at warning with exc_info."""
+        from hermes_cli.tui.overlays.config import ConfigOverlay
         overlay, app_mock = self._make_overlay_with_app()
         # Make the inner model application raise so the outer except fires
         app_mock.query_one.side_effect = RuntimeError("HermesInput not found")
 
         with patch("hermes_cli.tui.overlays.config._log") as mock_log, \
-             patch("hermes_cli.tui.overlays.config._dismiss_overlay_and_focus_input"):
+             patch.object(ConfigOverlay, "dismiss_overlay"):
             overlay._confirm_model("claude-3-5-haiku")
             mock_log.warning.assert_called_once()
             assert mock_log.warning.call_args.kwargs.get("exc_info") is True
 
     def test_config_confirm_verbose_save_error(self) -> None:
         """EH-C-14: verbose config save failure logs at warning with exc_info."""
+        from hermes_cli.tui.overlays.config import ConfigOverlay
         overlay, _app = self._make_overlay_with_app()
 
         with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config", return_value={}), \
              patch("hermes_cli.tui.overlays.config._cfg_save_config", side_effect=OSError("disk full")), \
-             patch("hermes_cli.tui.overlays.config._dismiss_overlay_and_focus_input"), \
+             patch.object(ConfigOverlay, "dismiss_overlay"), \
              patch("hermes_cli.tui.overlays.config._log") as mock_log:
             overlay._confirm_verbose("all")
             mock_log.warning.assert_called_once()
@@ -253,11 +255,12 @@ class TestConfigOverlay:
 
     def test_config_set_yolo_save_error(self) -> None:
         """EH-C-21: YOLO config save failure logs at warning with exc_info."""
+        from hermes_cli.tui.overlays.config import ConfigOverlay
         overlay, _app = self._make_overlay_with_app()
 
         with patch("hermes_cli.tui.overlays.config._cfg_read_raw_config", return_value={}), \
              patch("hermes_cli.tui.overlays.config._cfg_save_config", side_effect=OSError("disk full")), \
-             patch("hermes_cli.tui.overlays.config._dismiss_overlay_and_focus_input"), \
+             patch.object(ConfigOverlay, "dismiss_overlay"), \
              patch("hermes_cli.tui.overlays.config._log") as mock_log:
             overlay._set_yolo(True)
             warning_calls = mock_log.warning.call_args_list

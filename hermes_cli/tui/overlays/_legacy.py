@@ -15,6 +15,7 @@ from textual.app import ComposeResult
 
 _log = logging.getLogger(__name__)
 from textual.binding import Binding
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
@@ -68,7 +69,7 @@ class _SessionResumedBanner(Widget):
         return f"╌╌  resumed: {label}  ·  {turns} previous {turn_word}  ╌╌"
 
 
-class SessionOverlay(Widget):
+class SessionOverlay(ModalOverlayMixin, Widget):
     """Session browser overlay. Open with /sessions or Ctrl+J."""
 
     DEFAULT_CSS = """
@@ -118,10 +119,27 @@ class SessionOverlay(Widget):
         yield ScrollableContainer(id="sess-scroll")
         yield Static("[dim]↑↓ navigate  Enter resume  N new session  Esc close[/dim]", id="sess-footer")
 
+    def on_mount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per open_sessions() / dismiss_overlay() cycle.
+        pass
+
+    def on_unmount(self) -> None:
+        # Permanent widget: never removed from DOM. ModalOverlayMixin.on_unmount must NOT
+        # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
+        pass
+
     def open_sessions(self) -> None:
         """Show overlay and load sessions in background worker."""
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         self.border_title = "Sessions"
-        self.add_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("SessionOverlay.open_sessions: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by open_sessions (permanent widget override)
         self._selected_idx = 0
         try:
             self.query_one("#sess-scroll", ScrollableContainer).remove_children()
@@ -131,6 +149,21 @@ class SessionOverlay(Widget):
         self._load_sessions()
         # C3: take keyboard focus so ↑↓ navigation works immediately after opening.
         self.focus()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("SessionOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("SessionOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
     @work(thread=True)
     def _load_sessions(self) -> None:
@@ -230,15 +263,10 @@ class SessionOverlay(Widget):
 
     def dismiss(self) -> None:
         """Public close helper for widget overlays."""
-        self.action_dismiss()
+        self.dismiss_overlay()
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        self.dismiss_overlay()
 
 
 class _SessionRow(Static):
@@ -426,16 +454,6 @@ COMPACT      minimal view
             self.remove_class("--visible")
             getattr(event, "stop", lambda: None)()
 
-
-
-def _dismiss_overlay_and_focus_input(overlay: Widget) -> None:
-    """Remove --visible and restore focus to HermesInput."""
-    overlay.remove_class("--visible")
-    try:
-        from hermes_cli.tui.input_widget import HermesInput
-        overlay.app.query_one(HermesInput).focus()
-    except (NoMatches, ImportError):
-        pass
 
 
 FIXTURE_CODE = """\

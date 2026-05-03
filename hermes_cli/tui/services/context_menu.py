@@ -396,17 +396,29 @@ class ContextMenuService(AppService):
     # --- Overlay management ---
 
     def dismiss_all_info_overlays(self) -> None:
-        """Remove --visible from all info overlays."""
+        """Dismiss all info overlays — uses dismiss_overlay() for modal-registered widgets."""
         from hermes_cli.tui.overlays import (
             CommandsOverlay, ConfigOverlay, HelpOverlay, SessionOverlay,
             UsageOverlay, WorkspaceOverlay,
             ToolPanelHelpOverlay as _TPHO,
         )
         app = self.app
+        # Widgets with dismiss_overlay() registered in the modal stack
         for cls in (
             HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
-            SessionOverlay, ConfigOverlay, _TPHO,
+            SessionOverlay, ConfigOverlay,
         ):
             for widget in app.query(cls):
-                widget.remove_class("--visible")
+                if widget.has_class("--visible"):
+                    try:
+                        widget.dismiss_overlay()
+                    except Exception:
+                        _log.debug(
+                            "dismiss_all_info_overlays: dismiss_overlay() failed for %r",
+                            widget,
+                            exc_info=True,
+                        )
+        # ToolPanelHelpOverlay: not modal-registered; remove --visible only
+        for widget in app.query(_TPHO):
+            widget.remove_class("--visible")
         app._sync_workspace_polling_state()

@@ -229,15 +229,20 @@ class TestSkillPickerMigration:
         assert issubclass(SkillPickerOverlay, ModalOverlayMixin)
 
     def test_skill_picker_no_duplicate_escape_binding(self):
-        """SkillPickerOverlay must have exactly one escape binding across MRO (MOD-M3)."""
+        """SkillPickerOverlay must have exactly one escape binding visible to Textual.
+
+        ModalOverlayMixin.BINDINGS are NOT visible to _merge_bindings (mixin is not a
+        DOMNode subclass — Textual 8.x _merge_bindings only visits issubclass(base, DOMNode)
+        classes). The escape binding must be declared on SkillPickerOverlay itself.
+        """
         from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
-        all_bindings = []
-        for cls in SkillPickerOverlay.__mro__:
-            if "BINDINGS" in cls.__dict__:
-                all_bindings.extend(cls.__dict__["BINDINGS"])
-        escape_bindings = [b for b in all_bindings if getattr(b, "key", None) == "escape"]
+        merged = SkillPickerOverlay._merge_bindings()
+        escape_bindings = merged.key_to_bindings.get("escape", [])
         assert len(escape_bindings) == 1, (
-            f"Expected exactly 1 escape binding, found {len(escape_bindings)}: {escape_bindings}"
+            f"Expected exactly 1 escape binding in _merge_bindings, found {len(escape_bindings)}: {escape_bindings}"
+        )
+        assert escape_bindings[0].action == "dismiss_picker", (
+            f"Escape must route to dismiss_picker, got: {escape_bindings[0].action}"
         )
 
     def test_skill_picker_dismiss_overlay_calls_remove(self):

@@ -172,6 +172,8 @@ _AnimSurface {
 
     _chroma_a_hex: str = "#7b68ee"
     _chroma_b_hex: str = "#00bcd4"
+    _chroma_a_rgb: tuple[int, int, int] = (123, 104, 238)
+    _chroma_b_rgb: tuple[int, int, int] = (0, 188, 212)
 
     def __init__(
         self,
@@ -250,8 +252,10 @@ _AnimSurface {
         """Called from ThinkingWidget._tick. Advances frame and refreshes."""
         if chroma_a is not None:
             self._chroma_a_hex = chroma_a
+            self._chroma_a_rgb = _hex_to_rgb(chroma_a)
         if chroma_b is not None:
             self._chroma_b_hex = chroma_b
+            self._chroma_b_rgb = _hex_to_rgb(chroma_b)
         self._accent_hex = accent_hex
         if peak_hex is None:
             peak_hex = getattr(self, "_peak_hex", _DEFAULT_SPINNER_PEAK_HEX)
@@ -294,13 +298,14 @@ _AnimSurface {
     def _render_gradient_line(self, raw: str, row: int) -> Strip:
         width = len(raw)
         height = max(1, self.size.height)
-        y_norm = row / (height - 1) if height > 1 else 0.0
-        row_dim_hex = _lerp_hex(
-            self._chroma_a_hex,
-            self._chroma_b_hex,
-            y_norm,
+        t = row / (height - 1) if height > 1 else 0.0
+        ar, ag, ab = self._chroma_a_rgb
+        br, bg, bb = self._chroma_b_rgb
+        row_dim_rgb = (
+            int(ar + (br - ar) * t),
+            int(ag + (bg - ag) * t),
+            int(ab + (bb - ab) * t),
         )
-        row_dim_rgb = _hex_to_rgb(row_dim_hex)
         phase_base = (self._frame_tick * 0.75) + (row * 1.35)
         segments: list[Segment] = []
         for idx, ch in enumerate(raw):
@@ -965,9 +970,12 @@ _LabelLine   { height: 1;   width: 1fr; }
 
         # ── Drive children ─────────────────────────────────────────────────────
         if self._anim_surface is not None:
-            hue_delta = (elapsed * self._chroma_hue_speed) % 1.0
-            chroma_a = _hue_rotate(self._chroma_a_hex, hue_delta)
-            chroma_b = _hue_rotate(self._chroma_b_hex, hue_delta)
+            if self._chroma_hue_speed == 0.0:
+                chroma_a, chroma_b = self._chroma_a_hex, self._chroma_b_hex
+            else:
+                hue_delta = (elapsed * self._chroma_hue_speed) % 1.0
+                chroma_a = _hue_rotate(self._chroma_a_hex, hue_delta)
+                chroma_b = _hue_rotate(self._chroma_b_hex, hue_delta)
             self._anim_surface.tick_anim(
                 dt,
                 accent_hex=self._spinner_dim_hex or "#888888",

@@ -185,6 +185,9 @@ x-hermes:
     tool-tier-agent-accent: '#cc44ff'
     thinking-spinner-dim: '#4a4a4a'
     thinking-spinner-peak: '#d8d8d8'
+    thinking-chroma-a: '#00a839'
+    thinking-chroma-b: '#00ff41'
+    thinking-hue-shift-speed: '0.30'
     tool-header-max-gap: '8'
   tool_prefix: │
   tool_icons:

@@ -378,6 +378,30 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
 }
 
 
+def _builtin_skin_to_css(skin: "Any") -> "dict[str, str]":
+    """Convert a SkinPayload to a CSS variable dict.
+
+    Extracts ``css_vars`` from the skin object and returns it as a plain dict.
+    Emits ``_log.debug`` if the result contains zero usable color keys so that
+    broken or empty skins are diagnosable without a debugger.
+    """
+    try:
+        css_vars = dict(skin.css_vars) if hasattr(skin, "css_vars") else {}
+    except Exception:
+        _log.debug(
+            "_builtin_skin_to_css: could not read css_vars from skin %r",
+            getattr(skin, "name", repr(skin)),
+            exc_info=True,
+        )
+        css_vars = {}
+    if not css_vars:
+        _log.debug(
+            "_builtin_skin_to_css: skin %r produced no usable color keys; CSS vars will use defaults",
+            getattr(skin, "name", repr(skin)),
+        )
+    return css_vars
+
+
 class ThemeManager:
     """Centralised theme manager with Component Parts support and hot reload.
 

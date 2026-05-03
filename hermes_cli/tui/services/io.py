@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +20,7 @@ import logging as _logging
 import os as _os_mod
 
 logger = _logging.getLogger(__name__)
+_log = logger  # canonical alias per project convention
 
 from .base import AppService
 
@@ -246,7 +248,11 @@ class IOService(AppService):
         )
         try:
             return bool(future.result())
+        except concurrent.futures.TimeoutError:
+            _log.warning("play_effects_blocking: timed out waiting for effects future")
+            return False
         except Exception:
+            _log.warning("play_effects_blocking: future failed", exc_info=True)
             return False
 
     # --- Inline TTEWidget helpers ---

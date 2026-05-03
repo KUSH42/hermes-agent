@@ -1498,3 +1498,161 @@ class TestModalDiscipline:
             "IL-M1: raw --modal manipulation without '# il-m1:' annotation:\n"
             + "\n".join(violations)
         )
+
+
+# ---------------------------------------------------------------------------
+# IL-S1 — get_css_variables() calls must log on exception
+# ---------------------------------------------------------------------------
+
+def _ils1_check_source(source: str, filename: str = "<string>") -> list[tuple[int, str]]:
+    """IL-S1 checker: find get_css_variables() calls whose enclosing except handler
+    swallows exceptions without logging.
+
+    Returns list of (lineno, reason) violation tuples.
+    """
+    try:
+        tree = ast.parse(source, filename=filename)
+    except SyntaxError:
+        return []
+
+    lines = source.splitlines()
+
+    # Build a parent map: child node → parent node
+    parent_map: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent_map[id(child)] = node
+
+    def _find_enclosing_try(node: ast.AST) -> "ast.Try | None":
+        """Walk up the parent map to find the nearest enclosing Try node."""
+        cur_id = id(node)
+        seen: set[int] = set()
+        while cur_id in parent_map:
+            if cur_id in seen:
+                break
+            seen.add(cur_id)
+            parent = parent_map[cur_id]
+            if isinstance(parent, ast.Try):
+                return parent
+            cur_id = id(parent)
+        return None
+
+    def _handler_has_log_call(handler: ast.ExceptHandler) -> bool:
+        """Return True if the handler body contains a _log.warning/error/exception/debug
+        call with exc_info=True, or a bare _log.exception() call."""
+        _LOG_METHODS_IMPLICIT_EXC = {"exception"}
+        _LOG_METHODS_NEED_EXC_INFO = {"warning", "error", "debug"}
+
+        for node in ast.walk(handler):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            method = func.attr
+            # Check if it's a log call: _log.<method>(...)
+            obj = func.value
+            is_log_obj = (
+                isinstance(obj, ast.Name) and obj.id in ("_log", "logger", "log", "_logger")
+            )
+            if not is_log_obj:
+                continue
+            if method in _LOG_METHODS_IMPLICIT_EXC:
+                return True
+            if method in _LOG_METHODS_NEED_EXC_INFO:
+                # Check for exc_info=True keyword
+                for kw in node.keywords:
+                    if kw.arg == "exc_info" and isinstance(kw.value, ast.Constant) and kw.value.value:
+                        return True
+        return False
+
+    def _handler_has_exemption_comment(handler: ast.ExceptHandler, source_lines: list[str]) -> bool:
+        """Return True if the handler body contains an '# il-s1: <reason>' comment."""
+        start = handler.lineno - 1
+        end = handler.end_lineno if hasattr(handler, "end_lineno") else len(source_lines)
+        for line in source_lines[start:end]:
+            if "# il-s1:" in line:
+                rest = line.split("# il-s1:", 1)[1].strip()
+                if rest:  # must have a non-empty reason
+                    return True
+        return False
+
+    def _handler_is_bare_swallow(handler: ast.ExceptHandler) -> bool:
+        """Return True if the handler body has no log call and no re-raise."""
+        if _handler_has_log_call(handler):
+            return False
+        # Check for re-raise
+        for node in ast.walk(handler):
+            if isinstance(node, ast.Raise):
+                return False
+        return True
+
+    violations: list[tuple[int, str]] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr != "get_css_variables":
+            continue
+        # Found a get_css_variables() call — find enclosing Try
+        enclosing_try = _find_enclosing_try(node)
+        if enclosing_try is None:
+            # Unguarded call — not necessarily a violation (no except handler)
+            continue
+        for handler in enclosing_try.handlers:
+            if _handler_is_bare_swallow(handler):
+                if not _handler_has_exemption_comment(handler, lines):
+                    violations.append((
+                        node.lineno,
+                        f"get_css_variables() at line {node.lineno}: handler at line "
+                        f"{handler.lineno} swallows without logging (no # il-s1: exemption)",
+                    ))
+    return violations
+
+
+class TestSkinDiagnostics:
+    """IL-S1 — get_css_variables() call sites must log on exception."""
+
+    def test_il_s1_passes_on_compliant_call(self) -> None:
+        """A handler that calls _log.warning(..., exc_info=True) passes IL-S1."""
+        source = """\
+class W:
+    def refresh(self):
+        try:
+            v = self.app.get_css_variables()
+        except Exception:
+            _log.warning("skin var failed", exc_info=True)
+"""
+        violations = _ils1_check_source(source)
+        assert violations == [], f"Compliant call should produce no violations; got: {violations}"
+
+    def test_il_s1_rejects_bare_swallow(self) -> None:
+        """A bare `except Exception: pass` around get_css_variables() is a violation."""
+        source = """\
+class W:
+    def refresh(self):
+        try:
+            v = self.app.get_css_variables()
+        except Exception:
+            pass
+"""
+        violations = _ils1_check_source(source)
+        assert len(violations) == 1, (
+            f"Expected exactly one violation for bare swallow; got: {violations}"
+        )
+
+    def test_il_s1_honors_exemption_comment(self) -> None:
+        """A handler with `# il-s1: <reason>` on any line in the handler block is exempt."""
+        source = """\
+class W:
+    def refresh(self):
+        try:
+            v = self.app.get_css_variables()
+        except Exception:
+            pass  # il-s1: expected during shutdown before DOM is ready
+"""
+        violations = _ils1_check_source(source)
+        assert violations == [], f"Exemption comment should silence the violation; got: {violations}"

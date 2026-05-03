@@ -6,10 +6,13 @@ SourcesBar, plus their helper functions and cache variables.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time as _time  # S1-C: module top — not inside render() or callbacks
 from typing import TYPE_CHECKING, Any, Callable
+
+_log = logging.getLogger(__name__)
 
 from rich.style import Style
 from rich.text import Text
@@ -284,7 +287,7 @@ class HintBar(Widget):
             v = self.app.get_css_variables()
             return v.get("accent-interactive", v.get("primary", "#5f87d7"))
         except Exception:
-            # colour resolve failed; use hardcoded fallback blue
+            _log.debug("HintBar._get_key_color: css var lookup failed", exc_info=True)
             return "#5f87d7"
 
     def on_mount(self) -> None:

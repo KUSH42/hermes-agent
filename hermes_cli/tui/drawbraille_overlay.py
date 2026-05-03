@@ -619,22 +619,22 @@ class DrawbrailleOverlay(Static):
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(value, self.color_b, self.multi_color, self.app)
-        except Exception:  # renderer not ready or colour invalid — skip reactive colour update
-            pass
+        except Exception:
+            _log.debug("watch_color: resolve failed for %r", value, exc_info=True)
 
     def watch_color_b(self, value: str) -> None:
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(self.color, value, self.multi_color, self.app)
-        except Exception:  # renderer not ready or colour_b invalid — skip update
-            pass
+        except Exception:
+            _log.debug("watch_color_b: resolve failed for %r", value, exc_info=True)
 
     def watch_multi_color(self, value: list) -> None:
         try:
             self._ensure_renderer()
             self._renderer.resolve_colors(self.color, self.color_b, value, self.app)
-        except Exception:  # renderer not ready or colour list invalid — skip multi-colour update
-            pass
+        except Exception:
+            _log.debug("watch_multi_color: resolve failed for %r", value, exc_info=True)
 
     def watch_position(self, _value: str) -> None:
         self._apply_layout()
@@ -915,7 +915,10 @@ class DrawbrailleOverlay(Static):
         """Return True if AssistantNameplate is present in the DOM."""
         try:
             return len(self.app.query("AssistantNameplate")) > 0
+        except NoMatches:
+            return False  # overlay not mounted yet — expected during startup
         except Exception:
+            _log.debug("_has_nameplate: unexpected DOM error", exc_info=True)
             return False
 
     # ── clock subscription ──────────────────────────────────────────────────────

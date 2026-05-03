@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 logger = logging.getLogger(__name__)
+_log = logger  # canonical alias per project convention
 
 # NOTE: get_css_variables() is NOT migrated here. Textual calls it via
 # super().get_css_variables() on App; it must remain on the mixin/App class.
@@ -201,8 +202,10 @@ class ThemeService(AppService):
         try:
             from hermes_cli.tui.overlays import HelpOverlay as _HO
             app.query_one(_HO)._refresh_commands_cache()
-        except (NoMatches, Exception):
-            pass
+        except NoMatches:
+            pass  # overlay not mounted yet — expected during early startup
+        except Exception:
+            _log.warning("services.theme: refresh failed unexpectedly", exc_info=True)
 
     # --- Clipboard / selection helpers ---
 
@@ -257,7 +260,7 @@ class ThemeService(AppService):
             except NoMatches:
                 pass
         except Exception:
-            pass
+            _log.warning("populate_slash_commands failed; slash autocomplete may be empty", exc_info=True)
 
     # --- Skill wiring ---
 

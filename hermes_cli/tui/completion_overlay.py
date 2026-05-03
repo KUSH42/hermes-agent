@@ -30,6 +30,7 @@ from textual import events
 logger = logging.getLogger(__name__)
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import RichLog, Static
 
 from .completion_list import VirtualCompletionList
@@ -99,6 +100,10 @@ class CompletionOverlay(Vertical):
     dismiss/re-show cycles.
     """
 
+    class _AutoDismissBubble(Message):
+        """Bubbles up to HermesInput to trigger full ASSIST tear-down."""
+        bubble = True
+
     DEFAULT_CSS = """
     CompletionOverlay {
         layer: overlay;
@@ -149,6 +154,7 @@ class CompletionOverlay(Vertical):
 
     def on_mount(self) -> None:
         self._last_applied_w: int = 0
+        self.border_subtitle = "↑↓ select  ·  Tab accept  ·  Esc close"
         # A3: apply initial --narrow class based on current app width so a
         # terminal that starts narrow doesn't need a resize event to trigger it.
         try:
@@ -181,6 +187,5 @@ class CompletionOverlay(Vertical):
         self, _message: VirtualCompletionList.AutoDismiss,
     ) -> None:
         """Auto-close when the empty-state timer fires (P0-B)."""
-        self.remove_class("--visible")
-        self.remove_class("--slash-only")
         self._clear_highlighted_candidate()
+        self.post_message(CompletionOverlay._AutoDismissBubble())

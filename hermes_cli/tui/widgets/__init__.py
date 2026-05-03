@@ -1027,7 +1027,8 @@ class AssistantNameplate(Widget):
             self._derive_skin_colors(css_vars, tier)
             self.refresh()
         except Exception:
-            pass  # best-effort; widget may not be mounted
+            _log.warning("AssistantNameplate.refresh_skin_colors: skin var resolve failed", exc_info=True)
+            # Fall through to _DEFAULT_TIER_HEX
 
     def on_mount(self) -> None:
         try:
@@ -1035,7 +1036,8 @@ class AssistantNameplate(Widget):
             _tier = getattr(self.app, "active_tier", None)
             self._derive_skin_colors(css_vars, _tier)
         except Exception:
-            # Fallback: re-derive from whatever _accent_hex/_text_hex already hold
+            _log.warning("AssistantNameplate.on_mount: skin var resolve failed", exc_info=True)
+            # Fall through to _DEFAULT_TIER_HEX — re-derive from whatever _accent_hex/_text_hex already hold
             self._active_style = Style.parse(f"bold {self._accent_hex}")
             self._idle_color_hex = _lerp_hex(self._text_hex, self._accent_hex, 0.25)
         if not self._effects_enabled:
@@ -1066,7 +1068,8 @@ class AssistantNameplate(Widget):
             self._derive_skin_colors(css_vars, tier)
             self.refresh()
         except Exception:
-            pass  # best-effort — tier change without mounted app is fine
+            _log.warning("AssistantNameplate.set_tier: skin var resolve failed", exc_info=True)
+            # Fall through to _DEFAULT_TIER_HEX
 
     def on_unmount(self) -> None:
         self._stop_all_idle_timers()

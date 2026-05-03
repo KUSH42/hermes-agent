@@ -1416,3 +1416,66 @@ _SINE_TABLES: dict[int, list[float]] = {}
 """
         violations = _ila1_check_source(src, "exempt.py")
         assert violations == [], f"Expected no violations with exemption comment, got: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# IL-M1 — raw --modal class manipulation without ModalOverlayMixin
+# ---------------------------------------------------------------------------
+
+def _ilm1_check_source(src: str, filename: str) -> list[str]:
+    """AST walk to find raw add_class/remove_class("--modal") not exempted by il-m1 comment.
+
+    Returns list of violation description strings.
+    """
+    tree = ast.parse(src, filename=filename)
+    violations: list[str] = []
+    lines = src.splitlines()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        # Match attr calls: <expr>.add_class(...) or <expr>.remove_class(...)
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in ("add_class", "remove_class"):
+            continue
+        # Check if any argument is the string "--modal"
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and arg.value == "--modal":
+                lineno = node.lineno
+                # Exemption: the source line must contain "# il-m1:"
+                source_line = lines[lineno - 1] if lineno <= len(lines) else ""
+                if "# il-m1:" not in source_line:
+                    violations.append(
+                        f"{filename}:{lineno}: raw --modal via {func.attr}() without il-m1 annotation"
+                    )
+    return violations
+
+
+class TestModalDiscipline:
+    """IL-M1 — every raw --modal class manipulation must be annotated # il-m1:."""
+
+    def test_il_m1_rejects_raw_modal_class_add(self) -> None:
+        """AST walk over hermes_cli/tui/**/*.py; every add_class/remove_class('--modal')
+        must have an # il-m1: comment on the same line."""
+        tui_dir = _REPO_ROOT / "hermes_cli" / "tui"
+        violations: list[str] = []
+
+        for py_file in sorted(tui_dir.rglob("*.py")):
+            if "__pycache__" in py_file.parts:
+                continue
+            try:
+                source = py_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            try:
+                file_violations = _ilm1_check_source(source, str(py_file.relative_to(_REPO_ROOT)))
+            except SyntaxError:
+                continue
+            violations.extend(file_violations)
+
+        assert not violations, (
+            "IL-M1: raw --modal manipulation without '# il-m1:' annotation:\n"
+            + "\n".join(violations)
+        )

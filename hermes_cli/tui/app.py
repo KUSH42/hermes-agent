@@ -589,6 +589,9 @@ class HermesApp(App):
         # W-10: scroll catchup hint — reset when PINNED
         self._scroll_hint_shown: bool = False
 
+        # MOD-1: modal focus-arbiter stack.  Populated by ModalOverlayMixin.on_mount.
+        self._modal_stack: list[Widget] = []
+
         # R2 pane layout — read from display.layout in cli config
         _display_cfg = (getattr(self.cli, "_cfg", None) or {}).get("display", {})
         self._display_layout: str = _display_cfg.get("layout", "v1")
@@ -664,6 +667,34 @@ class HermesApp(App):
         else:
             self.remove_class("reduced-motion")
         self.post_message(ReducedMotionChanged(enabled))
+
+    # --- MOD-1: Modal focus-arbiter ---
+
+    def push_modal(self, overlay: Widget) -> None:
+        """Register an overlay as the active modal and suppress the previous top."""
+        if self._modal_stack:
+            self._modal_stack[-1].add_class("--modal-suppressed")
+        self._modal_stack.append(overlay)
+
+    def pop_modal(self, overlay: Widget) -> None:
+        """Deregister an overlay; unsuppress the new top if one exists."""
+        try:
+            self._modal_stack.remove(overlay)
+        except ValueError:
+            pass  # overlay was not in stack (double-pop or never pushed) — no-op
+        if self._modal_stack:
+            try:
+                self._modal_stack[-1].remove_class("--modal-suppressed")
+            except Exception:
+                logger.debug("pop_modal: remove_class --modal-suppressed failed", exc_info=True)
+
+    def top_modal(self) -> Widget | None:
+        """Return the overlay at the top of the modal stack, or None."""
+        return self._modal_stack[-1] if self._modal_stack else None
+
+    def is_modal_active(self) -> bool:
+        """Return True when at least one modal overlay is registered."""
+        return bool(self._modal_stack)
 
     # --- Compose ---
 
@@ -2721,6 +2752,9 @@ class HermesApp(App):
         Idempotent: calling twice with different seeds updates the live overlay
         rather than mounting a duplicate.  Detection uses query_one(SkillPickerOverlay)
         wrapped in NoMatches; no stale-ref caching.
+
+        Guard: if another modal is already active, decline silently so we never
+        stack a skill picker on top of an interrupt overlay or similar.
         """
         from textual.css.query import NoMatches as _NM
         from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
@@ -2728,6 +2762,14 @@ class HermesApp(App):
             existing = self.query_one(SkillPickerOverlay)
             existing.set_filter(seed_filter)
         except _NM:
+            # MOD-4: only open if no conflicting modal is active (or the stack is
+            # empty / the top is itself a SkillPickerOverlay).
+            top = self.top_modal()
+            if top is not None and not isinstance(top, SkillPickerOverlay):
+                logger.debug(
+                    "_open_skill_picker: blocked by active modal %r", type(top).__name__
+                )
+                return
             self.mount(
                 SkillPickerOverlay(
                     seed_filter=seed_filter,

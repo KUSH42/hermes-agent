@@ -46,6 +46,7 @@ from textual.widgets import Button, Input, Static
 
 from hermes_cli.tui.animation import lerp_color
 from hermes_cli.tui.widgets.renderers import CopyableRichLog
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 if TYPE_CHECKING:
     from hermes_cli.tui.state import (
@@ -149,7 +150,7 @@ _URGENCY_CLASSES = {
 _MAX_QUEUE_DEPTH = 8
 
 
-class InterruptOverlay(Widget, can_focus=True):
+class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
     """Single pre-mounted overlay fan-in for all 7 interrupt kinds."""
 
     DEFAULT_CSS = """
@@ -233,6 +234,17 @@ class InterruptOverlay(Widget, can_focus=True):
         # Single body container; variant renderers mount children into it.
         yield Vertical(id="interrupt-body")
         yield Static("", id="interrupt-countdown")
+
+    def on_mount(self) -> None:
+        # Intentionally does NOT call super().on_mount().
+        # InterruptOverlay is a permanent pre-mounted widget that starts hidden.
+        # Modal registration happens lazily in _activate(), not at DOM mount.
+        pass
+
+    def on_unmount(self) -> None:
+        # Intentionally does NOT call super().on_unmount().
+        # Permanent widget: never removed from DOM; lifecycle is managed by _teardown_current.
+        pass
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -342,7 +354,10 @@ class InterruptOverlay(Widget, can_focus=True):
         self._ns_base = "current"
 
         # Visibility + border urgency.
-        self.add_class("--visible", "--modal")
+        self._capture_focus_caller()  # record focus before we steal it
+        self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter, not raw add_class
+        self.add_class("--modal")  # il-m1: owned by InterruptOverlay._activate (permanent widget override)
+        self.add_class("--visible")
         self.display = True
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
@@ -427,10 +442,31 @@ class InterruptOverlay(Widget, can_focus=True):
         self._clear_destructive_confirm()   # sees _current_payload=None → skips refresh
         self._enter_blocked_until = 0.0     # prevent block bleeding to next payload
         self.current_kind = None
-        self.remove_class("--visible", "--diff-hint-visible", "--modal")
+        self.remove_class("--visible", "--diff-hint-visible")
+        # MOD-5: --modal and focus-restore are owned by dismiss_overlay (permanent-widget override)
+        self.dismiss_overlay()
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
         self.display = False
+
+    def dismiss_overlay(self) -> None:
+        """MOD-5: permanent-widget override.  Does NOT remove() self.
+
+        Restores focus, removes --modal CSS, pops from arbiter stack.
+        --visible and display=False are handled by _teardown_current separately.
+        """
+        target = self._restore_focus_to()
+        self.remove_class("--modal")  # il-m1: owned by InterruptOverlay.dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)
+        except AttributeError:
+            _log.debug("InterruptOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("InterruptOverlay.dismiss_overlay: focus() failed", exc_info=True)
 
     # ── Countdown ──────────────────────────────────────────────────────────
 

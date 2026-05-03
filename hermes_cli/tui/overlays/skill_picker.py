@@ -26,6 +26,7 @@ from textual.widgets.option_list import Option
 _log = logging.getLogger(__name__)
 
 from hermes_cli.tui.completion_overlay import _NO_DESCRIPTION_FALLBACK  # shared em-dash fallback
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 # Source labels shown as group headers in the left pane.
 _SOURCE_LABELS: dict[str, str] = {
@@ -36,7 +37,7 @@ _SOURCE_LABELS: dict[str, str] = {
 }
 
 
-class SkillPickerOverlay(Widget):
+class SkillPickerOverlay(ModalOverlayMixin, Widget):
     """Two-pane skill picker overlay.
 
     Mount via ``app._open_skill_picker(seed_filter, trigger_source)``.
@@ -100,6 +101,8 @@ class SkillPickerOverlay(Widget):
     """
 
     BINDINGS = [
+        # escape is provided by ModalOverlayMixin; dismiss_picker is kept for
+        # backward compatibility with any caller that references the action name.
         Binding("escape", "dismiss_picker", priority=True, show=False),
     ]
 
@@ -139,7 +142,7 @@ class SkillPickerOverlay(Widget):
         )
 
     def on_mount(self) -> None:
-        self.add_class("--modal")
+        super().on_mount()  # ModalOverlayMixin: capture caller, push_modal, add --modal
         self.border_title = "⚡ Skills  (Alt+$ to toggle)"
         self._load_candidates()
         self._rebuild_list()
@@ -307,15 +310,9 @@ class SkillPickerOverlay(Widget):
             self._open_skill_md()
 
     def dismiss(self) -> None:
-        """Close the mounted picker widget and restore input focus."""
-        self.remove_class("--modal")
-        if self.is_mounted:
-            self.remove()
-        try:
-            from hermes_cli.tui.input_widget import HermesInput as _HI
-            self.app.query_one(_HI).focus()
-        except (NoMatches, Exception):
-            pass
+        """Close the mounted picker widget. Delegates to mixin dismiss_overlay."""
+        # on_unmount (via remove()) handles stack pop + focus restore via mixin
+        self.dismiss_overlay()
 
     def _dispatch_selected(self) -> None:
         """Enter: submit $name and close."""
@@ -379,4 +376,4 @@ class SkillPickerOverlay(Widget):
 
     def action_dismiss_picker(self) -> None:
         """Esc: dismiss without dispatch; input retains whatever fragment it had."""
-        self.dismiss()
+        self.dismiss_overlay()

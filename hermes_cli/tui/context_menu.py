@@ -22,6 +22,8 @@ from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import Static
 
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
+
 
 @dataclass
 class MenuItem:
@@ -86,20 +88,12 @@ class _ContextItem(Static):
             except Exception:
                 logger.debug("ContextMenu: app.notify failed during action error report", exc_info=True)
         try:
-            self.app.query_one(ContextMenu).remove_class("--visible")
+            self.app.query_one(ContextMenu).dismiss()
         except NoMatches:
             pass
-        if prev is not None and prev.is_attached:
-            prev.focus()
-        else:
-            try:
-                from hermes_cli.tui.input_widget import HermesInput as _HI
-                self.app.query_one(_HI).focus()
-            except Exception:
-                logger.debug("ContextMenu: focus restore failed", exc_info=True)
 
 
-class ContextMenu(Widget):
+class ContextMenu(ModalOverlayMixin, Widget):
     """Floating context menu widget.
 
     Positioned absolutely at arbitrary screen coordinates via
@@ -150,10 +144,19 @@ class ContextMenu(Widget):
         self._opener_browse_target: Widget | None = None  # W-8: browse target that opened this menu
 
     def on_mount(self) -> None:
+        # Intentionally does NOT call ModalOverlayMixin.on_mount().
+        # ContextMenu is a permanent pre-mounted widget; modal registration
+        # happens lazily in show(), not at DOM mount time.
+
         # W-8 / R-2: capture the current browse-focused target so dismiss can restore it
         self._opener_browse_target = next(
             (w for w in self.app.query(".--browse-focused")), None
         )
+
+    def on_unmount(self) -> None:
+        # Intentionally does NOT call ModalOverlayMixin.on_unmount().
+        # Permanent widget: never removed from DOM.
+        pass
 
     def _items(self) -> "list[_ContextItem]":
         """Return all non-separator item widgets in display order."""
@@ -211,6 +214,8 @@ class ContextMenu(Widget):
         to arm ``on_blur`` dismissal.
         """
         if not items:
+            if "--modal" in self.classes or "--visible" in self.classes:
+                self.dismiss_overlay()
             return
 
         # Tear down previous contents (if menu was already visible); await
@@ -252,27 +257,52 @@ class ContextMenu(Widget):
 
         self._selected_index = -1  # reset selection on each new show
         self._prev_focus = self.app.focused  # save for focus restore on item click
-        self.add_class("--visible", "--modal")
+        # MOD-8: use _capture_focus_caller + push_modal, then add CSS classes
+        self._capture_focus_caller()  # record focus caller before stealing focus
+        try:
+            self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter
+        except AttributeError:
+            pass  # app has no push_modal — graceful degrade
+        self.add_class("--modal")  # il-m1: owned by ContextMenu.show (permanent widget override)
+        self.add_class("--visible")
         self.focus()
 
-    def dismiss(self) -> None:
-        """Hide the context menu (idempotent).
-
-        Explicitly returns focus to ``#input-area`` when the menu had focus,
-        so that mouse-scroll events reach the OutputPanel rather than being
-        swallowed by a hidden but still-focused ContextMenu widget.
-        """
-        self.remove_class("--visible", "--modal")
-        if self.app.focused is self:
-            # W-8 / R-2: if a browse-focused target opened this menu, restore its highlight
-            if self._opener_browse_target is not None:
-                self._opener_browse_target.add_class("--browse-focused")
-                return
+    def _restore_focus_to(self):
+        """MOD-8: prefer _prev_focus over mixin default, then fall back to mixin logic."""
+        pf = self._prev_focus
+        if pf is not None:
             try:
-                from hermes_cli.tui.input_widget import HermesInput as _HI
-                self.app.query_one(_HI).focus()
+                if pf.is_mounted:
+                    return pf
             except Exception:
-                logger.debug("ContextMenu.action_dismiss: focus restore failed", exc_info=True)
+                pass  # is_mounted check failed — treat as unmounted
+        return super()._restore_focus_to()
+
+    def dismiss_overlay(self) -> None:
+        """MOD-8: permanent-widget override.  Does NOT remove() self."""
+        # W-8 / R-2: if a browse-focused target opened this menu, restore its highlight
+        if self._opener_browse_target is not None:
+            try:
+                self._opener_browse_target.add_class("--browse-focused")
+            except Exception:
+                pass  # browse target may be unmounted — best-effort only
+        self.remove_class("--visible")
+        self.remove_class("--modal")  # il-m1: owned by ContextMenu.dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)
+        except AttributeError:
+            pass  # app has no pop_modal — graceful degrade
+        target = self._restore_focus_to()
+        if target is not None and self.app.focused is self:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                logger.debug("ContextMenu.dismiss_overlay: focus restore failed", exc_info=True)
+
+    def dismiss(self) -> None:
+        """Hide the context menu (idempotent). Delegates to dismiss_overlay."""
+        self.dismiss_overlay()
 
     def on_blur(self) -> None:
         """Dismiss when focus leaves the menu."""

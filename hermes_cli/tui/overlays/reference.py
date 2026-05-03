@@ -23,12 +23,14 @@ from textual.widget import Widget
 from textual.widgets import Button, ContentSwitcher, Input, Static
 from textual.widgets.option_list import Option
 
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
+
 
 # ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------
 
-class ReferenceModal(Widget):
+class ReferenceModal(ModalOverlayMixin, Widget):
     """Base class for all reference modal overlays.
 
     Subclasses declare:
@@ -66,33 +68,58 @@ class ReferenceModal(Widget):
     """
 
     BINDINGS = [
-        Binding("escape", "dismiss", priority=True),
+        Binding("escape", "dismiss_modal", priority=True),
     ]
 
     def on_mount(self) -> None:
-        self.add_class("--modal")
+        # Intentionally does NOT call ModalOverlayMixin.on_mount().
+        # ReferenceModal is a permanent pre-mounted widget; modal registration
+        # happens lazily in show_overlay(), not at DOM mount time.
         if self._modal_title and self.is_mounted:
             self.border_title = self._modal_title
 
+    def on_unmount(self) -> None:
+        # Intentionally does NOT call ModalOverlayMixin.on_unmount().
+        # Permanent widget: never removed from DOM.
+        pass
+
     def show_overlay(self) -> None:
+        self._capture_focus_caller()  # record focus caller before we steal focus
+        try:
+            self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter
+        except AttributeError:
+            pass  # HermesApp not yet patched or tests without push_modal — graceful degrade
         if self._modal_title:
             self.border_title = self._modal_title
+        self.add_class("--modal")  # il-m1: owned by show_overlay (permanent widget pattern)
         self.add_class("--visible")
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible", "--modal")
+        self.remove_class("--visible")
+
+    def dismiss_overlay(self) -> None:
+        """MOD-6: permanent-widget override.  Does NOT remove() self."""
+        target = self._restore_focus_to()
+        self.hide_overlay()
+        self.remove_class("--modal")  # il-m1: owned by ReferenceModal.dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)
+        except AttributeError:
+            pass  # app has no pop_modal — graceful degrade
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                pass  # focus() unavailable — best-effort, non-fatal
 
     def dismiss(self) -> None:
         """Public close helper for widget overlays."""
-        self.action_dismiss()
+        self.dismiss_overlay()
 
     def action_dismiss(self) -> None:
-        self.hide_overlay()
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        """Legacy action name — delegates to dismiss_overlay (via mixin action_dismiss_modal)."""
+        self.dismiss_overlay()
 
 
 # ---------------------------------------------------------------------------
@@ -157,8 +184,7 @@ class HelpOverlay(ReferenceModal):
 
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
-        self.border_title = self._modal_title
-        self.add_class("--visible")
+        super().show_overlay()  # capture caller, push_modal, add --modal, add --visible
         # C1: clear previous search query so the list always opens unfiltered
         try:
             inp = self.query_one("#help-search", Input)
@@ -194,12 +220,8 @@ class HelpOverlay(ReferenceModal):
         self._populate(filtered)
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        """Delegates to dismiss_overlay; inherited by mixin as action_dismiss_modal too."""
+        self.dismiss_overlay()
 
 
 # ---------------------------------------------------------------------------
@@ -418,8 +440,7 @@ class UsageOverlay(ReferenceModal):
 
     def show_usage(self) -> None:
         """Set border title and show the overlay."""
-        self.border_title = self._modal_title
-        self.add_class("--visible")
+        super().show_overlay()  # capture caller, push_modal, add --modal, add --visible
 
     # Keep show_overlay() as alias for consistency with ReferenceModal API
     def show_overlay(self) -> None:  # type: ignore[override]
@@ -478,12 +499,8 @@ class UsageOverlay(ReferenceModal):
         )
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        """Delegates to dismiss_overlay."""
+        self.dismiss_overlay()
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +575,7 @@ class CommandsOverlay(ReferenceModal):
 
     def show_overlay(self) -> None:
         """Show overlay and focus the filter input."""
-        self.border_title = self._modal_title
-        self.add_class("--visible")
+        super().show_overlay()  # capture caller, push_modal, add --modal, add --visible
         try:
             inp = self.query_one("#commands-search", Input)
             inp.value = ""
@@ -577,12 +593,8 @@ class CommandsOverlay(ReferenceModal):
         self._populate(filtered)
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        """Delegates to dismiss_overlay."""
+        self.dismiss_overlay()
 
 
 # ---------------------------------------------------------------------------
@@ -665,8 +677,7 @@ class WorkspaceOverlay(ReferenceModal):
             pass  # tab button not yet in DOM or already removed; styling update is best-effort
 
     def show_overlay(self) -> None:
-        self.border_title = self._modal_title
-        self.add_class("--visible")
+        super().show_overlay()  # capture caller, push_modal, add --modal, add --visible
         # C4: focus first tab button so keyboard tab-through works from the start
         try:
             self.query_one("#ws-tab-git", Button).focus()
@@ -674,16 +685,11 @@ class WorkspaceOverlay(ReferenceModal):
             pass
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
         try:
             self.app._sync_workspace_polling_state()
         except Exception:
             pass
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        self.dismiss_overlay()
 
     def refresh_data(self, tracker: object, snapshot: object | None) -> None:
         """Rebuild header, summary, and file list from tracker + optional snapshot."""

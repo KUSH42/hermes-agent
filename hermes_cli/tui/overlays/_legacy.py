@@ -121,7 +121,7 @@ class SessionOverlay(Widget):
     def open_sessions(self) -> None:
         """Show overlay and load sessions in background worker."""
         self.border_title = "Sessions"
-        self.add_class("--visible", "--modal")
+        self.add_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
         self._selected_idx = 0
         try:
             self.query_one("#sess-scroll", ScrollableContainer).remove_children()
@@ -233,7 +233,7 @@ class SessionOverlay(Widget):
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible", "--modal")
+        self.remove_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).focus()

@@ -25,6 +25,7 @@ from textual.containers import Horizontal
 from rich.text import Text
 
 from hermes_cli.tui.resize_utils import THRESHOLD_NARROW, crosses_threshold
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 if TYPE_CHECKING:
     pass
@@ -248,7 +249,7 @@ _tools_state = _ToolsScreenState()
 # ToolsScreen
 # ---------------------------------------------------------------------------
 
-class ToolsScreen(Screen):
+class ToolsScreen(ModalOverlayMixin, Screen):
     """Full-screen /tools timeline overlay.
 
     Lifecycle: push_screen(ToolsScreen(snapshot)) → user navigates → pop_screen().
@@ -399,13 +400,18 @@ ToolsScreen > #prefix-legend.--hidden {
             id="tools-footer",
         )  # B5/D2: include all active key bindings
 
+    def dismiss_overlay(self) -> None:
+        """MOD-7: Screen pattern — pop_screen instead of remove().
+        The mixin's on_unmount fires after pop_screen and handles stack/CSS cleanup.
+        """
+        self.app.pop_screen()
+
     async def on_mount(self) -> None:
-        self.add_class("--modal")
+        super().on_mount()  # ModalOverlayMixin: capture caller, push_modal, add --modal
         self._term_w = self.app.size.width
         if self._term_w < 60:
             self.app._flash_hint("⚠  terminal too narrow for /tools overlay", 2.0)
-            self.remove_class("--modal")
-            self.app.pop_screen()
+            self.dismiss_overlay()
             return
         self.query_one("#filter-input", Input).display = False
         self._stale_timer = self.set_interval(1.0, self._update_staleness_pip)
@@ -437,7 +443,7 @@ ToolsScreen > #prefix-legend.--hidden {
         self._term_w = w
         if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW) and w < THRESHOLD_NARROW:
             self.app._flash_hint("⚠  terminal too narrow for /tools overlay", 2.0)
-            self.app.pop_screen()
+            self.dismiss_overlay()
         self._last_resize_w = w
 
     def _update_staleness_pip(self) -> None:
@@ -662,8 +668,7 @@ ToolsScreen > #prefix-legend.--hidden {
             fi.display = False
         except Exception:  # filter-input widget absent — display state not changed
             pass
-        self.remove_class("--modal")
-        self.app.pop_screen()
+        self.dismiss_overlay()
 
     async def action_open_filter(self) -> None:
         fi = self.query_one("#filter-input", Input)
@@ -701,8 +706,7 @@ ToolsScreen > #prefix-legend.--hidden {
             return
         entry = self._filtered[self._cursor]
         panel_id = f"tool-{entry['tool_call_id']}"
-        self.remove_class("--modal")
-        self.app.pop_screen()
+        self.dismiss_overlay()
 
         def _after_pop() -> None:
             try:

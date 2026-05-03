@@ -590,6 +590,7 @@ class HermesApp(App):
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
         self._workspace_hint_shown: bool = False
+        self._workspace_auto_suppressed: bool = False
         self._workspace_tracker = None
         self._git_poller = None
         self._git_poll_in_flight: bool = False
@@ -1557,6 +1558,7 @@ class HermesApp(App):
         self.status_phase = _Phase.REASONING if value else _Phase.IDLE
         self._svc_spinner.drawbraille_show_hide(value, signal_on_show="thinking" if value else None)
         if value:
+            self._workspace_auto_suppressed = False
             self._svc_commands.update_anim_hint()
             self._svc_spinner.set_chevron_phase("--phase-stream")
             self._svc_spinner.set_hint_phase("stream")
@@ -1730,6 +1732,22 @@ class HermesApp(App):
         # Recompute hint phase when agent stops
         if not value:
             self._svc_spinner.set_hint_phase(self._svc_spinner.compute_hint_phase())
+        if not value:
+            tracker = getattr(self, "_workspace_tracker", None)
+            if (
+                tracker is not None
+                and tracker.entries()
+                and not self._workspace_auto_suppressed
+                and not self._focus_blocking_overlay_visible()
+            ):
+                try:
+                    ov = self.query_one(WorkspaceOverlay)
+                    if not ov.has_class("--visible"):
+                        ov.refresh_data(tracker, self._last_git_snapshot)
+                        ov.show_overlay()
+                        self._sync_workspace_polling_state()
+                except NoMatches:
+                    pass  # WorkspaceOverlay not yet in DOM — skip auto-show
 
     def _osc_progress_update(self, running: bool) -> None:
         """Emit OSC 9;4 sequence when config flag is set."""

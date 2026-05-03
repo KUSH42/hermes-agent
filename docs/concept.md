@@ -1007,6 +1007,12 @@ When this doc drifts from the code: flag it, don't silently edit. Bump the versi
   build_widget exception, and the slow-renderer 250 ms tag is per-block and
   triggers worker dispatch on subsequent renders of the same block.
   (TBC-2, TBC-3)
+- 2026-05-02 (bug-fix): hint priority order corrected so [t]/[T] precede e/o/u/E
+  contextual extras within the KIND-specific bucket. (TBM-1)
+- 2026-05-02 (bug-fix): streaming kind hint clear consolidated into single
+  _clear_streaming_kind_hint helper; SK-2 contract reaffirmed. (TBM-3)
+- 2026-05-02 (note): _set_view_state now rejects recursive entry with WARNING.
+  Watchers must not re-enter the choke-point. (TBM-4)
 
 ### v3.6 — 2026-04-27 — SLR-1/SLR-2/SLR-3: Streaming legibility + visual rhythm
 

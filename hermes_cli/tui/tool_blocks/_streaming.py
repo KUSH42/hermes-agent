@@ -63,6 +63,7 @@ except ValueError:
     )
     _SKELETON_DELAY_S = 0.1
 _SKELETON_GLYPH = "· · ·"
+# concept.md §perception-budgets: motion channel, streaming cadence row
 _SKELETON_PULSE_S = 0.4
 
 

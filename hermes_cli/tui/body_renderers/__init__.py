@@ -20,8 +20,11 @@ should pass phase=STREAMING to stay in the streaming tier.
 """
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger(__name__)
 
 class RendererKind(str, Enum):
     """User-selectable renderer kind for `t` / `Shift+T` keybinds (LL-4).
@@ -104,6 +107,51 @@ def _make_streaming_empty_cls() -> "ClassificationResult":
 _STREAMING_EMPTY_CLS = _make_streaming_empty_cls()
 
 
+_STREAMING_TIER_RENDERERS: "tuple[type[BodyRenderer], ...]" = (
+    ShellRenderer,
+    StreamingCodeRenderer,
+    FileRenderer,
+    StreamingSearchRenderer,
+    WebRenderer,
+    AgentRenderer,
+    TextRenderer,
+    MCPBodyRenderer,
+)
+
+
+def _build_streaming_lookup() -> "dict":
+    """TBM-6: build category→renderer map for the streaming branch.
+
+    Each streaming-tier renderer's can_render checks payload.category == X for
+    exactly one ToolCategory; probe once at import to avoid the per-chunk
+    linear walk. Phase-C renderers (Fallback, ShellOutput, etc.) are excluded
+    because their can_render is intentionally permissive.
+    """
+    from hermes_cli.tui.tool_category import ToolCategory as _TC
+    result: dict = {}
+    for cls in _STREAMING_TIER_RENDERERS:
+        for cat in _TC:
+            class _FakePayload:
+                category = cat
+            try:
+                matched = cls.can_render(_STREAMING_EMPTY_CLS, _FakePayload())  # type: ignore[arg-type]
+            except Exception:
+                # best-effort probe: streaming renderers may raise on synthetic payload; treat as no-match
+                matched = False
+            if matched:
+                if cat in result:
+                    raise RuntimeError(
+                        f"_build_streaming_lookup: duplicate streaming renderer for {cat}: "
+                        f"{result[cat].__name__} and {cls.__name__}"
+                    )
+                result[cat] = cls
+                break
+    return result
+
+
+_STREAMING_RENDERER_BY_CATEGORY: "dict" = _build_streaming_lookup()
+
+
 def pick_renderer(
     cls_result: "ClassificationResult",
     payload: "ToolPayload",
@@ -147,6 +195,15 @@ def pick_renderer(
     # Override has no effect here — renderer swap mid-stream would race the
     # render loop; takes effect once phase reaches COMPLETING/DONE.
     if phase in _STREAMING_PHASES:
+        # TBM-6: O(1) category lookup; fall back to linear walk for any
+        # category not in the prebuilt map (or non-hashable synthetic categories).
+        try:
+            cls = _STREAMING_RENDERER_BY_CATEGORY.get(payload.category)
+        except TypeError:
+            # category is unhashable (e.g. test stub); skip the dict path
+            cls = None
+        if cls is not None and cls.accepts(phase, density):
+            return cls
         for r in REGISTRY:
             if not r.accepts(phase, density):
                 continue

@@ -563,13 +563,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 event.prevent_default()
                 self._rev_search_find(direction=-1)
                 return
-            if self._completion_overlay_slash_only():
-                event.prevent_default()
-                self._resolve_assist(AssistKind.NONE)
-                self._suppress_autocomplete_once = True
-                self.action_history_prev()
-                return
-            elif self._completion_overlay_visible():
+            if self._completion_overlay_visible():
                 event.prevent_default()
                 self._move_highlight(-1)
                 return
@@ -605,13 +599,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 event.prevent_default()
                 self._rev_search_find(direction=+1)
                 return
-            if self._completion_overlay_slash_only():
-                event.prevent_default()
-                self._resolve_assist(AssistKind.NONE)
-                self._suppress_autocomplete_once = True
-                self.action_history_next()
-                return
-            elif self._completion_overlay_visible():
+            if self._completion_overlay_visible():
                 event.prevent_default()
                 self._move_highlight(+1)
                 return

@@ -5517,6 +5517,17 @@ class HermesCLI:
         playback_done.wait(timeout=MAX_WALL_S + 5.0)
 
         if rendered_any_flag[0]:
+            # Scroll to top after TTE so the banner is shown from the beginning.
+            # Deferred via call_from_thread→call_after_refresh so it fires after
+            # the final frame's layout pass completes.
+            from hermes_cli.tui.widgets.output_panel import OutputPanel
+            def _scroll_banner_top() -> None:
+                try:
+                    panel = app.query_one(OutputPanel)
+                    app.call_after_refresh(panel.scroll_home, animate=False)
+                except Exception:
+                    pass
+            app.call_from_thread(_scroll_banner_top)
             self._first_input_seen.wait(timeout=0.25)
 
         return rendered_any_flag[0]
@@ -5637,9 +5648,18 @@ class HermesCLI:
 
         def _apply() -> None:
             from hermes_cli.tui.widgets import StartupBannerWidget
+            from hermes_cli.tui.widgets.output_panel import OutputPanel
             try:
                 widget = app.query_one(StartupBannerWidget)
                 widget.set_frame(final_banner)
+                # Scroll to top so the banner is shown from the beginning.
+                # call_after_refresh defers until after the layout pass that
+                # incorporates the new banner height.
+                try:
+                    panel = app.query_one(OutputPanel)
+                    app.call_after_refresh(panel.scroll_home, animate=False)
+                except Exception:
+                    pass
             except Exception as exc:
                 logger.warning("_set_tui_startup_banner_static: %s", exc, exc_info=True)
 

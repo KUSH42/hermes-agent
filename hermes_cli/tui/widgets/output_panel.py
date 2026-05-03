@@ -526,9 +526,15 @@ class OutputPanel(ScrollableContainer):
                     OUTPUT_PANEL_WIDTH_READY.set()
             except Exception:
                 pass
-        # R08/R09: scroll anchoring — preserve position after layout recalc
+        # R08/R09: scroll anchoring — preserve position after layout recalc.
+        # During startup (before any messages), skip scroll_end: it would race
+        # with the async banner-set and scroll past the top of the banner,
+        # leaving the user at the bottom with the banner top cut off.
+        # scroll_home() is called explicitly after the banner is painted.
         if not getattr(self, "_user_scrolled_up", False):
-            self.call_after_refresh(self.scroll_end, animate=False)
+            from hermes_cli.tui.widgets.message_panel import MessagePanel
+            if list(self.query(MessagePanel)):
+                self.call_after_refresh(self.scroll_end, animate=False)
         else:
             vh = getattr(getattr(self, "virtual_size", None), "height", 0)
             sy = getattr(self, "scroll_y", 0)
@@ -562,7 +568,8 @@ class OutputPanelScrollBadge(Static):
         except NoMatches:
             return ""
         if panel.scroll_state == ScrollState.ANCHORED:
-            return f"↓ {panel._anchored_pending_count} new"
+            n = panel._anchored_pending_count
+            return f"↓ {n} new" if n > 0 else "↓ scrolled"
         if panel.scroll_state == ScrollState.JUMPED:
             return "↑ jump · End to latest"
         return ""

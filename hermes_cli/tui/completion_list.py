@@ -340,6 +340,8 @@ class VirtualCompletionList(ScrollView, can_focus=True):
             self._refresh_fuzzy_color()
         if new:
             self.empty_reason = ""  # Clear reason when results arrive
+        if not new and self.has_class("--slash-only"):
+            self.remove_class("--slash-only")
         width = max((len(c.display) for c in new), default=0) + 2
         # When searching with no results yet, keep virtual_size at least 1 row
         # so the shimmer/searching indicator is visible.  Without this,

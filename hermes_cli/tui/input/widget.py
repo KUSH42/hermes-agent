@@ -157,7 +157,6 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._idle_placeholder: str = _effective_placeholder
         self._chevron_label: str = "❯ "
         self._rev_mode: bool = False
-        self._rev_query: str = ""
         self._rev_idx: int = -1
         self._input_height_override: int = 3
         self._suppress_autocomplete_once: bool = False
@@ -173,7 +172,6 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         from hermes_cli.tui.path_search import PathCandidate
         self._raw_candidates: list[PathCandidate] = []
         self._path_debounce_timer: "object | None" = None
-        self._completion_overlay_active: bool = False
         self._draft_stash: str | None = None
         self._pre_lock_disabled: bool = False
         self._locked: bool = False
@@ -184,6 +182,9 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     # --- Mode reactive (derived display state) ---
     _mode: reactive[InputMode] = reactive(InputMode.NORMAL)
     _rev_query: reactive[str] = reactive("")
+
+    # --- ASSIST axis reactive (single write site: _resolve_assist) ---
+    assist: reactive["AssistKind"] = reactive(AssistKind.NONE)
 
     # --- Error state reactive ---
     error_state: reactive[str | None] = reactive(None)
@@ -204,6 +205,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         event.stop()
         if sys.platform != "linux":
             return
+        if self.disabled:
+            return  # composer locked; ignore paste
         cmd = _primary_selection_cmd()
         if cmd is None:
             _log.debug("middle-click paste: no primary selection tool found (xclip/wl-paste)")
@@ -212,10 +215,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self,
             cmd,
             timeout=1,
-            on_success=lambda out, err, rc: (
-                self.insert(out) if (self.is_mounted and out) else None
-            ),
+            on_success=lambda out, err, rc: self._handle_paste_result(out),
         )
+
+    def _handle_paste_result(self, out: str) -> None:
+        """Handle the output of the primary selection paste command."""
+        if not self.is_mounted or self.disabled:
+            return
+        self.insert_text(out)  # insert_text() calls _sanitize_input_text() internally
 
     def on_unmount(self) -> None:
         if self._path_debounce_timer is not None:
@@ -227,21 +234,23 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def _refresh_placeholder(self) -> None:
         """Single source of truth for placeholder text.
 
-        Priority (highest→lowest): locked > rev-search > bash > completion > error > idle.
+        Priority (highest→lowest): locked > picker > rev-search > bash > completion > error > idle.
         """
         if self.disabled:
             self.placeholder = "running…  ·  Ctrl+C to interrupt"
+            return
+        if self.assist == AssistKind.PICKER:           # PICKER wins over rev-search, bash
+            self.placeholder = "(skill)"
             return
         if self._rev_mode:
             query_display = self._rev_query or ""
             self.placeholder = f"reverse-i-search: {query_display}_"
             return
-        if getattr(self, "_completion_overlay_active", False):
-            self.placeholder = "↑↓ select  ·  Tab accept  ·  Esc close"
-            return
-        if self.has_class("--bash-mode"):
+        if self.has_class("--bash-mode"):              # BASH wins over completion
             self.placeholder = "! shell mode  ·  Enter runs  ·  Ctrl+C clear"
             return
+        if self.assist == AssistKind.OVERLAY:          # COMPLETION — leave unchanged
+            return  # leave placeholder from underlying mode
         if self.error_state:
             snippet = self.error_state[:40] + ("…" if len(self.error_state) > 40 else "")
             self.placeholder = f"⚠ {snippet}  ·  Esc to clear"
@@ -280,47 +289,51 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return
         picker.dismiss()
 
-    def _resolve_assist(self, kind: AssistKind, suggestion: str = "") -> None:
-        """Resolve persistent assist state through one write site."""
-        if kind is AssistKind.NONE:
-            self.suggestion = ""
+    def _resolve_assist(self, target: AssistKind, suggestion: str = "") -> None:
+        """Single write site for self.assist."""
+        current = self.assist
+        if current == target:
+            # Idempotent: already in target state, but still update suggestion for GHOST
+            if target is AssistKind.GHOST and suggestion:
+                self.suggestion = suggestion
+                try:
+                    self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+                except Exception:
+                    # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
+                    _log.debug("_resolve_assist: could not propagate ghost state to app")
+            return
+        # --- Tear down current state ---
+        if current is AssistKind.OVERLAY:
             self._hide_completion_overlay()
+        elif current is AssistKind.PICKER:
             self._dismiss_skill_picker()
+        elif current is AssistKind.GHOST:
+            self.suggestion = ""
+        # --- Build target state ---
+        if target is AssistKind.NONE:
+            self.suggestion = ""
             try:
-                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+                self.app.status_ghost_suggestion = False
             except Exception:
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
-            return
-        if kind is AssistKind.GHOST:
-            self._hide_completion_overlay()
-            self._dismiss_skill_picker()
+        elif target is AssistKind.GHOST:
             self.suggestion = suggestion
             try:
                 self.app.status_ghost_suggestion = bool(self.suggestion.strip())
             except Exception:
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
-            return
-        if kind is AssistKind.OVERLAY:
+        elif target is AssistKind.OVERLAY:
             self.suggestion = ""
-            self._dismiss_skill_picker()
             try:
-                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
+                self.app.status_ghost_suggestion = False
             except Exception:
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
-            if self._completion_overlay_active:
-                return
             self._show_completion_overlay()
-            try:
-                self.app.status_ghost_suggestion = bool(self.suggestion.strip())
-            except Exception:
-                # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
-                _log.debug("_resolve_assist: could not propagate ghost state to app")
-            return
-        if kind is AssistKind.PICKER:
-            self._hide_completion_overlay()
+        elif target is AssistKind.PICKER:
+            self.suggestion = ""
             try:
                 self.app.status_ghost_suggestion = False
             except Exception:
@@ -330,8 +343,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 seed_filter=self._current_trigger.fragment,
                 trigger_source=SKILL_PICKER_TRIGGER_PREFIX,
             )
-            return
-        raise ValueError(f"Unknown assist kind: {kind!r}")
+        else:
+            raise ValueError(f"Unknown assist kind: {target!r}")
+        # --- Single write site ---
+        self.assist = target
 
     # --- Draft stash ---
 
@@ -782,7 +797,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             return InputMode.REV_SEARCH
         if self.has_class("--bash-mode"):
             return InputMode.BASH
-        if self._completion_overlay_active:
+        if self.assist == AssistKind.OVERLAY:
             return InputMode.COMPLETION
         return InputMode.NORMAL
 
@@ -791,6 +806,45 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         _log.debug("[MODE] %s -> %s", old.name, new.name)
         self._sync_chevron_to_mode(new)
         self._sync_legend_to_mode(new)
+
+    def watch_assist(self, old: AssistKind, new: AssistKind) -> None:
+        """Sync chevron and legend when ASSIST changes to/from PICKER."""
+        if new == AssistKind.PICKER or old == AssistKind.PICKER:
+            self._sync_picker_chevron(new == AssistKind.PICKER)
+            self._sync_picker_legend(new == AssistKind.PICKER)
+        self._refresh_placeholder()
+
+    def _sync_picker_chevron(self, picker_active: bool) -> None:
+        """Show picker glyph '$' when PICKER is active; restore mode chevron when not."""
+        if picker_active:
+            try:
+                self.query_one("#input-chevron", Label).update(RichText("$ "))
+            except Exception:
+                # NoMatches or unmounted: chevron not yet rendered — best-effort update, safe to skip.
+                pass
+        else:
+            self._sync_chevron_to_mode(self._mode)
+
+    def _sync_picker_legend(self, picker_active: bool) -> None:
+        """Show picker legend when PICKER is active; restore mode legend when not."""
+        try:
+            from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
+            legend = self.app.query_one("#input-legend-bar", InputLegendBar)
+            if picker_active:
+                legend.show_legend("picker")
+            else:
+                self._sync_legend_to_mode(self._mode)
+        except NoMatches:
+            pass  # legend bar may not be mounted yet
+        except Exception as exc:
+            _log.debug("picker legend sync failed: %s", exc, exc_info=True)
+
+    def on_completion_overlay__auto_dismiss_bubble(
+        self, ev: "object",
+    ) -> None:
+        """Handle auto-dismiss bubble from CompletionOverlay."""
+        self._resolve_assist(AssistKind.NONE)
+        ev.stop()  # type: ignore[attr-defined]
 
     def watch__rev_query(self, old: str, new: str) -> None:
         if self._rev_mode:

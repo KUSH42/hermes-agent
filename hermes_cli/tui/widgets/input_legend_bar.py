@@ -28,9 +28,10 @@ class InputLegendBar(Static):
     LEGENDS: ClassVar[dict[str, str]] = {
         "bash":       "shell mode  ·  Tab=path  ·  Enter=run  ·  Ctrl+C=clear",
         "rev_search": "rev-search  ·  ↑↓=cycle  ·  Esc=accept  ·  Ctrl+G=abort",
-        "completion": "@file  ·  Tab=insert  ·  Enter=run  ·  Esc=cancel",
+        "completion": "@file  ·  Tab=accept  ·  Enter=accept  ·  Esc=cancel",
         "ghost":      "suggestion  ·  Tab=accept  ·  →=accept",
         "locked":     "running…  ·  Ctrl+C to interrupt",
+        "picker":     "Enter run  ·  Tab paste  ·  ? view docs  ·  Esc cancel",
     }
 
     def show_legend(self, mode: str) -> None:

@@ -1,10 +1,8 @@
 """SkillPickerOverlay — two-pane modal for $skill invocation.
 
 Trigger paths:
-  1. Typing ``$`` at column 0 in InputMode.AGENT → overlay opens with filter
+  1. Typing ``$`` at column 0 in InputMode.NORMAL → overlay opens with filter
      initialised to whatever fragment followed the ``$``.
-  2. ``Alt+$`` chord in InputMode.AGENT → overlay opens, empty filter,
-     never auto-dismissed.
 
 Enter dispatches the selected skill and closes.
 Tab inserts ``$name `` into the input buffer and closes (no dispatch).
@@ -143,7 +141,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
 
     def on_mount(self) -> None:
         super().on_mount()  # ModalOverlayMixin: capture caller, push_modal, add --modal
-        self.border_title = "⚡ Skills  (Alt+$ to toggle)"
+        self.border_title = "⚡ Skills"
         self._load_candidates()
         self._rebuild_list()
         self._refresh_detail()
@@ -300,6 +298,9 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "enter":
+            focused = self.app.focused
+            if getattr(focused, "id", None) == "picker-filter":
+                return  # let Input.Submitted handler take it (do not event.stop())
             event.stop()
             self._dispatch_selected()
         elif event.key == "tab":
@@ -308,6 +309,10 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
         elif event.key == "question_mark":
             event.stop()
             self._open_skill_md()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "picker-filter":
+            self._dispatch_selected()
 
     def dismiss(self) -> None:
         """Close the mounted picker widget. Delegates to mixin dismiss_overlay."""
@@ -319,12 +324,15 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
         candidate = self._selected_candidate()
         if candidate is None:
             return
-        self.dismiss()
+        self.dismiss()  # calls dismiss_overlay() per existing delegation
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI
             inp = self.app.query_one(_HI)
+            if inp.disabled:
+                self.app._flash_hint("composer locked — skill not run")
+                return
+            inp.save_draft_stash()  # preserve draft per concept locked stash/restore
             inp.focus()
-            # Post the $name as a submitted message
             inp.value = f"${candidate.name}"
             inp.action_submit()
         except Exception:

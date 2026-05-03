@@ -50,11 +50,11 @@ class _PathCompletionMixin:
         overlay.set_class(slash_only, "--slash-only")
 
     def _show_completion_overlay(self) -> None:
+        """Show the completion overlay (CSS/DOM side effects only; does NOT write self.assist)."""
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
         except NoMatches:
             return
-        self._completion_overlay_active = True  # type: ignore[attr-defined]
         overlay.add_class("--visible")
         try:
             self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
@@ -67,11 +67,11 @@ class _PathCompletionMixin:
             _log.debug("completion overlay show mode sync skipped: %s", exc, exc_info=True)
 
     def _hide_completion_overlay(self) -> None:
+        """Hide the completion overlay (CSS/DOM side effects only; does NOT write self.assist)."""
         if self._path_debounce_timer is not None:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
         self._set_searching(False)
-        self._completion_overlay_active = False  # type: ignore[attr-defined]
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
         except NoMatches:
@@ -89,7 +89,8 @@ class _PathCompletionMixin:
             _log.debug("completion overlay hide mode sync skipped: %s", exc, exc_info=True)
 
     def _completion_overlay_visible(self) -> bool:
-        return self._completion_overlay_active  # type: ignore[attr-defined]
+        from ._assist import AssistKind
+        return self.assist == AssistKind.OVERLAY  # type: ignore[attr-defined]
 
     def _completion_overlay_slash_only(self) -> bool:
         try:
@@ -190,8 +191,8 @@ class _PathCompletionMixin:
             self._path_debounce_timer.stop()
             self._path_debounce_timer = None
         self._set_overlay_mode(slash_only=False)
-        self._push_to_list([])
-        self._set_searching(True)
+        self._set_searching(True)           # shimmer FIRST
+        self._push_to_list([])              # clear list under shimmer
         from ._assist import AssistKind
         self._resolve_assist(AssistKind.OVERLAY)  # type: ignore[attr-defined]
         self._path_debounce_timer = self.set_timer(  # type: ignore[attr-defined]

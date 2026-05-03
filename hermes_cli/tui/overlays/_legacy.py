@@ -262,8 +262,8 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             _log.warning("SessionOverlay.action_new_session: handle_tui_command failed", exc_info=True)
 
     def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
-        self.dismiss_overlay()
+        """Public close helper — delegates to action_dismiss."""
+        self.action_dismiss()
 
     def action_dismiss(self) -> None:
         self.dismiss_overlay()

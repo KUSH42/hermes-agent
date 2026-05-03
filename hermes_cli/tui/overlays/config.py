@@ -312,8 +312,8 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
     # ── Bindings ──────────────────────────────────────────────────────────
 
     def dismiss(self) -> None:
-        """Public close helper; delegates to dismiss_overlay()."""
-        self.dismiss_overlay()
+        """Public close helper — delegates to action_dismiss."""
+        self.action_dismiss()
 
     def action_dismiss(self) -> None:
         self.dismiss_overlay()

@@ -113,11 +113,11 @@ class ReferenceModal(ModalOverlayMixin, Widget):
                 pass  # focus() unavailable — best-effort, non-fatal
 
     def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
-        self.dismiss_overlay()
+        """Public close helper — delegates to action_dismiss (regression contract)."""
+        self.action_dismiss()
 
     def action_dismiss(self) -> None:
-        """Legacy action name — delegates to dismiss_overlay (via mixin action_dismiss_modal)."""
+        """Action name — delegates to dismiss_overlay."""
         self.dismiss_overlay()
 
 

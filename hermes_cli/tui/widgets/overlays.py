@@ -538,8 +538,8 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
             pass
 
     def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
-        self.dismiss_overlay()
+        """Public close helper — delegates to action_dismiss."""
+        self.action_dismiss()
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""

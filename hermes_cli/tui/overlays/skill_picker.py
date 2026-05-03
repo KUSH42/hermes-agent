@@ -318,7 +318,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
     def dismiss(self) -> None:
         """Close the mounted picker widget and restore focus immediately."""
         try:
-            self.remove_class("--modal")
+            self.remove_class("--modal")  # il-m1: owned by SkillPickerOverlay.dismiss (ephemeral widget override)
         except Exception:
             _log.debug("SkillPickerOverlay.dismiss: remove_class failed", exc_info=True)
         target = None

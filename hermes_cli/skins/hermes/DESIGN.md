@@ -2,6 +2,7 @@
 version: alpha
 name: hermes
 description: Hermes — gold accent on near-black
+stream_effect: decrypt
 colors:
   banner-border: '#CD7F32'
   banner-title: '#FFD700'

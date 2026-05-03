@@ -2,6 +2,7 @@
 version: alpha
 name: matrix
 description: The Matrix — dark void and hacker green phosphor
+stream_effect: glitch_morph
 colors:
   banner-accent: '#00ff41'
   banner-border: '#00a839'

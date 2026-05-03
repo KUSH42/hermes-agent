@@ -2,6 +2,7 @@
 version: alpha
 name: charizard
 description: Volcanic orange on black
+stream_effect: glow_settle
 colors:
   banner-border: '#C75B1D'
   banner-title: '#FFD39A'

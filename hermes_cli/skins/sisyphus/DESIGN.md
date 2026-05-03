@@ -2,6 +2,7 @@
 version: alpha
 name: sisyphus
 description: Stone-grey monochrome with a single warm tier accent
+stream_effect: generator
 colors:
   banner-border: '#B7B7B7'
   banner-title: '#F5F5F5'

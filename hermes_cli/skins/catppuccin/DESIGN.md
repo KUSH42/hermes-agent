@@ -2,6 +2,7 @@
 version: alpha
 name: catppuccin
 description: Catppuccin Mocha — soft pastel dark theme with mauve/lavender accents
+stream_effect: breathe
 colors:
   foreground: '#cdd6f4'
   background: '#1e1e2e'

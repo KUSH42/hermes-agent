@@ -2,6 +2,7 @@
 version: alpha
 name: tokyo-night
 description: Tokyo Night — deep navy dark theme with blue-purple neon accents
+stream_effect: nier
 colors:
   foreground: '#c0caf5'
   background: '#1a1b26'

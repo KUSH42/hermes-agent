@@ -2,6 +2,7 @@
 version: alpha
 name: poseidon
 description: Deep ocean blue with cyan highlights
+stream_effect: cascade
 colors:
   banner-border: '#2A6FB9'
   banner-title: '#A9DFFF'

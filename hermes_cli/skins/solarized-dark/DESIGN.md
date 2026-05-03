@@ -2,6 +2,7 @@
 version: alpha
 name: solarized-dark
 description: Solarized Dark — precision-crafted warm dark theme with teal/blue/amber
+stream_effect: shimmer
   accents
 colors:
   foreground: '#839496'

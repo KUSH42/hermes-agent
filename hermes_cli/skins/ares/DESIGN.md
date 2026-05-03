@@ -2,6 +2,7 @@
 version: alpha
 name: ares
 description: War-room bronze on charcoal
+stream_effect: flash
 colors:
   banner-border: '#9F1C1C'
   banner-title: '#C7A96B'

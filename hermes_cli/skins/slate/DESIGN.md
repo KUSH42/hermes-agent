@@ -2,6 +2,7 @@
 version: alpha
 name: slate
 description: Cool blue-grey with steel highlights
+stream_effect: gradient_tail
 colors:
   banner-border: '#4169e1'
   banner-title: '#7eb8f6'

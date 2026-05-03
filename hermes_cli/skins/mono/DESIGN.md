@@ -2,6 +2,7 @@
 version: alpha
 name: mono
 description: Pure greyscale — no chromatic accent
+stream_effect: none
 colors:
   banner-border: '#555555'
   banner-title: '#e6edf3'

@@ -5113,7 +5113,15 @@ class HermesCLI:
 
         def _tick() -> None:
             from textual.css.query import NoMatches
-            from hermes_cli.tui.widgets import StartupBannerWidget
+            from hermes_cli.tui.widgets import StartupBannerWidget, STARTUP_BANNER_READY
+            if not STARTUP_BANNER_READY.is_set():
+                # Widget unmounted between cache fill and this tick; clear cache and stop.
+                _widget_cache.clear()
+                if timer_ref:
+                    timer_ref[0].stop()
+                playback_done.set()
+                logger.debug("TTE: STARTUP_BANNER_READY cleared mid-playback; stopping tick")
+                return
             skipping = STARTUP_TTE_SKIP.is_set()
             exhausted = idx[0] >= len(anim_frames)
             if skipping:

@@ -335,8 +335,19 @@ class ExecuteCodeBlock(StreamingToolBlock):
 
         # Flush and stop pacer (canonical code supersedes streamed per-line output)
         if self._pacer is not None:
-            self._pacer.flush()
-            self._pacer.stop()
+            try:
+                self._pacer.flush()
+                self._pacer.stop()
+            except Exception:
+                _log.exception(
+                    "ExecuteCodeBlock.finalize_code: pacer flush/stop failed; "
+                    "revealing OutputSection directly"
+                )
+                # Bypass pacer; ensure OutputSection is visible so the user is not stuck
+                try:
+                    self.query_one(OutputSection).display = True
+                except NoMatches:
+                    pass  # OutputSection not yet mounted — safe to ignore during early finalization
 
         # Record canonical code lines for collapse threshold
         if code:

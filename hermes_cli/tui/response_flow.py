@@ -638,6 +638,13 @@ class ResponseFlowEngine:
         self._prose_callback: "Callable[[str], None] | None" = None
         self._code_fence_buffer: list[str] = []
         self._clf: _LineClassifier = _LineClassifier()
+        self._dropped_citation_count: int = 0
+
+    def _reset_fence_state(self) -> None:
+        """Drop fence-timer + per-fence config. Idempotent. Safe from any state."""
+        self._fence_opened_at = None
+        self._fence_char = "`"   # reset to backtick default; avoids stale char on next fence
+        self._fence_depth = 3    # reset to default; avoids stale depth on next fence
 
     def __init__(self, *, panel: "MessagePanel") -> None:
         self._init_fields()
@@ -699,6 +706,7 @@ class ResponseFlowEngine:
         Manages _partial so flush() can drain it at end-of-turn.
         """
         if self._detached:
+            self._reset_fence_state()
             return
         if "\n" in chunk:
             self._clear_partial_preview()
@@ -707,13 +715,27 @@ class ResponseFlowEngine:
             self._partial += chunk
         if self._partial:
             clean = _ORPHANED_CSI_RE.sub("", self._partial)
+            if clean != self._partial:
+                _log.debug(
+                    "[STREAM-BUF] orphan-CSI suppressed: len=%d → %d",
+                    len(self._partial), len(clean),
+                )
+                self._partial = clean  # keep _partial in sync so flush() sees the cleaned version
             if clean:
                 self._route_partial(clean)
 
     def _route_partial(self, fragment: str) -> None:
-        if self._state in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
-            if self._active_block is not None:
-                self._active_block.feed_partial(fragment)
+        if self._state not in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
+            return
+        block = self._active_block
+        if block is None or not getattr(block, "is_mounted", True):
+            return
+        try:
+            block.feed_partial(fragment)
+        except Exception:
+            _log.exception("_route_partial: feed_partial raised (block likely unmounted); clearing")
+            self._reset_fence_state()
+            self._active_block = None
 
     def _clear_partial_preview(self) -> None:
         if self._state in ("IN_CODE", "IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
@@ -736,6 +758,7 @@ class ResponseFlowEngine:
                         "footnote buffer cap (%d entries) reached; dropping new entry %r",
                         _MAX_FOOTNOTES, label,
                     )
+                    self._footnote_def_open = None  # critical: continuations no longer routed
                     return True
                 self._footnote_order.append(label)
             self._footnote_defs[label] = body
@@ -757,6 +780,7 @@ class ResponseFlowEngine:
                     "citation buffer cap (%d entries) reached; dropping citation %d",
                     _MAX_CITATIONS, _n,
                 )
+                self._dropped_citation_count += 1
                 return True
             self._cite_entries[_n] = (title, url)
             if _n not in self._cite_order:
@@ -896,6 +920,7 @@ class ResponseFlowEngine:
 
     def _handle_unknown_state(self, raw: str) -> bool:
         """Recover from an unknown _state. Logs once and falls through to prose."""
+        self._reset_fence_state()  # STR-1: reset fence timer + config unconditionally at entry
         _log.warning(
             "response_flow: unknown _state=%r; resetting to NORMAL", self._state
         )
@@ -910,7 +935,6 @@ class ResponseFlowEngine:
                 )
         self._state = "NORMAL"
         self._active_block = None
-        self._fence_opened_at = None
         return False  # caller falls through to NORMAL classification + prose
 
     def _dispatch_non_normal_state(self, raw: str) -> bool:
@@ -938,7 +962,7 @@ class ResponseFlowEngine:
                     _lang,
                     _elapsed_ms,
                 )
-                self._fence_opened_at = None
+                self._reset_fence_state()
                 return True
             self._active_block.append_line(raw)
             return True
@@ -1250,11 +1274,12 @@ class ResponseFlowEngine:
             self._active_block.flush()  # marks FLUSHED, stops spinner
             self._active_block = None
             self._state = "NORMAL"
-            self._fence_opened_at = None
+            self._reset_fence_state()
         elif self._active_block is not None and self._state in ("IN_INDENTED_CODE", "IN_SOURCE_LIKE"):
             self._active_block.complete(self._skin_vars)
             self._active_block = None
             self._state = "NORMAL"
+            self._reset_fence_state()
         # Orphaned state: _active_block was already cleared by dispatch but
         # _state was not reset.  Reset BEFORE _flush_block_buf below so any
         # state-sensitive buffer logic sees NORMAL.  IN_MATH is handled by the
@@ -1284,8 +1309,10 @@ class ResponseFlowEngine:
             self._mount_sources_bar()   # captures entries before clear below
         self._cite_entries.clear()
         self._cite_order.clear()
+        self._dropped_citation_count = 0
         self._emitted_media_urls.clear()
         self._emoji_mounts = 0
+        self._last_prose_plain = None  # reset per-turn; avoids cross-turn DOUBLE-EMIT false-positives
 
     def _mount_sources_bar(self) -> None:
         """Mount SourcesBar below the panel after the next refresh."""
@@ -1293,9 +1320,11 @@ class ResponseFlowEngine:
         entries = [(n, *self._cite_entries[n]) for n in self._cite_order]
         panel = self._panel
 
+        dropped = self._dropped_citation_count
+
         def _do_mount() -> None:
             try:
-                panel.mount(SourcesBar(entries))
+                panel.mount(SourcesBar(entries, dropped=dropped))
             except Exception:
                 _log.warning("_mount_sources_bar: failed to mount SourcesBar", exc_info=True)
 
@@ -1607,7 +1636,11 @@ class ReasoningFlowEngine(ResponseFlowEngine):
         # tests — fall back to the previous defaults.
         _app_b1 = getattr(panel, "app", None)
         if _app_b1 is not None and hasattr(_app_b1, "get_css_variables"):
-            self._skin_vars = _app_b1.get_css_variables()
+            try:
+                self._skin_vars = _app_b1.get_css_variables() or {}
+            except Exception:
+                _log.exception("ReasoningFlowEngine: get_css_variables failed; defaulting to empty")
+                self._skin_vars = {}
         else:
             self._skin_vars = {}
         self._pygments_theme = self._skin_vars.get("preview-syntax-theme", "monokai")

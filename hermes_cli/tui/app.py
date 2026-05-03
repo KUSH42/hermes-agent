@@ -2154,8 +2154,8 @@ class HermesApp(App):
     def _hide_completion_overlay_if_present(self) -> None:
         """Hide the completion overlay when a choice overlay activates."""
         try:
-            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
-            self.query_one(_CO).remove_class("--visible")
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).dismiss_completion_overlay()
         except NoMatches:
             pass
 

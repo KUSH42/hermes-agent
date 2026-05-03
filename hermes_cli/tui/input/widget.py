@@ -279,6 +279,15 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._locked = False
             self.remove_class("--locked")
         self._refresh_placeholder()
+        try:
+            self._mode = self._compute_mode()
+        except AttributeError as exc:
+            _log.debug("lock mode sync skipped: %s", exc, exc_info=True)
+
+    def dismiss_completion_overlay(self) -> None:
+        """Dismiss the completion overlay through the single-write-site."""
+        if getattr(self, "assist", AssistKind.NONE) is AssistKind.OVERLAY:
+            self._resolve_assist(AssistKind.NONE)
 
     def _dismiss_skill_picker(self) -> None:
         """Dismiss the mounted skill picker when present."""
@@ -814,6 +823,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._sync_picker_chevron(new == AssistKind.PICKER)
             self._sync_picker_legend(new == AssistKind.PICKER)
         self._refresh_placeholder()
+        try:
+            self._mode = self._compute_mode()
+        except AttributeError as exc:
+            _log.debug("assist watch mode sync skipped: %s", exc, exc_info=True)
 
     def _sync_picker_chevron(self, picker_active: bool) -> None:
         """Show picker glyph '$' when PICKER is active; restore mode chevron when not."""

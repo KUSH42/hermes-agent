@@ -24,15 +24,15 @@ FPS="${FPS:-60}"
 PALETTE="${PALETTE:-#ff0080,#ffaa00,#00ffcc,#8800ff}"
 HUE_SHIFT="${HUE_SHIFT:-1.0}"
 
-# 192 cells × 2 dots = 384 px wide; 52 rows × 4 dots = 208 px tall (braille canvas)
-BRAILLE_W=384
-BRAILLE_H=208
+# demo_anim.py --width/--height take CELLS (it multiplies ×2/×4 internally for braille pixels).
+CELLS_W=192
+CELLS_H=52
 
 ENGINES="matrix_rain,rotating,dna,triple_helix,torus_3d,wireframe_cube,lissajous_weave,aurora_ribbon,plasma,fluid_field,neural_pulse,mandala_bloom,kaleidoscope,strange_attractor"
 
 echo "=== TAKE DRAWBRAILLE: 192×52 engine showcase ==="
 echo "    font_size=$FONT_SIZE  per_engine=${PER_ENGINE_S}s  fps=$FPS"
-echo "    canvas: 192×52 cells (${BRAILLE_W}×${BRAILLE_H} braille pixels)"
+echo "    canvas: ${CELLS_W}×${CELLS_H} cells"
 echo "    palette: $PALETTE  hue-shift: $HUE_SHIFT"
 echo "    engines: $ENGINES"
 echo
@@ -46,14 +46,14 @@ kitty --override font_size="$FONT_SIZE" \
       --override remember_window_size=no \
       --override initial_window_width=1920 \
       --override initial_window_height=1080 \
-      --hold bash -lc "cd /home/xush/.hermes && python3 hermes-agent/scripts/demo_anim.py \
+      --hold bash -lc "cd /home/xush/.hermes/hermes-agent && python3 scripts/demo_anim.py \
           --engines '$ENGINES' \
           --duration $PER_ENGINE_S \
           --fps $FPS \
           --multi-color '$PALETTE' \
           --hue-shift $HUE_SHIFT \
-          --width $BRAILLE_W \
-          --height $BRAILLE_H" &
+          --width $CELLS_W \
+          --height $CELLS_H" &
 KPID=$!
 
 echo "    waiting 2s for kitty to render first frame..."

@@ -302,6 +302,7 @@ PlanPanel _BudgetSection {
 /* SS-3: base height: auto so ThinkingWidget doesn't stretch when inactive */
 ThinkingWidget {
     height: auto;
+    display: none;
 }
 
 /* When the app has an active plan, force ThinkingWidget to LINE mode */
@@ -311,9 +312,11 @@ HermesApp.plan-active ThinkingWidget.--active {
 
 /* D-3: fade-out transition — opacity start state declared so Textual can animate */
 ThinkingWidget.--active {
+    display: block;
     opacity: 1;
 }
 ThinkingWidget.--fading {
+    display: block;
     opacity: 0.0;
     transition: opacity 150ms in_out_cubic;
 }

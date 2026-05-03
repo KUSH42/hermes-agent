@@ -4711,12 +4711,13 @@ class HermesCLI:
             color_system="truecolor",
             width=capture_width,
         )
-        app_bg = ""
-        try:
-            if app is not None and hasattr(app, "get_css_variables"):
-                app_bg = app.get_css_variables().get("app-bg") or ""
-        except Exception:
-            logger.debug("startup banner app-bg lookup failed", exc_info=True)
+        # Do not pass bg_color to build_welcome_banner: when an explicit background
+        # is set on the Rich Panel, it emits \033[48;2;...m codes throughout the
+        # capture.  Even after _strip_ansi_bg, the residual \033[0m reset codes can
+        # resolve to black in Textual's rendering path rather than transparent,
+        # producing a darker inner-panel tint vs the widget's CSS background.
+        # With bg_color="", Rich renders the Panel with no background codes at all;
+        # the widget's DEFAULT_CSS `background: $app-bg` handles it uniformly.
         hero_renderable = Text.from_ansi(hero_text) if hero_text is not None else None
         if hero_renderable is None and print_hero:
             # Startup banner rendering goes through Static/Textual instead of the
@@ -4741,7 +4742,6 @@ class HermesCLI:
             print_hero=print_hero if hero_renderable is None else False,
             print_logo=False,  # TUI renders inside a widget; block-letter logo doesn't belong here
             hero_renderable=hero_renderable,
-            bg_color=app_bg,
         )
         logger.info("RENDER-BANNER: build_welcome +%.0fms", (time.monotonic() - _bw_t0) * 1000)
         _ex_t0 = time.monotonic()
@@ -5426,10 +5426,11 @@ class HermesCLI:
             )
             producer_thread.start()
 
-        # _apply_preflight must be enqueued AFTER template_cell[0] is populated:
-        # the event loop may process it at any time after call_later() returns,
-        # including before the next line in this thread executes.
-        app.call_later(_apply_preflight)
+        # Pre-flight placeholder suppressed: showing a static blank-hero frame
+        # before TTE starts produces a visible flash of placeholder chars.
+        # The banner stays at its static build_welcome_banner render until the
+        # first real TTE frame arrives.
+        # app.call_later(_apply_preflight)  # suppressed
 
         # Wait for the first batch before handing off to the event loop.
         if not _cache_hit:

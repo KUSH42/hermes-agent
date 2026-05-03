@@ -69,6 +69,7 @@ class TTEWidget(Widget):
         params: dict[str, object] | None = None,
     ) -> None:
         """Background worker — generates TTE frames and pushes to UI."""
+        done_event = self._done_event  # capture once; avoids racing with play()/stop()
         try:
             from hermes_cli.tui.tte_runner import iter_frames
             from textual import constants as _tc
@@ -89,9 +90,8 @@ class TTEWidget(Widget):
         finally:
             if self.is_mounted:
                 self.app.call_from_thread(self.remove_class, "active")
-            if self._done_event is not None:
-                self._done_event.set()
-                self._done_event = None
+            if done_event is not None:
+                done_event.set()
 
     def _update_frame(self, rich_text: Text) -> None:
         """Update frame widget on event loop."""

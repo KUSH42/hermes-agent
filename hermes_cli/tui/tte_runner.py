@@ -224,14 +224,18 @@ def _apply_effect_params(
     effect: object,
     color_cls: type | None,
     params: dict[str, object] | None,
-) -> None:
-    """Validate and apply supported config params to an instantiated effect."""
+) -> bool:
+    """Validate and apply supported config params to an instantiated effect.
+
+    Returns True if a ``final_gradient_stops`` override was supplied (skin
+    gradient should be skipped); False otherwise.
+    """
     if not params:
-        return
+        return False
     cfg = getattr(effect, "effect_config", None)
     if cfg is None:
-        print(f"  Effect {effect_name!r} does not expose configurable startup params.")
-        return
+        _log.warning("tte_runner: effect %r does not expose configurable startup params", effect_name)
+        return False
     known_keys = set(getattr(cfg, "__dict__", {}).keys())
     known_keys.update(getattr(type(cfg), "__dict__", {}).keys())
     has_colors_override = False
@@ -239,17 +243,17 @@ def _apply_effect_params(
     for key, raw in params.items():
         if key == "final_gradient_stops":
             # Allow users to override skin-derived colors
-            print(f"  Using custom colors from config (will override skin palette).")
+            _log.warning("tte_runner: using custom colors from config for %r (overrides skin palette)", effect_name)
             has_colors_override = True
             continue
         if key == "parser_spec" or key not in known_keys:
-            print(f"  Ignoring unknown {effect_name} param: {key}")
+            _log.warning("tte_runner: ignoring unknown %r param: %r", effect_name, key)
             continue
         current = getattr(cfg, key)
         try:
             value = _coerce_effect_param(raw, current, color_cls)
         except (TypeError, ValueError):
-            print(f"  Ignoring invalid {effect_name} param {key!r}: {raw!r}")
+            _log.warning("tte_runner: ignoring invalid %r param %r: %r", effect_name, key, raw)
             continue
         setattr(cfg, key, value)
 

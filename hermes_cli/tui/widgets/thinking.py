@@ -504,7 +504,10 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._cfg_long_wait_engine = thinking.get("long_wait_engine", "wave_function")
             self._cfg_long_wait_effect = thinking.get("long_wait_effect", "shimmer")
         except Exception:
-            pass  # use defaults
+            _log.warning(
+                "ThinkingWidget._load_config: config read failed, using defaults",
+                exc_info=True,
+            )
 
     def _resolve_mode(self, explicit: ThinkingMode | None) -> ThinkingMode:
         if explicit is not None:

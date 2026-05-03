@@ -4717,27 +4717,64 @@ class HermesCLI:
         Returns a dict containing template line Texts and the hero insertion
         rectangle so per-frame updates only replace the animated hero region.
         """
+        from hermes_cli.tui._banner_geo_cache import geo_cache_key, load_geo, save_geo, gc_geo_cache
+        from hermes_cli.skin_engine import get_active_skin_name
+
         sanitized_hero = _sanitize_startup_hero_text(plain_hero)
         hero_lines = sanitized_hero.splitlines() or [sanitized_hero]
         from rich.cells import cell_len as _cell_len
         hero_width = max((_cell_len(line) for line in hero_lines), default=1)
         hero_height = len(hero_lines) + 1  # +1 padding row
+
+        # Compute cache key inputs.
+        # wide_layout / tall_layout must mirror the logo-gate in banner.py:891-892,
+        # which reads shutil.get_terminal_size() directly (not panel_w / capture_width).
+        term_size = shutil.get_terminal_size()
+        term_width = term_size.columns
+        term_rows = term_size.lines
+        app = _hermes_app
+        panel_w = int(getattr(app, "_startup_output_panel_width", 0) or 0) or term_width
+        wide_layout = term_width >= 95
+        tall_layout = term_rows >= 20
+        try:
+            skin_name = get_active_skin_name()
+        except Exception:
+            skin_name = "default"
+
+        _geo_key = geo_cache_key(panel_w, skin_name, wide_layout, tall_layout)
+        cached_geo = load_geo(_geo_key)
+
+        # Always render the template (needed for TTE background lines).
         placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in range(hero_height)]
         placeholder_text = "\n".join(placeholder_lines)
         template = self._render_startup_banner_text(hero_text=placeholder_text)
         template_lines = list(template.split("\n", allow_blank=True))
 
-        start_row = None
-        start_col = None
+        if cached_geo is not None:
+            # Cache hit: use stored position, skip the scan loop.
+            logger.debug("banner geo cache hit key=%s", _geo_key)
+            return {
+                "lines": template_lines,
+                "hero_row": cached_geo["hero_row"],
+                "hero_col": cached_geo["hero_col"],
+                "hero_width": hero_width,
+                "hero_height": hero_height,
+            }
+
+        # Cache miss: scan for placeholder position.
+        start_row = start_col = None
         for row, line in enumerate(template_lines):
             idx = line.plain.find(placeholder_lines[0])
             if idx != -1:
-                start_row = row
-                start_col = idx
+                start_row, start_col = row, idx
                 break
 
         if start_row is None or start_col is None:
             return None
+
+        geo = {"hero_row": start_row, "hero_col": start_col}
+        save_geo(_geo_key, geo)
+        threading.Thread(target=gc_geo_cache, daemon=True).start()
 
         return {
             "lines": template_lines,

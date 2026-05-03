@@ -34,8 +34,8 @@ for skin in "${SKINS[@]}"; do
     sleep 0.4
     kill "$HPID" 2>/dev/null
     wait "$HPID" 2>/dev/null
-    # restore terminal: exit alt-screen, reset attributes, sane mode
-    printf '\033[?1049l\033[0m\033[?25h'
+    # restore terminal: full reset flushes any buffered TTE frames
+    printf '\033c\033[?1049l\033[?25h' >/dev/tty
     stty sane 2>/dev/null
     sleep "$GAP_S"
 done

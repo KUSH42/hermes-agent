@@ -23,7 +23,6 @@ from hermes_cli.tui.overlays._legacy import (
     _cfg_set_nested,
     _SessionResumedBanner,
     _SessionRow,
-    _dismiss_overlay_and_focus_input,
 )
 
 # R3 Phase C: HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay
@@ -100,5 +99,4 @@ __all__ = [
     "YoloConfirmOverlay",
     "_SessionResumedBanner",
     "_SessionRow",
-    "_dismiss_overlay_and_focus_input",
 ]

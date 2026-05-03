@@ -28,6 +28,7 @@ from textual.widget import Widget
 from textual.widgets import Input, Static
 
 from .renderers import CopyableRichLog
+from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -394,7 +395,7 @@ class KeymapOverlay(Widget):
 # HistorySearchOverlay
 # ---------------------------------------------------------------------------
 
-class HistorySearchOverlay(Widget):
+class HistorySearchOverlay(ModalOverlayMixin, Widget):
     """Ctrl+F history search overlay.
 
     Shows a fuzzy-searchable list of past conversation turns. Ctrl+F opens
@@ -457,8 +458,20 @@ class HistorySearchOverlay(Widget):
         yield VerticalScroll(id="history-result-list")
         yield Static("", id="history-status")
 
+    def on_mount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per open_search() / dismiss_overlay() cycle.
+        pass
+
+    def on_unmount(self) -> None:
+        # Permanent widget: never removed from DOM. ModalOverlayMixin.on_unmount must NOT
+        # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
+        pass
+
     def open_search(self) -> None:
         """Build frozen snapshot index, show overlay, focus search input."""
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         # Read max_results from config if available
         try:
             cfg = self.app.cli._cfg or {}
@@ -483,7 +496,12 @@ class HistorySearchOverlay(Widget):
         except NoMatches:
             pass
         self._render_results("")
-        self.add_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
+        self._capture_focus_caller()
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("HistorySearchOverlay.open_search: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by open_search (permanent widget override)
         try:
             self.query_one("#history-search-input", Input).focus()
         except NoMatches:
@@ -491,10 +509,16 @@ class HistorySearchOverlay(Widget):
 
     def dismiss(self) -> None:
         """Public close helper for widget overlays."""
-        self.action_dismiss()
+        self.dismiss_overlay()
 
     def action_dismiss(self) -> None:
         """Hide overlay, restore hint, return focus to HermesInput."""
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        # Capture focus target FIRST — before any reactive/state mutation that could shift focus
+        target = self._restore_focus_to()
         # Save current query to _query_history (non-empty, deduped)
         try:
             query = self.query_one("#history-search-input", Input).value.strip()
@@ -503,7 +527,7 @@ class HistorySearchOverlay(Widget):
                     self._query_history.remove(query)
                 self._query_history.append(query)
         except Exception:
-            pass
+            _log.debug("HistorySearchOverlay.dismiss_overlay: query-history save failed", exc_info=True)
         # Cancel any pending debounce so _render_results() doesn't run
         # against a hidden overlay, removing and re-mounting DOM children.
         if self._debounce_handle is not None:
@@ -513,18 +537,23 @@ class HistorySearchOverlay(Widget):
         try:
             self.app.highlighted_candidate = None
         except Exception:
-            _log.debug("overlay ContentSwitcher toggle failed", exc_info=True)
-        self.remove_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
+            _log.debug("HistorySearchOverlay.dismiss_overlay: highlighted_candidate clear failed", exc_info=True)
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             from .status_bar import HintBar
             self.app.query_one(HintBar).hint = self._saved_hint
         except NoMatches:
             pass
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+            _log.debug("HistorySearchOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("HistorySearchOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
     def _build_index(self) -> None:
         """Build a frozen snapshot of current turns. DOM access — event loop only."""

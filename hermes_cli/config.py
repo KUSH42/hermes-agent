@@ -937,6 +937,7 @@ DEFAULT_CONFIG = {
             "reasoning": True,            # apply pips/badges inside ReasoningPanel
             "turn_boundary_always": True, # subtle rule above UserMessagePanel even outside browse mode
             "minimap_default": False,     # \ toggles; this controls initial state
+            "minimap_viewport_rect": True, # show viewport-position tint band on the minimap
             "streaming_flash": True,      # CSS class flash on STREAMING -> ready transition
         },
         # Skill namespace migration phase: 1=no warning, 2=deprecation warning for /skill-name,

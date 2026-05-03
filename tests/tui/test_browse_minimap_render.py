@@ -34,6 +34,8 @@ def _make_minimap_with_mock_app(anchors=None, cursor=0, vh=24, virtual_h=100):
     mm._accent_cached = "#7aa2f7"
     mm._accent_dirty = False
     mm._full_miss_warned = False
+    mm._viewport_rect_enabled = False  # disable for existing render tests (no scroll_y needed)
+    mm._viewport_bg_cached = "#1e2030"
 
     mock_app = MagicMock()
     mock_app._browse_anchors = anchors or []
@@ -43,6 +45,7 @@ def _make_minimap_with_mock_app(anchors=None, cursor=0, vh=24, virtual_h=100):
     mock_output = MagicMock()
     from textual.geometry import Size
     type(mock_output).virtual_size = PropertyMock(return_value=Size(1, virtual_h))
+    type(mock_output).scroll_y = PropertyMock(return_value=0)
     mock_app.query_one.return_value = mock_output
 
     mock_size = MagicMock()

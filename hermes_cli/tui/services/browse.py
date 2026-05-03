@@ -75,7 +75,7 @@ class BrowseService(AppService):
             await output.mount(_BM())
             app._browse_minimap = True
             return True
-        except Exception:
+        except (NoMatches, AttributeError, RuntimeError):
             _log.warning("_mount_minimap: failed", exc_info=True)
             app._browse_minimap = False
             return False

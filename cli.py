@@ -2365,6 +2365,7 @@ class HermesCLI:
         self._browse_markers_enabled: bool = bool(_bm_cfg.get("enabled", True))
         self._browse_reasoning_markers: bool = bool(_bm_cfg.get("reasoning", True))
         self._browse_minimap_default: bool = bool(_bm_cfg.get("minimap_default", False))
+        self._browse_minimap_viewport_rect: bool = bool(_bm_cfg.get("minimap_viewport_rect", True))
         self._browse_streaming_flash: bool = bool(_bm_cfg.get("streaming_flash", True))
         self._browse_turn_boundary_always: bool = bool(_bm_cfg.get("turn_boundary_always", True))
         # AssistantNameplate config
@@ -14702,6 +14703,7 @@ class HermesCLI:
             _tui_app._browse_markers_enabled = self._browse_markers_enabled
             _tui_app._browse_reasoning_markers = self._browse_reasoning_markers
             _tui_app._browse_minimap_default = self._browse_minimap_default
+            _tui_app._browse_minimap_viewport_rect = self._browse_minimap_viewport_rect
             _tui_app._browse_streaming_flash = self._browse_streaming_flash
             _tui_app._browse_turn_boundary_always = self._browse_turn_boundary_always
             _tui_app._nameplate_effects = self._nameplate_effects

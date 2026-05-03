@@ -47,14 +47,12 @@ def _density_cycle() -> "tuple":
     return _DENSITY_CYCLE
 
 
-# DC-3: concept §H5 threshold — HERO requires at least this many body rows.
-_HERO_MIN_BODY_ROWS: int = 5
-
 _APP_BG_FALLBACK: str = "#1e1e2e"  # used when app-bg / background CSS vars are missing
 
 
 def _is_hero_row_legal(body_lines: int) -> bool:
-    return body_lines >= _HERO_MIN_BODY_ROWS
+    from hermes_cli.tui.tool_panel.layout_resolver import THRESHOLDS
+    return body_lines >= THRESHOLDS["HERO_MIN_BODY_ROWS"]
 
 
 def _copy_text_via_test_double(app: object, text: str) -> None:
@@ -194,7 +192,7 @@ class _ToolPanelActionsMixin:
 
     def _hero_rejection_reason(self, inp: "object") -> str:
         """Explain why a HERO tier request was downgraded."""
-        from hermes_cli.tui.tool_panel.layout_resolver import _HERO_KINDS, _HERO_MAX_LINES
+        from hermes_cli.tui.tool_panel.layout_resolver import _HERO_KINDS, THRESHOLDS
         _kind = getattr(inp, "kind", None)
         if _kind not in _HERO_KINDS:
             kind_name = _kind.value if _kind is not None else "unclassified"
@@ -202,8 +200,9 @@ class _ToolPanelActionsMixin:
         _body = getattr(inp, "body_line_count", 0)
         if _body == 0:
             return "no body content"
-        if _body > _HERO_MAX_LINES:
-            return f"body too long ({_body} > {_HERO_MAX_LINES})"
+        _hero_max = THRESHOLDS["HERO_MAX_LINES"]
+        if _body > _hero_max:
+            return f"body too long ({_body} > {_hero_max})"
         _w = getattr(inp, "width", 0)
         _resolver = getattr(self, "_resolver", None)  # type: ignore[attr-defined]
         _hero_min = getattr(_resolver, "hero_min_width", 0) if _resolver is not None else 0

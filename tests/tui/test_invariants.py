@@ -1699,3 +1699,72 @@ class TestIL10ERRStickyAggregation:
         streaming_child = types.SimpleNamespace(_view_state=types.SimpleNamespace(state=ToolCallState.STREAMING))
         result = _recompute_group_state([streaming_child], current_state=ToolGroupState.DONE)
         assert result is ToolGroupState.DONE
+
+
+# ---------------------------------------------------------------------------
+# IL-11: Viewport pressure gates (TB-H3)
+# ---------------------------------------------------------------------------
+
+class TestIL11PressureGates:
+    """IL-11: viewport pressure ≥ 0.85 + not has_focus must yield tier ≥ COMPACT
+    (rank ≥ 2). Gates against silent regression of TB-H3."""
+
+    def _make_resolver(self):
+        from hermes_cli.tui.tool_panel.layout_resolver import ToolBlockLayoutResolver
+        return ToolBlockLayoutResolver(hero_min_width=0)
+
+    def _make_inputs(self, **overrides):
+        from hermes_cli.tui.tool_panel.layout_resolver import LayoutInputs
+        from hermes_cli.tui.services.tools import ToolCallState
+        from hermes_cli.tui.tool_payload import ResultKind
+        defaults = dict(
+            phase=ToolCallState.DONE,
+            is_error=False,
+            has_focus=False,
+            user_scrolled_up=False,
+            user_override=False,
+            user_override_tier=None,
+            body_line_count=4,
+            threshold=20,
+            kind=ResultKind.DIFF,
+            pressure=0.9,
+            viewport_rows=999,
+            is_offscreen=False,
+        )
+        defaults.update(overrides)
+        return LayoutInputs(**defaults)
+
+    @pytest.mark.parametrize("pressure", [0.85, 0.9, 1.0, 1.2])
+    def test_il11_high_pressure_unfocused_not_hero(self, pressure):
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        inp = self._make_inputs(pressure=pressure, has_focus=False, is_offscreen=False)
+        resolver = self._make_resolver()
+        tier, _ = resolver._compute_tier(inp)
+        assert tier.rank >= DensityTier.COMPACT.rank, (
+            f"IL-11: pressure={pressure}, has_focus=False → tier={tier} (rank {tier.rank}) "
+            f"must be >= COMPACT (rank {DensityTier.COMPACT.rank})"
+        )
+
+    def test_il11_focused_exempt_at_high_pressure(self):
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        inp = self._make_inputs(pressure=0.9, has_focus=True, is_error=False)
+        resolver = self._make_resolver()
+        tier, _ = resolver._compute_tier(inp)
+        assert tier == DensityTier.DEFAULT, (
+            f"IL-11: pressure=0.9, has_focus=True → tier={tier}; "
+            f"focused blocks stay at DEFAULT (concept line 112)"
+        )
+
+    def test_il11_err_bypasses_cascade(self):
+        from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        inp = self._make_inputs(
+            pressure=1.2,
+            has_focus=False,
+            is_offscreen=True,
+            is_error=True,
+        )
+        resolver = self._make_resolver()
+        tier, _ = resolver._compute_tier(inp)
+        assert tier == DensityTier.DEFAULT, (
+            f"IL-11: ERR blocks must bypass cascade; got tier={tier}"
+        )

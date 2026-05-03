@@ -124,11 +124,14 @@ class TestDR1Resolver:
         )
         assert r.resolve(inp) == DensityTier.DEFAULT
 
-    def test_focus_forces_default(self):
+    def test_focus_does_not_bypass_compact(self):
+        # TB-H3: elif has_focus removed; focused blocks fall through to COMPLETING/DONE
+        # branch. Large body (200 > threshold 5) still compacts; focus only exempts from
+        # pressure-induced force-compact and from HERO restriction at soft pressure.
         from hermes_cli.tui.tool_panel.density import DensityResolver, DensityTier
         r = DensityResolver()
         inp = _make_inputs(has_focus=True, body_line_count=200, threshold=5)
-        assert r.resolve(inp) == DensityTier.DEFAULT
+        assert r.resolve(inp) == DensityTier.COMPACT
 
     def test_scrolled_up_forces_default(self):
         from hermes_cli.tui.tool_panel.density import DensityResolver, DensityTier

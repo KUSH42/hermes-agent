@@ -20,13 +20,43 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger(__name__)
 
-_HERO_MAX_LINES = 8
 _HERO_KINDS = frozenset({ResultKind.DIFF, ResultKind.JSON, ResultKind.TABLE})
-_DEFAULT_BODY_CLAMP: int = 12
 
-# DU-4: width gate for HERO promotion. Default 100 cells. Read once from
-# `display.tool_hero_min_width` at resolver construction.
-DEFAULT_HERO_MIN_WIDTH = 100
+# ---------------------------------------------------------------------------
+# THRESHOLDS — single canonical home for tier quantitative constants
+# (concept.md v3.6 §"Per-tier behavior contract" line 383).
+#
+# Read via `THRESHOLDS["KEY"]`. Do not introduce module-level duplicates;
+# keep all integer thresholds here so a single grep finds every clause-bound
+# value.
+# ---------------------------------------------------------------------------
+
+THRESHOLDS: dict[str, int] = {
+    # HERO tier
+    "HERO_MIN_BODY_ROWS":       5,    # min body rows for HERO eligibility
+    "HERO_MAX_LINES":           8,    # max body rows before HERO is ineligible
+    "HERO_MIN_WIDTH":         100,    # min cols for auto-promote (user override bypasses)
+    "MIN_HERO_VIEWPORT_ROWS":  16,    # min terminal rows for any HERO at all
+
+    # DEFAULT tier
+    "DEFAULT_BODY_CLAMP":      12,    # rows shown before clamp kicks in
+
+    # COMPACT tier
+    "COMPACT_SIBLING_CAP":      4,    # max siblings shown at COMPACT before overflow chip
+
+    # Group caps (TB-MED-2 lands here)
+    "GROUP_CAP_DEFAULT":       12,
+    "GROUP_CAP_COMPACT":        4,
+    "GROUP_CAP_TRACE":          0,
+
+    # Promotion thresholds (TB-MED-1 lands here)
+    "LONG_CALL_THRESHOLD_S":    5,    # duration_s above which duration chip is promoted
+    "LARGE_PAYLOAD_ROWS":     200,    # body rows above which linecount chip is promoted
+
+    # Viewport gates
+    "MIN_BLOCK_COLS":          40,    # block too narrow → placeholder
+    "MIN_VIEWPORT_COLS":       24,    # viewport too narrow → degrade gracefully
+}
 
 
 class DensityTier(str, Enum):
@@ -175,6 +205,17 @@ class LayoutInputs:
     user_collapsed: bool = False
     has_footer_content: bool = False
     is_streaming: bool = False
+    # TB-H3: viewport pressure (rows_consumed_by_visible_blocks /
+    # available_terminal_rows). 0.0 is "no pressure", 1.0 is "exactly full",
+    # >1.0 is oversubscribed. Default 0.0 preserves prior behaviour for
+    # call sites that have not yet been migrated.
+    pressure: float = 0.0
+    # TB-H3: terminal viewport rows (used to gate MIN_HERO_VIEWPORT_ROWS).
+    # Default 999 (very tall) preserves prior behaviour.
+    viewport_rows: int = 999
+    # TB-H3: True when the block is below the fold (caller computes from
+    # scroll position + block y-offset). Drives oversubscribe cascade.
+    is_offscreen: bool = False
 
 
 # Backward-compat alias used by DU-3 shim layer.
@@ -206,10 +247,26 @@ def _clamp_for_tier(tier: "DensityTier") -> "int | None":
     """Module-level helper so BodyPane can import without circular LayoutDecision dep."""
     return {
         DensityTier.HERO:    None,
-        DensityTier.DEFAULT: _DEFAULT_BODY_CLAMP,
+        DensityTier.DEFAULT: THRESHOLDS["DEFAULT_BODY_CLAMP"],
         DensityTier.COMPACT: None,  # COMPACT uses summary_line(), not clamp
         DensityTier.TRACE:   0,
     }[tier]
+
+
+def _pressure_band(pressure: float) -> int:
+    """Map a pressure float to a coarse band index (0–3).
+
+    Used by the two-pass fixed-point to detect band crossings between passes.
+    Bands correspond to concept.md §"Per-tier behavior contract" crossing table
+    (lines 370–373): < 0.6 → 0, 0.6–0.85 → 1, 0.85–1.0 → 2, >1.0 → 3.
+    """
+    if pressure < 0.6:
+        return 0
+    if pressure < 0.85:
+        return 1
+    if pressure <= 1.0:
+        return 2
+    return 3
 
 
 # ---------------------------------------------------------------------------
@@ -288,20 +345,45 @@ class ToolBlockLayoutResolver:
 
         reason: Literal["auto", "user", "error_override", "initial", "parent_clamp"] = "auto"
 
+        # Pressure gates (concept lines 112–115, 365–373). Computed early so
+        # downstream HERO eligibility honours them.
+        pressure_blocks_hero = (
+            inp.pressure >= 0.6 and not inp.has_focus
+        ) or (
+            inp.pressure >= 0.85
+        ) or (
+            inp.viewport_rows < THRESHOLDS["MIN_HERO_VIEWPORT_ROWS"]
+        )
+        pressure_forces_compact = (
+            inp.pressure >= 0.85 and not inp.has_focus and not inp.is_error
+        )
+        pressure_cascades_trace = (
+            inp.pressure > 1.0
+            and not inp.has_focus
+            and inp.is_offscreen
+            and not inp.is_error
+        )
+
         if inp.is_error:
             base = DensityTier.DEFAULT
             reason = "error_override"
+        elif pressure_cascades_trace:
+            # ERR bypasses (already handled above). Cascade applies only to
+            # off-screen, unfocused, non-error blocks.
+            return DensityTier.TRACE, "auto"
         elif inp.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
-            base = DensityTier.DEFAULT
-        elif inp.has_focus:
+            # Active streaming: show body as it arrives at DEFAULT regardless of
+            # focus or pressure. No HERO during streaming (no stable body).
             base = DensityTier.DEFAULT
         elif inp.user_override and inp.user_override_tier == DensityTier.HERO:
-            # DU-4: user override beats the width gate; eligibility (kind /
-            # line count) still applies so the promoted view is sensible.
+            # User override beats the width gate but NOT the pressure gate when
+            # pressure is hard (>=0.85). At soft pressure (>=0.6) the user wins;
+            # the focused-only restriction is only an automatic-promote rule.
             if (
                 inp.kind not in _HERO_KINDS
                 or inp.body_line_count == 0
-                or inp.body_line_count > _HERO_MAX_LINES
+                or inp.body_line_count > THRESHOLDS["HERO_MAX_LINES"]
+                or (inp.pressure >= 0.85 and not inp.has_focus)
             ):
                 base = DensityTier.DEFAULT
             else:
@@ -311,15 +393,25 @@ class ToolBlockLayoutResolver:
             base = inp.user_override_tier
             reason = "user"
         elif inp.user_scrolled_up:
+            # User has scrolled up: hold at DEFAULT so body remains visible.
+            # Focused blocks are exempt from pressure-cascade but not from this
+            # explicit user action — scroll trumps focus.
             base = DensityTier.DEFAULT
         elif inp.phase in (ToolCallState.COMPLETING, ToolCallState.DONE):
+            # Both focused and unfocused DONE/COMPLETING blocks may qualify for HERO.
+            # Concept tie-break (docs/concept.md line 108): focused ▸ only ▸ first ▸
+            # most-recent. The `pressure_blocks_hero` flag already incorporates the
+            # focus-exemption at soft pressure (0.6–0.85 restricts HERO to focused;
+            # ≥0.85 disables it entirely).
             want_hero = (
                 inp.body_line_count > 0
-                and inp.body_line_count <= _HERO_MAX_LINES
+                and inp.body_line_count <= THRESHOLDS["HERO_MAX_LINES"]
                 and inp.kind in _HERO_KINDS
+                and not pressure_blocks_hero
             )
-            # DU-4: width gate blocks auto-promote, never user override.
             if want_hero and inp.width and inp.width < self._hero_min_width:
+                # Auto-promote width gate. User override (handled above) bypasses
+                # this, but auto-promote does not.
                 want_hero = False
             if want_hero:
                 base = DensityTier.HERO
@@ -328,7 +420,12 @@ class ToolBlockLayoutResolver:
             else:
                 base = DensityTier.DEFAULT
         else:
+            # Unknown/future phase: safe default.
             base = DensityTier.DEFAULT
+
+        # Hard pressure: force COMPACT on unfocused, non-error blocks.
+        if pressure_forces_compact and base.rank < DensityTier.COMPACT.rank:
+            base = DensityTier.COMPACT
 
         if (
             inp.parent_clamp is not None
@@ -365,9 +462,9 @@ def _read_hero_min_width_config() -> int:
     try:
         from hermes_cli.config import load_config
         cfg = load_config()
-        v = cfg.get("display", {}).get("tool_hero_min_width", DEFAULT_HERO_MIN_WIDTH)
+        v = cfg.get("display", {}).get("tool_hero_min_width", THRESHOLDS["HERO_MIN_WIDTH"])
         return int(v)
     except Exception:
         # Config may be unavailable in test envs; fall back to default.
         _log.debug("hero_min_width config read failed", exc_info=True)
-        return DEFAULT_HERO_MIN_WIDTH
+        return THRESHOLDS["HERO_MIN_WIDTH"]

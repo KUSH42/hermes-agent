@@ -395,8 +395,108 @@ class OutputPanel(ScrollableContainer):
             if engine2 is not None:
                 engine2.flush()  # closes open StreamingCodeBlock if mid-fence; flushes StreamingBlockBuffer
 
+    def _iter_visible_blocks(self):
+        """Yield mounted ToolPanel widgets that are currently visible (display != none)."""
+        from hermes_cli.tui.tool_panel import ToolPanel
+        for child in self.walk_children(ToolPanel, with_self=False):
+            if getattr(child.styles, "display", "block") != "none":
+                yield child
+
+    def _compute_viewport_pressure(self) -> "tuple[float, int]":
+        """Return (pressure, viewport_rows) per concept §Per-tier behavior contract.
+
+        pressure = sum(visible_block.height) / max(1, screen.size.height)
+        """
+        try:
+            viewport_rows = max(1, self.app.screen.size.height)
+        except AttributeError:
+            # screen is None before the app mounts (common in unit tests); 999
+            # acts as "infinite viewport" so no pressure-induced tier change fires.
+            _log.debug("_compute_viewport_pressure: screen not yet mounted, using sentinel")
+            viewport_rows = 999
+        rows_consumed = 0
+        for block in self._iter_visible_blocks():
+            rows_consumed += block.size.height if block.size else 0
+        return rows_consumed / viewport_rows, viewport_rows
+
+    def _resolve_pass(self, pressure: float, viewport_rows: int) -> None:
+        """Resolve tier for every visible block given the supplied pressure snapshot.
+
+        Constructs LayoutInputs per block (adding pressure, viewport_rows,
+        is_offscreen), calls self._resolver.resolve(inputs), and applies the
+        returned DensityTier to each ToolCallBlock widget.
+        """
+        from hermes_cli.tui.tool_panel.layout_resolver import LayoutInputs
+        from hermes_cli.tui.services.tools import ToolCallState
+
+        scroll_top = getattr(self, "scroll_y", 0)
+        viewport_bottom = scroll_top + viewport_rows
+
+        for block in self._iter_visible_blocks():
+            resolver = getattr(block, "_resolver", None)
+            if resolver is None:
+                continue
+            _vs = getattr(block, "_view_state", None) or (
+                getattr(block, "_lookup_view_state", lambda: None)()
+            )
+            if _vs is None:
+                continue
+            phase = _vs.state
+            _vs_kind = getattr(_vs, "kind", None)
+            kind = _vs_kind.kind if _vs_kind is not None else None
+            block_y = getattr(getattr(block, "region", None), "y", 0)
+            block_h = block.size.height if block.size else 0
+            is_offscreen = (block_y + block_h) < scroll_top or block_y > viewport_bottom
+            _size = getattr(block, "size", None)
+            width = _size.width if _size is not None else 0
+            try:
+                from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
+                threshold = _CATEGORY_DEFAULTS[block._category].default_collapsed_lines
+            except Exception:  # category unavailable pre-mount; use safe default
+                threshold = 20
+            inputs = LayoutInputs(
+                phase=phase,
+                is_error=bool(getattr(_vs, "is_error_for_ui", False)),
+                has_focus=block.has_focus,
+                user_scrolled_up=bool(getattr(self, "_user_scrolled_up", False)),
+                user_override=bool(getattr(block, "_user_collapse_override", False)),
+                user_override_tier=getattr(block, "_user_override_tier", None),
+                body_line_count=block._body_line_count() if hasattr(block, "_body_line_count") else 0,
+                threshold=threshold,
+                kind=kind,
+                parent_clamp=getattr(block, "_parent_clamp_tier", None),
+                width=width,
+                user_collapsed=bool(getattr(block, "_user_collapse_override", False)),
+                has_footer_content=bool(
+                    getattr(block, "_result_summary_v4", None) is not None
+                ),
+                is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
+                pressure=pressure,
+                viewport_rows=viewport_rows,
+                is_offscreen=is_offscreen,
+            )
+            resolver.resolve(inputs)
+
+    def _resolve_layout(self) -> None:
+        """Two-pass fixed-point per concept lines 375–381.
+
+        Pass 1: compute pressure, resolve each block, observe any band crossings.
+        Pass 2: recompute pressure with pass-1 tiers; re-resolve only if any
+        block crossed a band boundary in pass 1. Bounded at 2 passes — concept
+        rule, not a heuristic.
+        """
+        from hermes_cli.tui.tool_panel.layout_resolver import _pressure_band
+        pressure, viewport_rows = self._compute_viewport_pressure()
+        bands_pre = _pressure_band(pressure)
+        self._resolve_pass(pressure, viewport_rows)
+        pressure2, viewport_rows2 = self._compute_viewport_pressure()
+        if _pressure_band(pressure2) == bands_pre:
+            return
+        self._resolve_pass(pressure2, viewport_rows2)
+
     def on_resize(self, event: Any) -> None:
         """Anchor scroll position on resize; Textual cascades resize to children automatically."""
+        self._resolve_layout()
         # Set startup banner width on first resize (size.width is 0 at on_mount in Textual 8.x).
         if not OUTPUT_PANEL_WIDTH_READY.is_set():
             try:

@@ -4662,6 +4662,12 @@ class HermesCLI:
             color_system="truecolor",
             width=capture_width,
         )
+        app_bg = ""
+        try:
+            if app is not None and hasattr(app, "get_css_variables"):
+                app_bg = app.get_css_variables().get("app-bg") or ""
+        except Exception:
+            logger.debug("startup banner app-bg lookup failed", exc_info=True)
         hero_renderable = Text.from_ansi(hero_text) if hero_text is not None else None
         if hero_renderable is None and print_hero:
             # Startup banner rendering goes through Static/Textual instead of the
@@ -4684,15 +4690,14 @@ class HermesCLI:
             context_length=ctx_len,
             print_hero=print_hero if hero_renderable is None else False,
             hero_renderable=hero_renderable,
+            bg_color=app_bg,
         )
         rendered = Text.from_ansi(capture.export_text(styles=True))
         try:
-            if app is not None and hasattr(app, "get_css_variables"):
-                app_bg = app.get_css_variables().get("app-bg")
-                if app_bg:
-                    rendered.stylize(f"on {app_bg}")
+            if app_bg:
+                rendered.stylize(f"on {app_bg}")
         except Exception:
-            logger.debug("startup banner app-bg lookup failed", exc_info=True)
+            logger.debug("startup banner stylize failed", exc_info=True)
         return rendered
 
     def _build_startup_banner_template(self, plain_hero: str):
@@ -4850,6 +4855,7 @@ class HermesCLI:
                 "skipping animation (no-op)"
             )
             return False
+        STARTUP_BANNER_READY.set()
         if not OUTPUT_PANEL_WIDTH_READY.wait(timeout=2.0):
             logger.warning("TTE: OutputPanel width not ready within 2s; using terminal width")
 

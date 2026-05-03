@@ -634,7 +634,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          print_logo: bool = True,
                          print_hero: bool = True,
                          hero_text: str = "",
-                         hero_renderable=None):
+                         hero_renderable=None,
+                         bg_color: str = ""):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
@@ -873,10 +874,12 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     agent_name = _skin_branding("agent_name", "Hermes Agent")
     title_color = _skin_color("banner_title", "#FFD700")
     border_color = _skin_color("banner_border", "#CD7F32")
+    panel_style = f"on {bg_color}" if bg_color else ""
     outer_panel = Panel(
         layout_table,
         title=f"[bold {title_color}]{format_banner_version_label()}[/]",
         border_style=border_color,
+        style=panel_style,
         padding=(0, 2),
         expand=True,
     )

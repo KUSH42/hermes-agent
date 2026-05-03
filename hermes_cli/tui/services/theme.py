@@ -153,7 +153,7 @@ class ThemeService(AppService):
             new_glyph = skin.get_branding("prompt_symbol", "❯ ")
             from hermes_cli.tui.input import widget as _input_widget
             _input_widget._CHEVRON_GLYPHS[InputMode.NORMAL] = new_glyph
-            if hi.input_mode == InputMode.NORMAL:
+            if hi._mode == InputMode.NORMAL:
                 hi._sync_chevron_to_mode(InputMode.NORMAL)
         except NoMatches:
             pass

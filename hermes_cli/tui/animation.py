@@ -6,6 +6,7 @@ PulseMixin and AnimationClock use duck-typed Textual APIs (set_interval, refresh
 """
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from collections.abc import Callable
@@ -79,6 +80,7 @@ def _fnv1a_32(s: str) -> int:
 # Precomputed sine tables for common animation periods.
 # Key: period → list of float values (sin(2π*t/period)+1)/2 for t in range(period).
 # Eliminates per-character math.sin() calls in hot loops.
+# il-a1: lazy-populated sine cache; each key is written once and never mutated
 _SINE_TABLES: dict[int, list[float]] = {}
 
 
@@ -96,18 +98,16 @@ def _get_sine_table(period: int) -> list[float]:
 # Color helpers
 # ---------------------------------------------------------------------------
 
-_RGB_CACHE: dict[str, tuple[int, int, int]] = {}
+@functools.lru_cache(maxsize=256)
+def _rgb_cached(hex_str: str) -> tuple[int, int, int]:
+    """Parse hex color to RGB tuple, with LRU cache (maxsize=256)."""
+    h = hex_str.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
 
 def _parse_rgb(h: str) -> tuple[int, int, int]:
-    """Parse hex color to RGB tuple, with caching."""
-    cached = _RGB_CACHE.get(h)
-    if cached is not None:
-        return cached
-    h2 = h.lstrip("#")
-    result = (int(h2[0:2], 16), int(h2[2:4], 16), int(h2[4:6], 16))
-    if len(_RGB_CACHE) < 256:
-        _RGB_CACHE[h] = result
-    return result
+    """Parse hex color to RGB tuple. Delegates to _rgb_cached for LRU caching."""
+    return _rgb_cached(h)
 
 
 def lerp_color(hex1: str, hex2: str, t: float) -> str:
@@ -125,8 +125,8 @@ def lerp_color(hex1: str, hex2: str, t: float) -> str:
     Interpolation is in linear RGB. Gamma error is negligible (<1 step per
     channel) for terminal truecolor output.
     """
-    r1, g1, b1 = _parse_rgb(hex1)
-    r2, g2, b2 = _parse_rgb(hex2)
+    r1, g1, b1 = _rgb_cached(hex1)
+    r2, g2, b2 = _rgb_cached(hex2)
     r = round(r1 + (r2 - r1) * t)
     g = round(g1 + (g2 - g1) * t)
     b = round(b1 + (b2 - b1) * t)
@@ -381,9 +381,9 @@ def shimmer_text(
         for start, end in skip_ranges:  # end is exclusive
             protected.update(range(start, end))
 
-    # Pre-parse dim/peak RGB once (cached via _parse_rgb)
-    dr, dg, db = _parse_rgb(dim)
-    pr, pg, pb = _parse_rgb(peak)
+    # Pre-parse dim/peak RGB once (cached via _rgb_cached)
+    dr, dg, db = _rgb_cached(dim)
+    pr, pg, pb = _rgb_cached(peak)
 
     # Precomputed sine table — eliminates per-character math.sin()
     sine_tbl = _get_sine_table(period)

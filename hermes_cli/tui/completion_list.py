@@ -253,9 +253,9 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         trough = lerp_color(app_bg, "#000000", 0.3)
         peak   = lerp_color(app_bg, "#888888", 0.35)
         # Pre-parse trough/peak to RGB for batch lerp_color_rgb calls
-        from hermes_cli.tui.animation import _parse_rgb, lerp_color_rgb
-        trough_rgb = _parse_rgb(trough)
-        peak_rgb = _parse_rgb(peak)
+        from hermes_cli.tui.animation import _rgb_cached, lerp_color_rgb
+        trough_rgb = _rgb_cached(trough)
+        peak_rgb = _rgb_cached(peak)
         # Stagger each row's phase by its y offset for a diagonal wave effect.
         row_phase = (phase + y * 2) % (_SHIMMER_LEN * 4)
         # Pre-compute chars and colors per position

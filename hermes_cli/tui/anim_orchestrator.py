@@ -17,11 +17,17 @@ from hermes_cli.tui.anim_engines import (
     TrailCanvas,
     CrossfadeEngine,
 )
+from hermes_cli.tui.perf import measure
 
 if TYPE_CHECKING:
     from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay, DrawbrailleOverlayCfg
 
 _LOG = logging.getLogger(__name__)
+
+# il-a1: immutable tuple, not a mutable buffer
+_BRAILLE_BIT_POSITIONS: tuple[tuple[int, int, int], ...] = tuple(
+    (dy * 2 + dx, dx, dy) for dy in range(4) for dx in range(2)
+)
 
 
 class AnimOrchestrator:
@@ -435,17 +441,14 @@ class AnimOrchestrator:
             self._external_trail._h = h  # type: ignore[attr-defined]
 
         et = self._external_trail
-        for row_idx, row in enumerate(frame_str.split("\n")):
-            for col_idx, ch in enumerate(row):
-                if 0x2800 <= ord(ch) <= 0x28FF:
-                    bits = ord(ch) - 0x2800
-                    for dy in range(4):
-                        for dx in range(2):
-                            bit_idx = dy * 2 + dx
+        with measure("apply_external_trail", budget_ms=4):
+            for row_idx, row in enumerate(frame_str.split("\n")):
+                for col_idx, ch in enumerate(row):
+                    if 0x2800 <= ord(ch) <= 0x28FF:
+                        bits = ord(ch) - 0x2800
+                        for bit_idx, dx, dy in _BRAILLE_BIT_POSITIONS:
                             if bits & (1 << bit_idx):
-                                px = col_idx * 2 + dx
-                                py = row_idx * 4 + dy
-                                et.set(px, py, 1.0)
+                                et.set(col_idx * 2 + dx, row_idx * 4 + dy, 1.0)
         et.decay_all()
         return et.to_canvas().frame()
 

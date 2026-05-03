@@ -88,7 +88,13 @@ class OutputPanel(ScrollableContainer):
 
     @_user_scrolled_up.setter
     def _user_scrolled_up(self, v: bool) -> None:
-        """W-11: writing True → ANCHORED; writing False → PINNED."""
+        """W-11: writing True → ANCHORED; writing False → PINNED.
+
+        JUMPED → PINNED is not allowed via a bool write; that transition
+        must only happen via watch_scroll_y confirming the live edge.
+        """
+        if not v and self.scroll_state == ScrollState.JUMPED:
+            return  # JUMPED→PINNED only via watch_scroll_y reaching live edge
         self.scroll_state = ScrollState.ANCHORED if v else ScrollState.PINNED
 
     # D6 actions ----------------------------------------------------
@@ -137,7 +143,7 @@ class OutputPanel(ScrollableContainer):
         # max_scroll_y can be 0 when the panel hasn't laid out yet; guard against that.
         if self.max_scroll_y > 0 and new_y >= self.max_scroll_y - 1:
             was_scrolled = self._user_scrolled_up
-            self._user_scrolled_up = False
+            self.scroll_state = ScrollState.PINNED  # live edge confirmed; direct write
             if was_scrolled:
                 # User returned to the live edge — dismiss all scroll-lock badges
                 from hermes_cli.tui.tool_blocks import ToolTail as _TT

@@ -687,9 +687,11 @@ class WorkspaceOverlay(ReferenceModal):
 
     def action_dismiss(self) -> None:
         try:
-            self.app._sync_workspace_polling_state()
+            app = self.app
+            app._workspace_auto_suppressed = True
+            app._sync_workspace_polling_state()
         except Exception:
-            pass
+            _log.debug("action_dismiss: app sync failed", exc_info=True)
         self.dismiss_overlay()
 
     def refresh_data(self, tracker: object, snapshot: object | None) -> None:

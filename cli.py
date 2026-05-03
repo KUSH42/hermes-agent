@@ -2650,6 +2650,7 @@ class HermesCLI:
         self._startup_skills_line_shown = False
         self._startup_banner_template: dict[str, object] | object | None = None
         self._startup_banner_static = None
+        self._prelaunch_artefacts_pending: bool = False
         self._first_input_seen = threading.Event()
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
@@ -5210,6 +5211,11 @@ class HermesCLI:
         # EH-OK: if _ensure_startup_banner_artefacts raises, template_cell[0] stays
         # None; _produce() falls back to Text.from_ansi() for remaining frames and
         # _build_static() uses _startup_banner_static — matching existing behaviour.
+        _prelaunch = getattr(self, "_prelaunch_banner_thread", None)
+        if _prelaunch is not None and _prelaunch.is_alive():
+            _prelaunch.join(timeout=0.3)   # almost always done; 300ms cap avoids stall
+
+        # _ensure_startup_banner_artefacts is now a no-op if worker finished
         self._ensure_startup_banner_artefacts(plain_hero)
         template_cell[0] = (
             self._startup_banner_template
@@ -5308,6 +5314,38 @@ class HermesCLI:
 
         return rendered_any_flag[0]
 
+    def _start_prelaunch_banner_worker(self) -> None:
+        """Start background thread to pre-render startup banner artefacts.
+
+        Called immediately after _HApp construction in run_tui(), before
+        app.run().  Stores results in _startup_banner_template and
+        _startup_banner_static so _tui_startup_display can skip the render.
+        """
+        import threading as _t
+        self._prelaunch_artefacts_pending = True  # guard: show_banner_with_startup_effect skips resets
+
+        def _work() -> None:
+            try:
+                from hermes_cli.banner import resolve_banner_hero_assets
+                from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY
+                # Block until OutputPanel reports its width (fires on first resize,
+                # typically <100 ms after app.run()).  Fallback: use terminal width.
+                OUTPUT_PANEL_WIDTH_READY.wait(timeout=1.5)
+                # resolve_banner_hero_assets() reads from the bundled skin assets; it is
+                # deterministic and returns the same hero as the later call in
+                # _play_startup_text_effect — safe to call independently here.
+                _, plain_hero = resolve_banner_hero_assets()
+                plain_hero = _sanitize_startup_hero_text(plain_hero)
+                if plain_hero.strip():
+                    self._ensure_startup_banner_artefacts(plain_hero)
+            except Exception:
+                logger.debug("prelaunch banner worker failed", exc_info=True)
+
+        self._prelaunch_banner_thread = _t.Thread(
+            target=_work, daemon=True, name="hermes-banner-prelaunch"
+        )
+        self._prelaunch_banner_thread.start()
+
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.
 
@@ -5316,8 +5354,11 @@ class HermesCLI:
         the full banner layout.  When TTE finishes, a static frame is written.
         Non-TUI: effect plays on stdout, then banner prints below.
         """
-        self._startup_banner_template = None
-        self._startup_banner_static = None
+        _pending = self._prelaunch_artefacts_pending
+        self._prelaunch_artefacts_pending = False  # one-shot; always clear regardless of TTE path
+        if not _pending:
+            self._startup_banner_template = None
+            self._startup_banner_static = None
         self._first_input_seen.clear()
         if tui:
             self._ensure_tui_startup_message()
@@ -14814,6 +14855,7 @@ class HermesCLI:
         try:
             if _tui_app is not None:
                 _install_tui_file_log()
+                self._start_prelaunch_banner_worker()
                 # Textual path — _hermes_app is already set above; Textual owns the loop
                 _tui_app.run()
             else:

@@ -514,7 +514,7 @@ class KeyDispatchService(AppService):
                 self.app._svc_browse.jump_anchor(-1, BrowseAnchorType.MEDIA)
                 event.prevent_default()
                 return
-            elif key == "backslash":
+            elif key in ("backslash", "pipe"):
                 self.app.call_later(self.app.action_toggle_minimap)
                 event.prevent_default()
                 return

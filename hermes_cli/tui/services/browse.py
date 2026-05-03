@@ -409,7 +409,7 @@ class BrowseService(AppService):
         prefix = f"{glyph} " if glyph else ""
         hint = f"{prefix}{anchor.label} {pos}/{total} · Turn {anchor.turn_id}"
         if app._browse_markers_enabled:
-            hint += "  \\ map"
+            hint += "  \\ | map"
         app._browse_hint = hint
 
     # --- Plan panel tool scroll ---

@@ -183,7 +183,7 @@ class ConfigOverlay(Widget):
             yield Static("[dim]Space · Esc close[/dim]", classes="co-footer")
 
     def on_mount(self) -> None:
-        self.add_class("--modal")
+        self.add_class("--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
         self.border_title = "Config"
         self._update_tab_bar()
         self._update_body_visibility()
@@ -207,7 +207,7 @@ class ConfigOverlay(Widget):
         self.call_after_refresh(self._focus_active_tab)
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible", "--modal")
+        self.remove_class("--visible", "--modal")  # il-m1: pre-mixin legacy widget, not yet migrated
 
     def refresh_data(self, cli: object) -> None:
         """Populate active tab from config/app state. Called by slash handlers."""

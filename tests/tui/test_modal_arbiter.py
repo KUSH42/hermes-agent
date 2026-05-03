@@ -328,25 +328,38 @@ class TestReferenceMigration:
         assert issubclass(ReferenceModal, ModalOverlayMixin)
 
     def test_reference_modal_show_overlay_pushes_stack(self):
-        """show_overlay() registers the overlay in the arbiter stack."""
+        """show_overlay() registers the overlay in the arbiter stack.
+
+        We verify the contract by calling show_overlay with all Textual widget
+        methods (add_class, remove_class, is_mounted, border_title) replaced by
+        lightweight stubs so we never hit the unmounted Widget internals.
+        """
         from hermes_cli.tui.overlays.reference import ReferenceModal
-        overlay = ReferenceModal.__new__(ReferenceModal)
-        overlay._focus_caller = None
-        overlay._modal_title = "Test"
-        overlay.is_mounted = True
-        overlay.border_title = ""
 
-        classes = set()
+        # Build a subclass where all Textual state is replaced with plain attrs
+        class _TestModal(ReferenceModal):
+            _modal_id = "test"
+            _modal_title = "Test"
 
-        def add_class(*names):
-            classes.update(names)
+            # Override border_title as a plain attribute descriptor so the
+            # Textual reactive setter never fires (avoids _is_mounted check).
+            border_title = ""  # class-level default
 
-        def remove_class(*names):
-            classes.difference_update(names)
+            def __init__(self):  # skip Widget.__init__
+                self._focus_caller = None
+                self._classes: set = set()
 
-        overlay.add_class = add_class
-        overlay.remove_class = remove_class
+            @property
+            def is_mounted(self):
+                return True
 
+            def add_class(self, *names):
+                self._classes.update(names)
+
+            def remove_class(self, *names):
+                self._classes.difference_update(names)
+
+        overlay = _TestModal()
         app = _make_app()
         app.focused = None
 
@@ -354,8 +367,8 @@ class TestReferenceMigration:
             overlay.show_overlay()
 
         assert overlay in app._modal_stack
-        assert "--modal" in classes
-        assert "--visible" in classes
+        assert "--modal" in overlay._classes
+        assert "--visible" in overlay._classes
 
 
 # ---------------------------------------------------------------------------

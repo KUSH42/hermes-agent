@@ -400,7 +400,7 @@ async def test_overwrite_on_second_open_same_id():
 
 @pytest.mark.asyncio
 async def test_tool_block_mount_order_before_duo():
-    """StreamingToolBlock is mounted before the ThinkingWidget/LiveLineWidget duo."""
+    """StreamingToolBlock is mounted before the LiveLineWidget/ThinkingWidget duo."""
     app = _make_app()
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
@@ -420,10 +420,10 @@ async def test_tool_block_mount_order_before_duo():
         assert ThinkingWidget in child_types, "OutputPanel must contain ThinkingWidget"
         assert LiveLineWidget in child_types, "OutputPanel must contain LiveLineWidget"
 
-        # ThinkingWidget must come before LiveLineWidget in DOM order
+        # LiveLineWidget must come before ThinkingWidget in DOM order
         tw_idx = next(i for i, c in enumerate(children) if isinstance(c, ThinkingWidget))
         ll_idx = next(i for i, c in enumerate(children) if isinstance(c, LiveLineWidget))
-        assert tw_idx < ll_idx, "ThinkingWidget must precede LiveLineWidget"
+        assert ll_idx < tw_idx, "LiveLineWidget must precede ThinkingWidget"
 
         # StreamingToolBlock may be nested inside a ToolPanel — query deep
         blocks = list(output.query(StreamingToolBlock))
@@ -432,7 +432,7 @@ async def test_tool_block_mount_order_before_duo():
         from hermes_cli.tui.tool_panel import ToolPanel
         tp_idx = next((i for i, c in enumerate(children) if isinstance(c, ToolPanel)), None)
         if tp_idx is not None:
-            assert tp_idx < tw_idx, "ToolPanel (containing StreamingToolBlock) must be before ThinkingWidget"
+            assert tp_idx < ll_idx, "ToolPanel (containing StreamingToolBlock) must be before LiveLineWidget"
 
         app.agent_running = False
         await pilot.pause()

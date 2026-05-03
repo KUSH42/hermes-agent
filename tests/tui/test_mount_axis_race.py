@@ -242,8 +242,8 @@ class TestM6AppendStreamingLineGuards:
 
 class TestH5OutputPanelDuoInvariant:
 
-    def test_live_anchor_returns_thinking_widget(self):
-        """_live_anchor() returns ThinkingWidget when both are composed."""
+    def test_live_anchor_returns_live_line_widget(self):
+        """_live_anchor() returns LiveLineWidget when both are composed."""
         from hermes_cli.tui.widgets import OutputPanel
         from hermes_cli.tui.widgets.thinking import ThinkingWidget
         from hermes_cli.tui.widgets import LiveLineWidget
@@ -262,7 +262,7 @@ class TestH5OutputPanelDuoInvariant:
         panel.query_one = _query_one
 
         result = panel._live_anchor()
-        assert result is thinking
+        assert result is live_line
 
     def test_live_anchor_falls_back_to_live_line_widget(self):
         """_live_anchor() falls back to LiveLineWidget when ThinkingWidget missing."""

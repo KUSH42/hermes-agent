@@ -14,7 +14,6 @@ import logging
 
 from textual import events
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
@@ -98,11 +97,8 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
     }
     """
 
-    BINDINGS = [
-        # escape is provided by ModalOverlayMixin; dismiss_picker is kept for
-        # backward compatibility with any caller that references the action name.
-        Binding("escape", "dismiss_picker", priority=True, show=False),
-    ]
+    # No BINDINGS override — inherits escape from ModalOverlayMixin (MOD-M3).
+    # action_dismiss_picker() is retained for backward-compat callers.
 
     def __init__(
         self,

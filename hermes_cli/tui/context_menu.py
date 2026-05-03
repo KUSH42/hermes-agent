@@ -147,11 +147,7 @@ class ContextMenu(ModalOverlayMixin, Widget):
         # Intentionally does NOT call ModalOverlayMixin.on_mount().
         # ContextMenu is a permanent pre-mounted widget; modal registration
         # happens lazily in show(), not at DOM mount time.
-
-        # W-8 / R-2: capture the current browse-focused target so dismiss can restore it
-        self._opener_browse_target = next(
-            (w for w in self.app.query(".--browse-focused")), None
-        )
+        pass  # _opener_browse_target captured lazily in show() (MOD-M1)
 
     def on_unmount(self) -> None:
         # Intentionally does NOT call ModalOverlayMixin.on_unmount().
@@ -257,6 +253,10 @@ class ContextMenu(ModalOverlayMixin, Widget):
 
         self._selected_index = -1  # reset selection on each new show
         self._prev_focus = self.app.focused  # save for focus restore on item click
+        # W-8 / MOD-M1: capture browse target at actual show time, not at DOM mount
+        self._opener_browse_target = next(
+            (w for w in self.app.query(".--browse-focused")), None
+        )
         # MOD-8: use _capture_focus_caller + push_modal, then add CSS classes
         self._capture_focus_caller()  # record focus caller before stealing focus
         try:
@@ -279,20 +279,23 @@ class ContextMenu(ModalOverlayMixin, Widget):
         return super()._restore_focus_to()
 
     def dismiss_overlay(self) -> None:
-        """MOD-8: permanent-widget override.  Does NOT remove() self."""
+        """MOD-8: permanent-widget override.  Does NOT remove() self.
+
+        MOD-M2: capture focus target first, then remove CSS, then pop stack, then focus.
+        """
+        target = self._restore_focus_to()  # capture before any state mutation
         # W-8 / R-2: if a browse-focused target opened this menu, restore its highlight
         if self._opener_browse_target is not None:
             try:
                 self._opener_browse_target.add_class("--browse-focused")
             except Exception:
-                pass  # browse target may be unmounted — best-effort only
+                logger.debug("ContextMenu: browse-target restore failed", exc_info=True)
         self.remove_class("--visible")
         self.remove_class("--modal")  # il-m1: owned by ContextMenu.dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)
         except AttributeError:
             pass  # app has no pop_modal — graceful degrade
-        target = self._restore_focus_to()
         if target is not None and self.app.focused is self:
             try:
                 if target.is_mounted:
@@ -308,8 +311,3 @@ class ContextMenu(ModalOverlayMixin, Widget):
         """Dismiss when focus leaves the menu."""
         self.dismiss()
 
-    def on_key(self, event) -> None:
-        """Escape dismisses the menu and consumes the event."""
-        if event.key == "escape":
-            self.dismiss()
-            event.prevent_default()

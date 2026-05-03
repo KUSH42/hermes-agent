@@ -2789,6 +2789,9 @@ class HermesApp(App):
                     "_open_skill_picker: blocked by active modal %r", type(top).__name__
                 )
                 return
+            # MOD-L4: race window — if top_modal() returns SkillPickerOverlay between
+            # remove() and on_unmount, a second picker mounts for ~1 frame. Harmless:
+            # on_unmount pops the first; the second is the intended replacement.
             self.mount(
                 SkillPickerOverlay(
                     seed_filter=seed_filter,

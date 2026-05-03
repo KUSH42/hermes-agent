@@ -402,7 +402,10 @@ ToolsScreen > #prefix-legend.--hidden {
 
     def dismiss_overlay(self) -> None:
         """MOD-7: Screen pattern — pop_screen instead of remove().
-        The mixin's on_unmount fires after pop_screen and handles stack/CSS cleanup.
+
+        Textual calls on_unmount() after pop_screen completes. ToolsScreen.on_unmount
+        cancels timers then delegates to super().on_unmount(), which calls pop_modal,
+        removes --modal, and restores focus.
         """
         self.app.pop_screen()
 
@@ -437,6 +440,7 @@ ToolsScreen > #prefix-legend.--hidden {
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
             self._refresh_timer = None
+        super().on_unmount()  # MOD-H1: pop_modal + --modal removal + focus restore
 
     def on_resize(self) -> None:
         w = self.app.size.width

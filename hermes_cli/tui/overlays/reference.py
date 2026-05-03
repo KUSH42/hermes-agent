@@ -67,9 +67,8 @@ class ReferenceModal(ModalOverlayMixin, Widget):
     ReferenceModal.--visible { display: block; }
     """
 
-    BINDINGS = [
-        Binding("escape", "dismiss_modal", priority=True),
-    ]
+    # No BINDINGS override — inherits escape from ModalOverlayMixin (MOD-M4).
+    # Subclasses that need their own escape action declare their own BINDINGS.
 
     def on_mount(self) -> None:
         # Intentionally does NOT call ModalOverlayMixin.on_mount().
@@ -170,6 +169,7 @@ class HelpOverlay(ReferenceModal):
         yield Vertical(id="help-content")
 
     def on_mount(self) -> None:
+        super().on_mount()  # MOD-L2: sets border_title via ReferenceModal.on_mount
         self._refresh_commands_cache()
 
     def _refresh_commands_cache(self) -> None:
@@ -555,6 +555,7 @@ class CommandsOverlay(ReferenceModal):
         yield Vertical(id="commands-content")
 
     def on_mount(self) -> None:
+        super().on_mount()  # MOD-L2: sets border_title via ReferenceModal.on_mount
         self._lines_cache: list[str] = []
         self._refresh_content()
 

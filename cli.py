@@ -2653,6 +2653,8 @@ class HermesCLI:
         self._prelaunch_artefacts_pending: bool = False
         self._prelaunch_tte_state: tuple | None = None
         self._first_input_seen = threading.Event()
+        self._artefacts_lock = threading.Lock()
+        self._artefacts_built_event: threading.Event | None = None
 
         # Voice mode state (also reinitialized inside run() for interactive TUI).
         self._voice_lock = threading.Lock()
@@ -4794,15 +4796,45 @@ class HermesCLI:
         }
 
     def _ensure_startup_banner_artefacts(self, plain_hero: str) -> None:
-        """Build and cache startup banner artefacts at most once per banner run."""
-        if self._startup_banner_template is None:
-            result = self._build_startup_banner_template(plain_hero)
-            self._startup_banner_template = result if result is not None else _TEMPLATE_FAILED
-        if (
-            self._startup_banner_static is None
-            and self._startup_banner_template is _TEMPLATE_FAILED
-        ):
-            self._startup_banner_static = self._render_startup_banner_text(print_hero=True)
+        """Build and cache startup banner artefacts at most once per banner run.
+
+        Thread-safe: the first caller builds; subsequent concurrent callers
+        wait on an Event until the build finishes, then return immediately.
+        A third+ call after the event fires hits the fast-path None check.
+        """
+        # Fast path: already built.
+        if self._startup_banner_template is not None:
+            return
+        # Determine whether this thread claims the build or waits.
+        with self._artefacts_lock:
+            if self._startup_banner_template is not None:
+                return  # another thread won the race while we waited for the lock
+            if self._artefacts_built_event is None:
+                self._artefacts_built_event = threading.Event()
+                claimed = True
+            else:
+                claimed = False
+        if claimed:
+            try:
+                result = self._build_startup_banner_template(plain_hero)
+                self._startup_banner_template = result if result is not None else _TEMPLATE_FAILED
+                if (
+                    self._startup_banner_static is None
+                    and self._startup_banner_template is _TEMPLATE_FAILED
+                ):
+                    self._startup_banner_static = self._render_startup_banner_text(print_hero=True)
+            except Exception:
+                # Guarantee template is never left None so waiters don't race again.
+                logger.exception("_build_startup_banner_template raised; using static fallback")
+                self._startup_banner_template = _TEMPLATE_FAILED
+                if self._startup_banner_static is None:
+                    self._startup_banner_static = self._render_startup_banner_text(print_hero=True)
+            finally:
+                self._artefacts_built_event.set()
+        else:
+            # Wait for the claiming thread.  After this returns, template is either
+            # a dict (success) or _TEMPLATE_FAILED (build failed); never None.
+            self._artefacts_built_event.wait(timeout=10.0)
 
     def _hero_ansi_colored(self, plain_hero: str) -> str:
         """Return ANSI-colored hero text suitable for _splice_startup_banner_frame.
@@ -15035,6 +15067,8 @@ class HermesCLI:
             if _tui_app is not None:
                 _install_tui_file_log()
                 self._start_prelaunch_banner_worker()
+                from hermes_cli.tui._banner_data_cache import schedule_refresh as _schedule_banner_refresh
+                _schedule_banner_refresh()  # refreshes cache for next startup; daemon, off critical path
                 # Textual path — _hermes_app is already set above; Textual owns the loop
                 _tui_app.run()
             else:

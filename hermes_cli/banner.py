@@ -663,10 +663,24 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     tools = tools or []
     enabled_toolsets = enabled_toolsets or []
 
+    # Load cached slow inputs (unavailable_toolsets, mcp_status, skills_by_category).
+    # Cache hit: ~1 ms.  Cache miss (cold / stale / HERMES_NO_CACHE): live calls (~3 s).
+    from hermes_cli.tui._banner_data_cache import load_banner_data as _load_banner_data
+    _cached = _load_banner_data()
+
     _bw_t0 = time.monotonic()
-    _, unavailable_toolsets = check_tool_availability(quiet=True)
-    logger.info("BUILD-BANNER: check_tool_avail +%.0fms n_unavail=%d",
-                (time.monotonic() - _bw_t0) * 1000, len(unavailable_toolsets))
+    if _cached is not None:
+        unavailable_toolsets = _cached.get("unavailable_toolsets") or []
+        logger.info("BUILD-BANNER: check_tool_avail CACHE HIT n_unavail=%d", len(unavailable_toolsets))
+    else:
+        try:
+            _, unavailable_toolsets = check_tool_availability(quiet=True)
+        except Exception:
+            logger.exception("check_tool_availability failed in live banner path")
+            unavailable_toolsets = []
+        logger.info("BUILD-BANNER: check_tool_avail +%.0fms n_unavail=%d",
+                    (time.monotonic() - _bw_t0) * 1000, len(unavailable_toolsets))
+
     disabled_tools = set()
     # Tools whose toolset has a check_fn are lazy-initialized (e.g. honcho,
     # homeassistant) — they show as unavailable at banner time because the
@@ -727,19 +741,34 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
 
     # BL-3: hoist MCP and skills computation; build summary as the FIRST line
     _mcp_t0 = time.monotonic()
-    try:
-        from tools.mcp_tool import get_mcp_status
-        mcp_status = get_mcp_status()
-    except Exception:
-        logger.debug("get_mcp_status failed", exc_info=True)
-        mcp_status = []
+    if _cached is not None:
+        mcp_status = _cached.get("mcp_status") or []
+        logger.info("BUILD-BANNER: mcp_status CACHE HIT")
+    else:
+        try:
+            from tools.mcp_tool import get_mcp_status
+            mcp_status = get_mcp_status()
+        except Exception:
+            # EH-OK: MCP status is cosmetic; banner renders safely with mcp_status=[]
+            logger.debug("get_mcp_status failed", exc_info=True)
+            mcp_status = []
+        logger.info("BUILD-BANNER: mcp_status +%.0fms", (time.monotonic() - _mcp_t0) * 1000)
     mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
-    logger.info("BUILD-BANNER: mcp_status +%.0fms", (time.monotonic() - _mcp_t0) * 1000)
 
     _sk_t0 = time.monotonic()
-    skills_by_category = get_available_skills()
+    if _cached is not None:
+        skills_by_category = _cached.get("skills_by_category") or {}
+        logger.info("BUILD-BANNER: skills CACHE HIT")
+    else:
+        try:
+            skills_by_category = get_available_skills()
+        except Exception:
+            logger.exception("get_available_skills failed in live banner path")
+            skills_by_category = {}
+        logger.info("BUILD-BANNER: skills +%.0fms n=%d",
+                    (time.monotonic() - _sk_t0) * 1000,
+                    sum(len(v) for v in skills_by_category.values()))
     total_skills = sum(len(s) for s in skills_by_category.values())
-    logger.info("BUILD-BANNER: skills +%.0fms n=%d", (time.monotonic() - _sk_t0) * 1000, total_skills)
 
     summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
     if mcp_connected:

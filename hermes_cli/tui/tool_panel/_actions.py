@@ -913,7 +913,7 @@ class _ToolPanelActionsMixin:
                 if "retry" not in visible_action_kinds:
                     primary.append(("r", "retry"))
             else:
-                primary.append(("y", "copy"))
+                primary.append(("c", "copy"))
 
         contextual: list[tuple[str, str]] = []
         bar = self._get_omission_bar()
@@ -1161,7 +1161,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.body_renderers import pick_renderer
             from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
             from hermes_cli.tui.tool_panel.density import DensityTier
-            from hermes_cli.tui.services.tools import ToolCallState, set_axis
+            from hermes_cli.tui.services.tools import ToolCallState, set_axis, set_user_kind_override
 
             view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
             if view is not None:
@@ -1169,7 +1169,7 @@ class _ToolPanelActionsMixin:
                 # existing streaming_kind_hint watcher branch refreshes the header first.
                 if getattr(view, "streaming_kind_hint", None) is not None:
                     set_axis(view, "streaming_kind_hint", None)
-                view.user_kind_override = kind
+                set_user_kind_override(view, kind, source_widget=self)
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
             payload = ToolPayload(
@@ -1309,10 +1309,10 @@ class _ToolPanelActionsMixin:
             self._flash_header("render as: no override", tone="warning")
             return
         # AB-1: clear stale hint BEFORE override write so the watcher fires first.
-        from hermes_cli.tui.services.tools import set_axis
+        from hermes_cli.tui.services.tools import set_axis, set_user_kind_override
         if getattr(view, "streaming_kind_hint", None) is not None:
             set_axis(view, "streaming_kind_hint", None)
-        view.user_kind_override = None
+        set_user_kind_override(view, None, source_widget=self)
         self.force_renderer(None)  # type: ignore[attr-defined]
         self._flash_header("render as: auto", tone="accent")
 

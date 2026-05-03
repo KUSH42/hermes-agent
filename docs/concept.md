@@ -992,6 +992,22 @@ When this doc drifts from the code: flag it, don't silently edit. Bump the versi
 
 ## Changelog
 
+### v3.6 — 2026-05-02 — SPEC-TBC: concept v3.6 drift fix (bug-fix-class edits only)
+
+- 2026-05-02 (bug-fix): block-level copy key reconciliation — code rebound to `c` to
+  match canonical key-contract table; microcopy updated. Action name
+  `action_copy_body` unchanged. (TBC-5)
+- 2026-05-02 (bug-fix): user_kind_override writes routed through a single
+  set_user_kind_override helper that fires a header refresh, satisfying the
+  user-overrides clause without expanding the AxisName taxonomy. (TBC-6)
+- 2026-05-02 (bug-fix / factual correction): the symbol `RawTextRenderer` used
+  in §Failure modes and §Confidence threshold refers to the existing
+  `FallbackRenderer` class (`hermes_cli/tui/body_renderers/fallback.py`); the
+  two names denote the same renderer. RawTextRenderer is mounted on
+  build_widget exception, and the slow-renderer 250 ms tag is per-block and
+  triggers worker dispatch on subsequent renders of the same block.
+  (TBC-2, TBC-3)
+
 ### v3.6 — 2026-04-27 — SLR-1/SLR-2/SLR-3: Streaming legibility + visual rhythm
 
 - **SLR-1 (HG-1): Multi-block rhythm contract.** HERO and DEFAULT blocks earn one row of vertical rest (margin-bottom: 1); COMPACT and TRACE pack tight (0). Group children always 0. ERR phase always earns the gap. CSS-only; no resolver change. New "Multi-block rhythm" subsection added to "The frame at a glance."

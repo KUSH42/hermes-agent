@@ -22,18 +22,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # SC-4: singleton executor for classifier timeout — shared across calls to
-# avoid per-call thread-pool overhead; max_workers=2 prevents pile-up under burst.
+# avoid per-call thread-pool overhead; max_workers=4 absorbs burst during plan fan-out.
 _CLASSIFIER_TIMEOUT_S: float = 0.050
+_POOL_STARVATION_METRIC_KEY: str = "classify_pool_starvation"
 _CLASSIFIER_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
     concurrent.futures.ThreadPoolExecutor(
-        max_workers=2,
+        max_workers=4,
         thread_name_prefix="hermes-classifier",
     )
 )
+_pool_starvation_count: int = 0
 
 
 def _classify_with_timeout(payload: "Any") -> "Any":
     """Submit classify_content to bounded executor; fall back to TEXT on timeout."""
+    global _pool_starvation_count
     from hermes_cli.tui.content_classifier import classify_content
     fut = _CLASSIFIER_EXECUTOR.submit(classify_content, payload)
     try:
@@ -42,7 +45,12 @@ def _classify_with_timeout(payload: "Any") -> "Any":
         # Concept §perception-budgets: classifier ≤50ms; on overrun treat as TEXT.
         # Worker thread keeps running until classify returns; output discarded.
         # Acceptable: classifier holds no locks, payload data is read-only.
-        logger.warning("classifier exceeded 50ms budget; falling back to TEXT", exc_info=True)
+        fut.cancel()  # best-effort; running threads cannot be cancelled
+        _pool_starvation_count += 1
+        logger.warning(
+            "classifier exceeded 50ms budget; falling back to TEXT (starvation_count=%d)",
+            _pool_starvation_count, exc_info=True,
+        )
         from hermes_cli.tui.content_classifier import ClassificationResult
         from hermes_cli.tui.tool_payload import ResultKind
         return ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
@@ -118,6 +126,8 @@ class ToolCallViewState:
     stderr_tail: "tuple[str, ...]" = ()
     # ER-3: fallback raw payload for error body when stderr_tail is empty.
     payload: str = ""
+    # TBC-2: per-block set of renderer classes that failed build_widget(); skipped on retry.
+    failed_renderer_classes: "set[type]" = _field(default_factory=set)
 
     @property
     def is_error_for_ui(self) -> bool:
@@ -173,6 +183,36 @@ def set_axis(view: "ToolCallViewState", axis: "AxisName", value: Any) -> None:
             w(view, axis, old, value)
         except Exception:
             logger.exception("axis watcher failed (axis=%s); continuing", axis)
+
+
+def set_user_kind_override(
+    view: "ToolCallViewState",
+    value: "Any",
+    *,
+    source_widget: "Any | None" = None,
+) -> None:
+    """Single write site for user_kind_override. Refreshes the live header
+    directly via parent-walk from the calling widget — no pub/sub list, no
+    new view-state field, no new axis.
+
+    value must be ResultKind | None (matching view.user_kind_override type).
+    """
+    if view.user_kind_override == value:
+        return
+    view.user_kind_override = value
+    if source_widget is None:
+        return
+    # Find the live header via parent-walk from the source widget. Mirrors
+    # the existing parent-walk pattern at _streaming.py:246.
+    try:
+        panel = getattr(source_widget, "parent", None)
+        panel = getattr(panel, "parent", None) if panel is not None else None
+        header = getattr(panel, "_block", None)
+        header = getattr(header, "_header", None) if header is not None else None
+        if header is not None:
+            header.refresh()
+    except Exception:
+        logger.exception("set_user_kind_override: header refresh failed")
 
 
 def _parse_duration_ms(s: "str | None") -> int:

@@ -87,13 +87,13 @@ class _ArtifactButton(TooltipMixin, Button):
 def _build_collapsed_actions_map() -> "dict":
     from hermes_cli.tui.tool_category import ToolCategory
     return {
-        ToolCategory.SHELL:  [("r", "retry"), ("e", "err"), ("y", "copy"), ("?", "keys")],
-        ToolCategory.FILE:   [("o", "open"), ("y", "copy"), ("?", "keys")],
-        ToolCategory.SEARCH: [("y", "copy"), ("o", "open"), ("?", "keys")],
-        ToolCategory.WEB:    [("o", "open"), ("y", "copy"), ("?", "keys")],
-        ToolCategory.CODE:   [("y", "copy"), ("r", "retry"), ("?", "keys")],
+        ToolCategory.SHELL:  [("r", "retry"), ("e", "err"), ("c", "copy"), ("?", "keys")],
+        ToolCategory.FILE:   [("o", "open"), ("c", "copy"), ("?", "keys")],
+        ToolCategory.SEARCH: [("c", "copy"), ("o", "open"), ("?", "keys")],
+        ToolCategory.WEB:    [("o", "open"), ("c", "copy"), ("?", "keys")],
+        ToolCategory.CODE:   [("c", "copy"), ("r", "retry"), ("?", "keys")],
         ToolCategory.AGENT:  [("?", "keys")],
-        ToolCategory.MCP:    [("y", "copy"), ("?", "keys")],
+        ToolCategory.MCP:    [("c", "copy"), ("?", "keys")],
     }
 
 
@@ -264,6 +264,16 @@ class BodyPane(Widget):
         w.add_class("slow-placeholder")
         return w
 
+    def _get_block_id(self) -> str:
+        """Return the block ID for slow-renderer bookkeeping (panel-side dict key)."""
+        panel = getattr(self, "parent", None)
+        vs = getattr(panel, "_view_state", None)
+        if vs is not None:
+            tid = getattr(vs, "tool_call_id", None)
+            if tid:
+                return tid
+        return str(id(panel)) if panel is not None else str(id(self))
+
     def _mount_body_with_deadline(self, tier: "object") -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier
         # Restore the original block if it was detached by _render_compact_body
@@ -274,6 +284,18 @@ class BodyPane(Widget):
             return
         renderer = self._renderer
         clamp = _clamp_for_tier(tier)  # type: ignore[arg-type]
+
+        # TBC-3: if this renderer class was previously tagged slow on this block,
+        # dispatch directly to the worker path to avoid blocking the event loop.
+        block_id = self._get_block_id()
+        panel = getattr(self, "parent", None)
+        slow_tag: "set[type]" = {}  # type: ignore[assignment]
+        if panel is not None:
+            slow_tag = getattr(panel, "_slow_renderer_classes_by_block", {}).get(block_id, set())
+        if type(renderer) in slow_tag:
+            self._start_slow_render(tier)
+            return
+
         start = time.monotonic()
         try:
             widget = renderer.build_widget(density=tier, clamp_rows=clamp)
@@ -291,6 +313,11 @@ class BodyPane(Widget):
                 "renderer %s exceeded %.0fms on first build; future re-renders will use worker path",
                 type(renderer).__name__, elapsed * 1000,
             )
+            # TBC-3: tag this renderer class as slow for this block on the panel.
+            if panel is not None:
+                slow_classes = getattr(panel, "_slow_renderer_classes_by_block", None)
+                if slow_classes is not None:
+                    slow_classes.setdefault(block_id, set()).add(type(renderer))
 
     def _start_slow_render(self, tier: "object") -> None:
         renderer = self._renderer
@@ -316,6 +343,7 @@ class BodyPane(Widget):
         )
         self._swap_in_real_widget(fallback)
 
+    # il-w1: imports + pure clamp call before try; renderer.build_widget failure logged at line 327
     @work(thread=True, exclusive=True, group="slow-render")
     def _render_in_worker(self, tier: "object") -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import _clamp_for_tier

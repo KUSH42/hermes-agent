@@ -1034,3 +1034,255 @@ class TestIL9ViewMirrorOrdering:
                                 )
 
         assert violations == [], f"IL-9 violations — post-terminal mirror writes: {violations}"
+
+
+# ---------------------------------------------------------------------------
+# IL-GAP-1 extension — user_kind_override writes must use set_user_kind_override
+# ---------------------------------------------------------------------------
+
+class TestUserOverrideHelperInvariant:
+    """IL-GAP-1: No direct view.user_kind_override = ... in owner paths.
+
+    All writes must be routed through set_user_kind_override() helper in
+    services/tools.py. Direct attribute assignment bypasses the header refresh
+    and violates the user-overrides clause of concept v3.6.
+    """
+
+    def test_no_direct_user_kind_override_writes_in_tool_panel(self) -> None:
+        """tool_panel/ must contain no direct user_kind_override assignments."""
+        owner_dir = _TUI_ROOT / "tool_panel"
+        offenders: list[str] = []
+        for py_file in sorted(owner_dir.glob("*.py")):
+            try:
+                src = py_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            tree = ast.parse(src, filename=str(py_file))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if (isinstance(target, ast.Attribute)
+                            and target.attr == "user_kind_override"):
+                        offenders.append(
+                            f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno}: "
+                            f"direct user_kind_override assignment (use set_user_kind_override)"
+                        )
+        assert offenders == [], (
+            "IL-GAP-1: direct user_kind_override writes in tool_panel/:\n"
+            + "\n".join(offenders)
+        )
+
+    def test_no_direct_user_kind_override_writes_in_tool_blocks(self) -> None:
+        """tool_blocks/ must contain no direct user_kind_override assignments."""
+        owner_dir = _TUI_ROOT / "tool_blocks"
+        offenders: list[str] = []
+        for py_file in sorted(owner_dir.glob("*.py")):
+            try:
+                src = py_file.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            tree = ast.parse(src, filename=str(py_file))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Assign):
+                    continue
+                for target in node.targets:
+                    if (isinstance(target, ast.Attribute)
+                            and target.attr == "user_kind_override"):
+                        offenders.append(
+                            f"{py_file.relative_to(_REPO_ROOT)}:{node.lineno}: "
+                            f"direct user_kind_override assignment (use set_user_kind_override)"
+                        )
+        assert offenders == [], (
+            "IL-GAP-1: direct user_kind_override writes in tool_blocks/:\n"
+            + "\n".join(offenders)
+        )
+
+
+# ---------------------------------------------------------------------------
+# IL-W1: Worker Exception Discipline gate (SPEC-WRK)
+# ---------------------------------------------------------------------------
+
+def _ilw1_check_source(source: str, filename: str = "<test>") -> list[str]:
+    """AST-walk source for @work-decorated functions lacking a top-level try.
+
+    Returns a list of violation strings, empty if compliant.
+
+    Rules:
+    - Each @work-decorated function must have its body's first *raising* statement
+      inside a try block.
+    - Allowed preamble (non-raising) before the try:
+        - Import / ImportFrom nodes
+        - Simple bare-name assignments whose RHS is one of:
+            time.perf_counter(), time.monotonic(), getattr(...) with >=3 args,
+            or a list/dict literal.
+    - Exemption: a comment ``# il-w1: <non-empty reason>`` on the line immediately
+      above the @work decoration (decorator.lineno - 1) bypasses the check.
+      Blank reasons (``# il-w1:`` or ``# il-w1: ``) are REJECTED.
+    """
+    tree = ast.parse(source)
+    lines = source.splitlines()
+    violations: list[str] = []
+
+    def _is_preamble(stmt: ast.stmt) -> bool:
+        """Return True if stmt is a non-raising preamble (allowed before try)."""
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            return True
+        if isinstance(stmt, ast.Assign):
+            # Only simple bare-name targets
+            if not all(isinstance(t, ast.Name) for t in stmt.targets):
+                return False
+            rhs = stmt.value
+            if isinstance(rhs, (ast.List, ast.Dict)):
+                return True
+            if isinstance(rhs, ast.Call):
+                fn = rhs.func
+                # time.perf_counter() or time.monotonic()
+                if isinstance(fn, ast.Attribute) and fn.attr in ("perf_counter", "monotonic"):
+                    return True
+                # getattr(obj, name, default) — 3 args
+                if isinstance(fn, ast.Name) and fn.id == "getattr" and len(rhs.args) >= 3:
+                    return True
+            return False
+        return False
+
+    def _has_work_decorator(node: ast.FunctionDef) -> tuple[bool, int]:
+        """Return (is_work_decorated, decorator_lineno)."""
+        for dec in node.decorator_list:
+            # @work, @work(...), @work(thread=True, ...)
+            if isinstance(dec, ast.Name) and dec.id == "work":
+                return True, dec.lineno
+            if isinstance(dec, ast.Call):
+                fn = dec.func
+                if isinstance(fn, ast.Name) and fn.id == "work":
+                    return True, dec.lineno
+                if isinstance(fn, ast.Attribute) and fn.attr == "work":
+                    return True, dec.lineno
+        return False, -1
+
+    def _check_exemption(dec_lineno: int) -> tuple[bool, str]:
+        """Check for # il-w1: comment on the line immediately above the decorator.
+
+        Returns (is_exempt, violation_msg_or_empty).
+        """
+        comment_lineno = dec_lineno - 1
+        if comment_lineno < 1 or comment_lineno > len(lines):
+            return False, ""
+        line = lines[comment_lineno - 1].strip()
+        prefix = "# il-w1:"
+        if line.startswith(prefix):
+            reason = line[len(prefix):].strip()
+            if not reason:
+                return False, f"il-w1 exemption at line {comment_lineno} has blank reason"
+            return True, ""
+        return False, ""
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        is_work, dec_lineno = _has_work_decorator(node)
+        if not is_work:
+            continue
+
+        # Check exemption
+        is_exempt, exemption_violation = _check_exemption(dec_lineno)
+        if exemption_violation:
+            violations.append(f"{filename}:{dec_lineno} {node.name}: {exemption_violation}")
+            continue
+        if is_exempt:
+            continue
+
+        # Find first non-preamble statement
+        body = node.body
+        first_raising_idx = 0
+        for i, stmt in enumerate(body):
+            if _is_preamble(stmt):
+                continue
+            first_raising_idx = i
+            break
+        else:
+            # All statements are preamble — no raising statement found; compliant
+            continue
+
+        # The first raising statement must be a Try node
+        if first_raising_idx < len(body):
+            first_stmt = body[first_raising_idx]
+            try:
+                # Python 3.11+ has ast.TryStar; fall back gracefully
+                _try_types: tuple = (ast.Try, getattr(ast, "TryStar", ast.Try))
+            except AttributeError:
+                _try_types = (ast.Try,)
+            if not isinstance(first_stmt, _try_types):
+                violations.append(
+                    f"{filename}:{node.lineno} {node.name}: "
+                    f"body first raising statement (line {first_stmt.lineno}) is not a try block"
+                )
+
+    return violations
+
+
+class TestWorkerExceptionDiscipline:
+    """IL-W1: AST lint gate — every @work body must start with try or have exemption comment."""
+
+    def test_il_w1_passes_on_compliant_module(self, tmp_path: pathlib.Path) -> None:
+        """A @work function whose body is a try block passes the lint."""
+        src = '''\
+from textual import work
+import logging
+_log = logging.getLogger(__name__)
+
+@work(thread=True)
+def my_worker(self) -> None:
+    try:
+        do_something()
+    except Exception:
+        _log.exception("my_worker failed")
+'''
+        violations = _ilw1_check_source(src, "compliant.py")
+        assert violations == [], f"Expected no violations, got: {violations}"
+
+    def test_il_w1_rejects_unwrapped_worker(self, tmp_path: pathlib.Path) -> None:
+        """A @work function whose body has no try block is rejected."""
+        src = '''\
+from textual import work
+
+@work(thread=True)
+def bad_worker(self) -> None:
+    do_something_dangerous()
+    do_something_else()
+'''
+        violations = _ilw1_check_source(src, "violator.py")
+        assert violations, "Expected at least one violation for unwrapped worker"
+        combined = " ".join(violations)
+        assert "bad_worker" in combined
+        assert "violator.py" in combined
+
+    def test_il_w1_honors_exemption_comment(self, tmp_path: pathlib.Path) -> None:
+        """# il-w1: <reason> passes; blank reason (# il-w1: ) is rejected."""
+        # Valid exemption
+        src_exempt = '''\
+from textual import work
+import logging
+_log = logging.getLogger(__name__)
+
+# il-w1: imports-only preamble; raising work inside inner try at line 8
+@work(thread=True)
+def exempt_worker(self) -> None:
+    import os
+    do_something_dangerous()
+'''
+        violations = _ilw1_check_source(src_exempt, "exempt.py")
+        assert violations == [], f"Expected no violations with valid exemption, got: {violations}"
+
+        # Blank reason is rejected
+        src_blank = '''\
+from textual import work
+
+# il-w1:
+@work(thread=True)
+def blank_reason_worker(self) -> None:
+    do_something()
+'''
+        violations_blank = _ilw1_check_source(src_blank, "blank_reason.py")
+        assert violations_blank, "Expected violation for blank il-w1 reason"
+        assert "blank reason" in violations_blank[0].lower()

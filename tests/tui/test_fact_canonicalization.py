@@ -25,7 +25,6 @@ def _summary_with_chips():
 @pytest.mark.asyncio
 async def test_chips_not_in_header():
     """After set_result_summary, header._header_chips is always []."""
-    from hermes_cli.tui.tool_blocks._header import ToolCallHeader
     # Use a real Static subclass as fake_header so ToolPanel.compose() can mount it.
     class FakeHeader(Static):
         _header_chips: list = []

@@ -347,7 +347,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             )
 
     def _best_kind_icon(self) -> str:
-        view = getattr(self, "_view", None)
+        # Parent-walk to panel — mirrors existing pattern at _streaming.py:246.
+        panel = getattr(self, "parent", None)
+        panel = getattr(panel, "parent", None) if panel is not None else None
+        view = getattr(panel, "_view_state", None) if panel is not None else None
         hint = getattr(view, "streaming_kind_hint", None) if view is not None else None
         if hint is not None:
             from hermes_cli.tui.tool_blocks._header import ToolHeader
@@ -908,20 +911,42 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         """Return the renderer kind the classifier would choose without an override."""
         try:
             from hermes_cli.tui.body_renderers import pick_renderer
+            from hermes_cli.tui.tool_payload import ToolPayload
             from hermes_cli.tui.services.tools import ToolCallState
-            view = getattr(self, "_view", None)
-            if view is not None and view.kind is not None:
-                from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
-                renderer_cls = pick_renderer(
-                    view.kind,
-                    view.args,  # type: ignore[arg-type]
-                    phase=ToolCallState.DONE,
-                    density=DensityTier.DEFAULT,
-                )
-                name = renderer_cls.__name__.lower()
-                for rk in RendererKind:
-                    if rk.value in name:
-                        return rk
+            from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+
+            # Parent-walk to panel — mirrors existing pattern at _streaming.py:246.
+            panel = getattr(self, "parent", None)
+            panel = getattr(panel, "parent", None) if panel is not None else None
+            view = getattr(panel, "_view_state", None) if panel is not None else None
+            if view is None or view.kind is None:
+                return RendererKind.PLAIN
+
+            # Build ad-hoc ToolPayload — copy of _actions.py:1175-1182 construction.
+            # NOTE: do NOT use view.payload — that is the raw stderr fallback str
+            # (services/tools.py:120), not a ToolPayload.
+            output_raw = self.copy_content()  # type: ignore[attr-defined]
+            payload = ToolPayload(
+                tool_name=self._tool_name,                  # type: ignore[attr-defined]
+                category=self._category,                    # type: ignore[attr-defined]
+                args=self._tool_args or {},                 # type: ignore[attr-defined]
+                input_display=None,
+                output_raw=output_raw,
+                line_count=self._body_line_count(),         # type: ignore[attr-defined]
+            )
+
+            renderer_cls = pick_renderer(
+                view.kind, payload,
+                phase=view.state, density=view.density,
+                user_kind_override=None,
+            )
+            # renderer_cls.kind is ResultKind (body_renderers/base.py:19), not RendererKind.
+            # Convert by .value match; RendererKind has only DIFF/CODE/PLAIN, so any other
+            # ResultKind (TEXT, JSON, TABLE, LOG, EMPTY, …) folds to PLAIN.
+            result_value = renderer_cls.kind.value
+            for rk in RendererKind:
+                if rk.value == result_value:
+                    return rk
         except Exception:
             logger.debug("_auto_renderer_kind failed", exc_info=True)
         return RendererKind.PLAIN

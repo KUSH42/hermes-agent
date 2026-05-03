@@ -168,7 +168,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
 
     BINDINGS = [
         Binding("enter", "toggle_collapse",  "Toggle",           show=False),
-        Binding("y",     "copy_body",         "Copy output",      show=False),
+        Binding("c",     "copy_body",         "Copy output",      show=False),
         Binding("Y",     "copy_input",        "Copy input",       show=False),
         Binding("C",     "copy_ansi",        "Copy +color",      show=False),
         Binding("H",     "copy_html",        "Copy HTML",        show=False),
@@ -249,6 +249,9 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._pending_renderer_swap: "tuple[type, Any, Any] | None" = None
 
         self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
+        # TBC-3: per-block set of renderer classes that exceeded _SLOW_DEADLINE_S on first build.
+        # Keyed by tool_call_id (or str(id(self)) as fallback). Evicted on block unmount.
+        self._slow_renderer_classes_by_block: "dict[str, set[type]]" = {}
         self._resolver = ToolBlockLayoutResolver()
         self._resolver.subscribe(self._on_tier_change)
         # LL-1: track last density result to suppress redundant flashes
@@ -321,6 +324,16 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             _panel_key = self.id if self.id is not None else str(id(self))
             self.app.feedback.deregister_channel(f"tool-header::{_panel_key}")
         except Exception:  # FeedbackService unavailable on unmount; deregistration best-effort, safe
+            pass
+        # TBC-3: evict slow-renderer tag for this block to prevent stale entries
+        # from accumulating across block reuse cycles.
+        try:
+            vs = self._view_state
+            if vs is not None:
+                tid = getattr(vs, "tool_call_id", None)
+                if tid and tid in self._slow_renderer_classes_by_block:
+                    del self._slow_renderer_classes_by_block[tid]
+        except Exception:  # best-effort eviction; safe to swallow
             pass
 
     def watch_collapsed(self, old: bool, new: bool) -> None:

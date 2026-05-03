@@ -4,12 +4,12 @@ Spec: /home/xush/.hermes/spec_tool_lifecycle_legibility.md
 
 Test layout:
     TestLL1DensityFlash     — 6 tests — LL-1 density tier flash suppression
-    TestLL2CompletingChip   — 5 tests — LL-2 completing chip 250ms gate
     TestLL3ErrorMarker      — 4 tests — LL-3 error-expanded class + glyph
     TestLL4KindOverride     — 7 tests — LL-4 kind override chip + cycling
     TestLL5Adoption         — 5 tests — LL-5 adoption flash + adopted class
-    TestLL6PhaseChip        — 8 tests — LL-6 ToolCallHeader state→chip mapping
-    Total: 35 tests
+    Total: 22 tests
+    (TestLL2CompletingChip and TestLL6PhaseChip removed: tested ToolCallHeader
+     which was the dead class deleted in TBC-1.)
 """
 from __future__ import annotations
 
@@ -48,41 +48,6 @@ def _make_view(
         completing_started_at=completing_started_at,
         density_reason=density_reason,
     )
-
-
-class _HeaderStub:
-    """Stub wrapping ToolCallHeader methods without Textual Widget machinery."""
-
-    def __init__(self, view):
-        from hermes_cli.tui.tool_blocks._header import ToolCallHeader
-        self._view = view
-        self._phase_chip_timer = None
-        self._completing_chip_timer = None
-        self.is_attached = True
-
-        phase_chip = MagicMock()
-        phase_chip.display = False
-        finalizing_chip = MagicMock()
-        finalizing_chip.display = False
-        self._phase_chip = phase_chip
-        self._finalizing_chip = finalizing_chip
-
-        # Bind real methods from ToolCallHeader
-        self.set_state = ToolCallHeader.set_state.__get__(self)
-        self._render_phase_chip = ToolCallHeader._render_phase_chip.__get__(self)
-        self._clear_phase_chip = ToolCallHeader._clear_phase_chip.__get__(self)
-
-        timers = []
-
-        def _fake_set_timer(delay, cb):
-            t = MagicMock()
-            t._callback = cb
-            t._delay = delay
-            timers.append(t)
-            return t
-
-        self.set_timer = _fake_set_timer
-        self._timers = timers
 
 
 class _StreamingBlockStub:
@@ -193,85 +158,6 @@ class TestLL1DensityFlash:
         tier = DensityTier[tier_name]
         result = self._flash(tier, tier, "auto")
         assert result == ""
-
-
-# ---------------------------------------------------------------------------
-# TestLL2CompletingChip
-# ---------------------------------------------------------------------------
-
-class TestLL2CompletingChip:
-    """LL-2: completing chip visible only after 250ms."""
-
-    def test_completing_under_250ms_no_chip(self):
-        """elapsed=0.249 → chip hidden."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.COMPLETING, completing_started_at=1000.0)
-        header = _HeaderStub(view)
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 1000.249
-            header._render_phase_chip()
-
-        assert header._finalizing_chip.display is False
-
-    def test_completing_over_250ms_shows_chip(self):
-        """elapsed=0.251 → chip shown with '…finalizing' text."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.COMPLETING, completing_started_at=1000.0)
-        header = _HeaderStub(view)
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 1000.251
-            header._render_phase_chip()
-
-        assert header._finalizing_chip.display is True
-        header._finalizing_chip.update.assert_called_with("[dim]…FINALIZING[/dim]")
-
-    def test_chip_removed_on_done(self):
-        """Transition COMPLETING → DONE hides the finalizing chip."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.COMPLETING)
-        header = _HeaderStub(view)
-        header._finalizing_chip.display = True  # pre-condition
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 9999.0
-            header.set_state(ToolCallState.DONE)
-
-        assert header._finalizing_chip.display is False
-
-    def test_chip_removed_on_error(self):
-        """Transition COMPLETING → ERROR hides the finalizing chip."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.COMPLETING)
-        header = _HeaderStub(view)
-        header._finalizing_chip.display = True
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 9999.0
-            header.set_state(ToolCallState.ERROR)
-
-        assert header._finalizing_chip.display is False
-
-    def test_chip_removed_on_cancelled(self):
-        """Transition COMPLETING → CANCELLED hides finalizing chip, shows cancelled chip."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.COMPLETING)
-        header = _HeaderStub(view)
-        header._finalizing_chip.display = True
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 9999.0
-            header.set_state(ToolCallState.CANCELLED)
-
-        assert header._finalizing_chip.display is False
-        # CANCELLED sets phase chip instead
-        assert header._phase_chip.display is True
 
 
 # ---------------------------------------------------------------------------
@@ -545,124 +431,3 @@ class TestLL5Adoption:
         assert len(flash_msgs) == 1
         assert flash_msgs[0].text == "started"
 
-
-# ---------------------------------------------------------------------------
-# TestLL6PhaseChip
-# ---------------------------------------------------------------------------
-
-class TestLL6PhaseChip:
-    """LL-6: ToolCallHeader state → chip mapping."""
-
-    def test_pending_no_phase_chip(self):
-        """PENDING → both chips hidden."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.PENDING)
-        header = _HeaderStub(view)
-        header._render_phase_chip()
-
-        assert header._phase_chip.display is False
-        assert header._finalizing_chip.display is False
-
-    def test_started_chip_visible_then_hidden(self):
-        """set_state(STARTED) shows phase chip; _clear_phase_chip hides it."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.GENERATED)
-        header = _HeaderStub(view)
-
-        header.set_state(ToolCallState.STARTED)
-
-        assert header._phase_chip.display is True
-        header._phase_chip.update.assert_called_with("[dim]…STARTING[/dim]")
-
-        header._clear_phase_chip()
-        assert header._phase_chip.display is False
-
-    def test_started_then_completing_phase_chip_hidden(self):
-        """STARTED chip visible; transitioning to COMPLETING clears it."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.GENERATED)
-        header = _HeaderStub(view)
-
-        header.set_state(ToolCallState.STARTED)
-        assert header._phase_chip.display is True
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 5000.0
-            view.completing_started_at = None  # no completing_started_at → no finalizing chip
-            header.set_state(ToolCallState.COMPLETING)
-
-        assert header._phase_chip.display is False
-
-    def test_streaming_no_phase_chip(self):
-        """STREAMING → both chips hidden."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.GENERATED)
-        header = _HeaderStub(view)
-
-        header.set_state(ToolCallState.STREAMING)
-
-        assert header._phase_chip.display is False
-        assert header._finalizing_chip.display is False
-
-    def test_completing_chip_present(self):
-        """set_state(COMPLETING) then _render_phase_chip with elapsed>250ms shows chip."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.GENERATED, completing_started_at=1000.0)
-        header = _HeaderStub(view)
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 1000.251
-            header.set_state(ToolCallState.COMPLETING)
-            # Simulate deferred _render_phase_chip callback firing after 0.251s timer
-            header._render_phase_chip()
-
-        assert header._finalizing_chip.display is True
-        header._finalizing_chip.update.assert_called_with("[dim]…FINALIZING[/dim]")
-        assert header._phase_chip.display is False
-
-    def test_done_no_phase_chip(self):
-        """DONE → both chips hidden."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.STARTED)
-        header = _HeaderStub(view)
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 0.0
-            header.set_state(ToolCallState.DONE)
-
-        assert header._phase_chip.display is False
-        assert header._finalizing_chip.display is False
-
-    def test_cancelled_chip_persistent(self):
-        """CANCELLED → phase chip shows 'cancelled' with no timer."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.GENERATED)
-        header = _HeaderStub(view)
-
-        header.set_state(ToolCallState.CANCELLED)
-
-        assert header._phase_chip.display is True
-        header._phase_chip.update.assert_called_with("[dim]CANCELLED[/dim]")
-        # No timer set for CANCELLED
-        assert header._phase_chip_timer is None
-
-    def test_error_no_phase_chip_glyph_only(self):
-        """ERROR → both chips hidden (LL-3 ⚠-glyph in separate slot handles error visual)."""
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        view = _make_view(state=ToolCallState.STARTED)
-        header = _HeaderStub(view)
-
-        with patch("hermes_cli.tui.tool_blocks._header.time") as mock_time:
-            mock_time.monotonic.return_value = 0.0
-            header.set_state(ToolCallState.ERROR)
-
-        assert header._phase_chip.display is False
-        assert header._finalizing_chip.display is False

@@ -244,8 +244,22 @@ class _ToolPanelCompletionMixin:
         try:
             new_widget = renderer.build_widget()
         except Exception:
-            _log.exception("renderer.build_widget() failed; keeping original body")
-            return
+            _log.exception(
+                "_swap_renderer: build_widget failed for %r; falling back to RawTextRenderer (FallbackRenderer)",
+                type(renderer).__name__,
+            )
+            # TBC-2: tag the block so this renderer class is skipped on density-change re-render.
+            view_state = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            if view_state is not None:
+                view_state.failed_renderer_classes.add(type(renderer))
+            from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
+            from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
+            _dummy_cls = ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
+            fallback = FallbackRenderer(payload, _dummy_cls, app=self.app)  # type: ignore[attr-defined]
+            # CRITICAL: reassign body-pane renderer pointer to the fallback so that
+            # subsequent apply_density() calls don't re-invoke the failed renderer.
+            self._body_pane._renderer = fallback  # type: ignore[attr-defined]
+            new_widget = fallback.build_widget()
         if hasattr(renderer, "diff_lines"):
             self._emit_diff_stat_for_renderer(renderer)
         plain_text = renderer.copy_text() if hasattr(renderer, "copy_text") else payload.output_raw
@@ -298,6 +312,10 @@ class _ToolPanelCompletionMixin:
                 phase=phase, density=density,
                 user_kind_override=override,
             )
+            # TBC-2: if renderer_cls previously failed build_widget on this block,
+            # skip it and use FallbackRenderer directly.
+            if view is not None and renderer_cls in view.failed_renderer_classes:
+                renderer_cls = FallbackRenderer
             # When override is set and pick_renderer returns Fallback, that IS
             # the user's choice — swap to it. When override is None and
             # pick_renderer returns Fallback, fall back to existing "no swap"

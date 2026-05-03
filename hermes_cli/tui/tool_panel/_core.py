@@ -386,7 +386,11 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             return None
         try:
             svc = self.app._svc_tools
-            vs = svc._tool_views_by_id.get(tool_call_id)
+            # Use the public helper rather than direct dict access.  This method is
+            # only called from _apply_layout, which enforces the Textual message-thread
+            # invariant (line 438-439), so no lock is needed — event-loop reads are
+            # safe per the _state_lock contract in ToolsService.__init__.
+            vs = svc.live_by_id(tool_call_id)
         except Exception:  # _svc_tools not yet attached; view-state lookup returns None safely
             return None
         # TBM-5: when view-state is found for the first time, drain any

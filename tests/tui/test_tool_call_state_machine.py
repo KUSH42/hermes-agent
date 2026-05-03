@@ -63,6 +63,7 @@ def _make_service(app=None, **app_kwargs):
     svc._open_tool_count = 0
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
+    svc._tool_views_history_by_id = {}
     svc._pending_gen_arg_deltas = {}
     svc._state_lock = threading.RLock()
     from hermes_cli.tui.services.plan_sync import PlanSyncBroker
@@ -1045,3 +1046,219 @@ class TestProductionCompletionRouting:
             )
 
         mock_done.assert_called_once_with("unknown-tid", is_error=False, dur_ms=0)
+
+
+# ---------------------------------------------------------------------------
+# TB-H2: view-state history index
+# ---------------------------------------------------------------------------
+
+def _make_view(tool_call_id: str, state: "ToolCallState" = ToolCallState.STARTED) -> "ToolCallViewState":
+    """Return a minimal ToolCallViewState for history tests."""
+    return ToolCallViewState(
+        tool_call_id=tool_call_id,
+        gen_index=None,
+        tool_name="bash",
+        label="bash",
+        args={},
+        state=state,
+        block=None,
+        panel=None,
+        parent_tool_call_id=None,
+        category="system",
+        depth=0,
+        start_s=0.0,
+    )
+
+
+class TestViewStateHistory:
+    """TB-H2: two-index view-state contract — live_by_id / history_by_id."""
+
+    def test_history_empty_for_unknown_id(self):
+        """Fresh service: history_by_id on unknown id returns []."""
+        svc = _make_service()
+        assert svc.history_by_id("Z") == []
+
+    def test_history_appends_on_terminal_entry(self):
+        """invoke + DONE → history has 1 entry, live is empty."""
+        svc = _make_service()
+        view = _make_view("tid-h1")
+        svc._tool_views_by_id["tid-h1"] = view
+
+        svc._terminalize_tool_view(
+            "tid-h1",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=view,
+        )
+
+        assert svc.live_by_id("tid-h1") is None
+        hist = svc.history_by_id("tid-h1")
+        assert len(hist) == 1
+
+    def test_history_preserves_view_state_object_identity(self):
+        """After termination, history[0] is the exact same Python object (not a copy)."""
+        svc = _make_service()
+        view = _make_view("tid-h2")
+        svc._tool_views_by_id["tid-h2"] = view
+
+        svc._terminalize_tool_view(
+            "tid-h2",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=view,
+        )
+
+        hist = svc.history_by_id("tid-h2")
+        assert hist[0] is view
+
+    def test_history_capped_at_ten_per_id(self):
+        """12 sequential terminal entries on the same id → history len == 10, oldest dropped."""
+        svc = _make_service()
+
+        views = []
+        for i in range(12):
+            v = _make_view("tid-cap")
+            views.append(v)
+            svc._tool_views_by_id["tid-cap"] = v
+            svc._terminalize_tool_view(
+                "tid-cap",
+                terminal_state=ToolCallState.DONE,
+                is_error=False,
+                mark_plan=False,
+                remove_visual=False,
+                delete_view=False,
+                view=v,
+            )
+
+        hist = svc.history_by_id("tid-cap")
+        assert len(hist) == 10
+        # Oldest two (views[0], views[1]) must be evicted; newest 10 retained.
+        assert views[0] not in hist
+        assert views[1] not in hist
+        assert views[2] is hist[0]
+        assert views[11] is hist[9]
+
+    def test_history_distinct_ids_do_not_share_buffer(self):
+        """History for id A does not affect history for id B."""
+        svc = _make_service()
+
+        va = _make_view("tid-a")
+        svc._tool_views_by_id["tid-a"] = va
+        svc._terminalize_tool_view(
+            "tid-a",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=va,
+        )
+
+        assert svc.history_by_id("tid-b") == []
+        assert len(svc.history_by_id("tid-a")) == 1
+
+    def test_preemption_moves_prior_to_history_then_replaces_live(self):
+        """invoke{X}=vs0 then invoke{X} again: vs0 in history, vs1 is live."""
+        svc = _make_service()
+
+        vs0 = _make_view("tid-pre")
+        svc._tool_views_by_id["tid-pre"] = vs0
+
+        # Trigger preemption by calling start_tool_call for the same id.
+        # Patch DOM-touching helpers so there's no Textual app context needed.
+        with patch.object(svc, "_pop_pending_gen_for", return_value=None), \
+             patch.object(svc, "open_streaming_tool_block"), \
+             patch.object(svc, "_make_view_category", return_value="system"), \
+             patch.object(svc, "_wire_args"), \
+             patch.object(svc, "_compute_parent_depth", return_value=(None, 0)):
+            svc.start_tool_call("tid-pre", "bash", {})
+
+        vs1 = svc._tool_views_by_id.get("tid-pre")
+        hist = svc.history_by_id("tid-pre")
+
+        assert vs1 is not None
+        assert vs1 is not vs0
+        assert len(hist) == 1
+        assert hist[0] is vs0
+
+    def test_history_returns_copy_not_internal_list(self):
+        """Mutating the returned list does not affect the internal history."""
+        svc = _make_service()
+        view = _make_view("tid-copy")
+        svc._tool_views_by_id["tid-copy"] = view
+
+        svc._terminalize_tool_view(
+            "tid-copy",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=view,
+        )
+
+        first_call = svc.history_by_id("tid-copy")
+        first_call.append("sentinel")
+
+        second_call = svc.history_by_id("tid-copy")
+        assert first_call is not second_call
+        assert "sentinel" not in second_call
+
+    def test_live_by_id_returns_none_on_terminal_call(self):
+        """invoke + DONE → live_by_id(X) is None."""
+        svc = _make_service()
+        view = _make_view("tid-live")
+        svc._tool_views_by_id["tid-live"] = view
+
+        assert svc.live_by_id("tid-live") is view
+
+        svc._terminalize_tool_view(
+            "tid-live",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=view,
+        )
+
+        assert svc.live_by_id("tid-live") is None
+
+    def test_a11y_replay_can_walk_history(self):
+        """Two sequential completions on same id: history is chronological, oldest first."""
+        svc = _make_service()
+
+        vs0 = _make_view("tid-a11y")
+        svc._tool_views_by_id["tid-a11y"] = vs0
+        svc._terminalize_tool_view(
+            "tid-a11y",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=vs0,
+        )
+
+        vs1 = _make_view("tid-a11y")
+        svc._tool_views_by_id["tid-a11y"] = vs1
+        svc._terminalize_tool_view(
+            "tid-a11y",
+            terminal_state=ToolCallState.DONE,
+            is_error=False,
+            mark_plan=False,
+            remove_visual=False,
+            delete_view=False,
+            view=vs1,
+        )
+
+        history = svc.history_by_id("tid-a11y")
+        assert len(history) == 2
+        assert history[0] is vs0
+        assert history[1] is vs1

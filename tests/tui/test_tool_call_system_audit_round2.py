@@ -57,6 +57,7 @@ def _make_service(app=None, **app_kwargs):
     svc._open_tool_count = 0
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
+    svc._tool_views_history_by_id = {}
     svc._pending_gen_arg_deltas = {}
     svc._state_lock = threading.RLock()
     from hermes_cli.tui.services.plan_sync import PlanSyncBroker

@@ -42,6 +42,7 @@ def _make_service(app=None):
     svc._state_lock = _threading.RLock()
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
+    svc._tool_views_history_by_id = {}
     svc._pending_gen_arg_deltas = {}
     svc._turn_tool_calls = {}
     svc._plan_broker = None
@@ -208,6 +209,7 @@ class TestH7AdoptionClearsGenIndex:
         v2 = _make_view(tool_call_id="b", gen_index=None, state=ToolCallState.DONE)
         svc._tool_views_by_id = {"a": v1, "b": v2}
         svc._tool_views_by_gen_index = {}
+    svc._tool_views_history_by_id = {}
 
         for view in svc._tool_views_by_id.values():
             assert view.gen_index is None, (

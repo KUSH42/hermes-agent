@@ -345,6 +345,7 @@ class TestExceptionSweepBareSwallows:
         svc._open_tool_count = 0
         svc._tool_views_by_id = {}
         svc._tool_views_by_gen_index = {}
+        svc._tool_views_history_by_id = {}
         svc._pending_gen_arg_deltas = {}
         with patch.object(tools_mod.logger, "debug") as mock_dbg:
             trigger(svc, app)
@@ -403,6 +404,7 @@ class TestExceptionSweepValueCoalesce:
         svc._open_tool_count = 0
         svc._tool_views_by_id = {}
         svc._tool_views_by_gen_index = {}
+        svc._tool_views_history_by_id = {}
         svc._pending_gen_arg_deltas = {}
         return svc
 
@@ -504,6 +506,7 @@ class TestExceptionSweepLoggerContract:
             svc._open_tool_count = 0
             svc._tool_views_by_id = {}
             svc._tool_views_by_gen_index = {}
+        svc._tool_views_history_by_id = {}
             svc._pending_gen_arg_deltas = {}
             with patch.object(tools_mod.logger, "debug") as mock_dbg:
                 trigger(svc, app)

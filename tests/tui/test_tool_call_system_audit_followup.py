@@ -59,6 +59,7 @@ def _make_service(app=None, **app_kwargs):
     svc._open_tool_count = 0
     svc._tool_views_by_id = {}
     svc._tool_views_by_gen_index = {}
+    svc._tool_views_history_by_id = {}
     svc._state_lock = threading.RLock()
     svc._pending_gen_arg_deltas = {}
     # Wire a real PlanSyncBroker so plan state transitions fire correctly.

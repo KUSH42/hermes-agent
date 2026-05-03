@@ -269,6 +269,8 @@ class ToolRenderingService(AppService):
     # (we know the skill name only after the call starts).
     _SKILL_TOOL_NAMES: frozenset = frozenset({"skill_view", "skill_manage"})
 
+    _HISTORY_CAP_PER_ID: int = 10  # cap per tool-call id; prevents unbounded growth on rapid retry loops
+
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         self._streaming_map: dict = {}
@@ -279,6 +281,9 @@ class ToolRenderingService(AppService):
         # SM-01: unified state-machine indexes
         self._tool_views_by_id: "dict[str, ToolCallViewState]" = {}
         self._tool_views_by_gen_index: "dict[int, ToolCallViewState]" = {}
+        # TB-H2: append-only history per concept §View-state lookup contract.
+        # Bounded at HISTORY_CAP_PER_ID to prevent runaway growth on tight retry loops.
+        self._tool_views_history_by_id: "dict[str, list[ToolCallViewState]]" = {}
         # SM-HIGH-02: buffered arg deltas keyed by gen_index
         self._pending_gen_arg_deltas: "dict[int, list[tuple[str, str]]]" = {}
         # PG-1/PG-2: plan sync broker + atomicity lock
@@ -291,6 +296,22 @@ class ToolRenderingService(AppService):
         # possible from the same thread). RLock allows re-entrant acquisition from
         # within _set_view_state callbacks on the event-loop side.
         self._state_lock = threading.RLock()
+
+    # ------------------------------------------------------------------
+    # TB-H2: public read helpers for the two-index view-state contract
+    # ------------------------------------------------------------------
+
+    def live_by_id(self, tool_call_id: str) -> "ToolCallViewState | None":
+        """Return the current non-terminal view-state for `tool_call_id`, or None
+        if the call is terminal or unknown. See concept §View-state lookup contract."""
+        return self._tool_views_by_id.get(tool_call_id)
+
+    def history_by_id(self, tool_call_id: str) -> "list[ToolCallViewState]":
+        """Return prior terminal view-states for `tool_call_id` (chronological order,
+        most recent last). Capped at _HISTORY_CAP_PER_ID entries; oldest are evicted
+        when the cap is exceeded. Returns [] if no history exists.
+        See docs/concept.md §"View-state lookup contract" routing rule 2."""
+        return list(self._tool_views_history_by_id.get(tool_call_id, ()))
 
     # ------------------------------------------------------------------
     # R3-H1: FeedbackService channel rename helper (adoption path)
@@ -1037,13 +1058,30 @@ class ToolRenderingService(AppService):
             except Exception:
                 logger.debug("terminalize visual remove failed", exc_info=True)
 
-        # Step 11: pop view from index maps
-        if tool_call_id:
-            self._tool_views_by_id.pop(tool_call_id, None)
-        if view is not None and view.gen_index is not None:
-            # H7: adopted views have gen_index=None after adoption; this branch
-            # fires only for never-adopted GENERATED records cancelled directly.
-            self._tool_views_by_gen_index.pop(view.gen_index, None)
+        # Step 11: pop view from index maps; preserve to history first (TB-H2).
+        # The history append precedes the live-pop to satisfy docs/concept.md
+        # §"View-state lookup contract" preemption rule 2 step (b): "move prior
+        # into history_by_id[X]" before step (c): "del live_by_id[X]".
+        # Routing (b) inside _terminalize_tool_view is intentional: the concept's
+        # steps (a)→(b)→(c) map to: (a) entering this helper with CANCEL state,
+        # (b) the append block below, (c) the pop below — the ordering invariant
+        # is satisfied within one atomic helper call under _state_lock.
+        #
+        # _state_lock strategy (RLock, re-entrant): wrap the entire step-11 block.
+        # If the caller already holds _state_lock, re-entrant acquisition is safe.
+        with self._state_lock:
+            if tool_call_id and view is not None:
+                hist = self._tool_views_history_by_id.setdefault(tool_call_id, [])
+                hist.append(view)
+                # Bound memory: drop oldest entries beyond cap.
+                if len(hist) > self._HISTORY_CAP_PER_ID:
+                    del hist[: len(hist) - self._HISTORY_CAP_PER_ID]
+            if tool_call_id:
+                self._tool_views_by_id.pop(tool_call_id, None)
+            if view is not None and view.gen_index is not None:
+                # H7: adopted views have gen_index=None after adoption; this branch
+                # fires only for never-adopted GENERATED records cancelled directly.
+                self._tool_views_by_gen_index.pop(view.gen_index, None)
 
         # Step 12: optional _turn_tool_calls deletion
         if delete_view and tool_call_id:
@@ -1305,6 +1343,26 @@ class ToolRenderingService(AppService):
         parent_id, depth = self._compute_parent_depth(tool_call_id)
         now = _time.monotonic()
         turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
+
+        # TB-H2: preemption — if a prior non-terminal view exists for this id,
+        # route it through _terminalize_tool_view (CANCEL) so it lands in history.
+        # Satisfies concept §"View-state lookup contract" preemption sequence rule 2.
+        prior_view = self._tool_views_by_id.get(tool_call_id)
+        if prior_view is not None:
+            logger.debug(
+                "[PREEMPT] tool_call_id=%s prior_state=%s — terminalizing before new start",
+                tool_call_id, prior_view.state,
+            )
+            self._terminalize_tool_view(
+                tool_call_id=tool_call_id,
+                terminal_state=ToolCallState.CANCELLED,
+                is_error=False,
+                mark_plan=False,
+                remove_visual=False,
+                delete_view=False,
+                view=prior_view,
+                gen_index=None,
+            )
 
         view = self._pop_pending_gen_for(tool_name)
 

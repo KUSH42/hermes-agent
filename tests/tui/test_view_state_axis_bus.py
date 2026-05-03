@@ -196,6 +196,7 @@ class TestKindStampOnCompleting:
         svc._subagent_panels = {}
         svc._tool_views_by_id = {}
         svc._tool_views_by_gen_index = {}
+        svc._tool_views_history_by_id = {}
         svc._pending_gen_arg_deltas = {}
         svc._turn_tool_calls = {}
         svc._agent_stack = []

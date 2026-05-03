@@ -9,7 +9,7 @@ import hashlib, json, logging, os
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
-_GEO_CACHE_FORMAT_VER = 1
+_GEO_CACHE_FORMAT_VER = 2  # bumped: print_logo removed from TUI capture path
 
 
 def is_cache_disabled() -> bool:

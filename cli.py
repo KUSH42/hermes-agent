@@ -201,16 +201,48 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
 _TEMPLATE_FAILED = object()
 _STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"
 
-# Matches standalone ANSI background-color SGR sequences produced by TTE effects.
-# Stripping these lets StartupBannerWidget's CSS background: $app-bg show through.
-_ANSI_BG_STRIP_RE = re.compile(
-    r"\033\[(?:4[0-9]|10[0-7]|48;[25];[^m]*)m"
-)
+_ANSI_SGR_RE = re.compile(r"\033\[([0-9;]*)m")
 
 
 def _strip_ansi_bg(text: str) -> str:
-    """Remove ANSI background-color escape codes from a TTE frame string."""
-    return _ANSI_BG_STRIP_RE.sub("", text)
+    """Strip background-color parameters from ANSI SGR sequences.
+
+    Handles both standalone bg sequences (\033[48;2;R;G;Bm) and combined
+    fg+bg sequences (\033[38;2;R;G;B;48;2;R;G;Bm) that the old regex missed.
+    Sequences that become empty after stripping are removed entirely.
+    """
+    def _strip_seq(m: "re.Match[str]") -> str:
+        raw = m.group(1)
+        if not raw:
+            return m.group(0)
+        params = raw.split(";")
+        out: list[str] = []
+        i = 0
+        while i < len(params):
+            p = params[i]
+            # 24-bit bg: 48;2;R;G;B (consumes 5 tokens)
+            if p == "48" and i + 1 < len(params) and params[i + 1] == "2":
+                i += 5
+                continue
+            # 256-color bg: 48;5;N (consumes 3 tokens)
+            if p == "48" and i + 1 < len(params) and params[i + 1] == "5":
+                i += 3
+                continue
+            # Simple 8-color bg: 40-49
+            if len(p) == 2 and p[0] == "4" and p[1].isdigit():
+                i += 1
+                continue
+            # Bright 8-color bg: 100-107
+            if len(p) == 3 and p[:2] == "10" and p[2].isdigit() and int(p[2]) <= 7:
+                i += 1
+                continue
+            out.append(p)
+            i += 1
+        if not out:
+            return ""
+        return f"\033[{';'.join(out)}m"
+
+    return _ANSI_SGR_RE.sub(_strip_seq, text)
 
 
 @dataclass(frozen=True)

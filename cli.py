@@ -4740,7 +4740,7 @@ class HermesCLI:
             session_id=self.session_id,
             context_length=ctx_len,
             print_hero=print_hero if hero_renderable is None else False,
-            print_logo=False,  # TUI renders inside a widget; block-letter logo doesn't belong here
+            print_logo=True,
             hero_renderable=hero_renderable,
         )
         logger.info("RENDER-BANNER: build_welcome +%.0fms", (time.monotonic() - _bw_t0) * 1000)

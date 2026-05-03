@@ -174,13 +174,62 @@ def trim_tail_for_tier(
     tail_segments: "list[tuple[str, Text]]",
     tail_budget: int,
     tier: DensityTier,
+    *,
+    duration_s: float = 0.0,
+    row_count: int = 0,
 ) -> "list[tuple[str, Text]]":
-    """Tier-aware wrapper around _trim_tail_segments."""
+    """Tier-aware wrapper around _trim_tail_segments.
+
+    Promotions (concept lines 411-415):
+    - duration_s > THRESHOLDS["LONG_CALL_THRESHOLD_S"]: 'duration' chip is
+      promoted — kept through COMPACT, dropped only at TRACE.
+    - row_count > THRESHOLDS["LARGE_PAYLOAD_ROWS"]: 'linecount' chip is
+      promoted one tier longer than baseline.
+    """
     if tier == DensityTier.TRACE:
+        # TRACE drops everything regardless of promotion; concept line 413
+        # explicitly caps long-call promotion at "dropped only at TRACE".
         return list(tail_segments)
+
     order = _DROP_ORDER_BY_TIER.get(tier, _DROP_ORDER_DEFAULT)
+
+    long_call = duration_s > THRESHOLDS["LONG_CALL_THRESHOLD_S"]
+    large_payload = row_count > THRESHOLDS["LARGE_PAYLOAD_ROWS"]
+    if long_call or large_payload:
+        order = _promote_drop_order(order, tier,
+                                    promote_duration=long_call,
+                                    promote_linecount=large_payload)
+
     protect = (tier == DensityTier.HERO)
     return _trim_tail_segments(tail_segments, tail_budget, drop_order=order, protect_hero=protect)
+
+
+def _promote_drop_order(
+    order: "list[str]",
+    tier: DensityTier,
+    *,
+    promote_duration: bool,
+    promote_linecount: bool,
+) -> "list[str]":
+    """Return a copy of `order` with promoted chip names moved tail-ward.
+
+    The drop-order list is "first dropped first". Moving a name closer to the
+    end of the list = drops later = effectively higher priority.
+    """
+    out = list(order)
+    if promote_duration and "duration" in out:
+        out.remove("duration")
+        anchor = "chevron" if "chevron" in out else "trace_pending"
+        if anchor in out:
+            out.insert(out.index(anchor), "duration")
+        else:
+            out.append("duration")
+    if promote_linecount and "linecount" in out:
+        idx = out.index("linecount")
+        if idx + 1 < len(out):
+            out.pop(idx)
+            out.insert(idx + 1, "linecount")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -330,8 +379,12 @@ class ToolBlockLayoutResolver:
         segments: "list[tuple[str, Text]]",
         budget: int,
         tier: DensityTier,
+        *,
+        duration_s: float = 0.0,
+        row_count: int = 0,
     ) -> "list[tuple[str, Text]]":
-        return trim_tail_for_tier(segments, budget, tier)
+        return trim_tail_for_tier(segments, budget, tier,
+                                  duration_s=duration_s, row_count=row_count)
 
     @staticmethod
     def _compute(inp: "LayoutInputs") -> "DensityTier":

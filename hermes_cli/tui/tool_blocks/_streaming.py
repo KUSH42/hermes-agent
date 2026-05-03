@@ -209,6 +209,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._stream_started_at = time.monotonic()
         self._last_line_time = self._stream_started_at
         self._header._duration = "0.0s"
+        self._header._duration_seconds = 0.0
         self._render_timer = self._register_timer(self.set_interval(1 / 60, self._flush_pending))
         self._duration_timer = self._register_timer(self.set_interval(0.1, self._tick_duration))
         try:
@@ -438,8 +439,10 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             elapsed_ms = (time.monotonic() - started) * 1000.0
             self._header._elapsed_ms = elapsed_ms
             self._header._duration = _format_duration_v4(elapsed_ms)
+            self._header._duration_seconds = elapsed_ms / 1000
         else:
             self._header._duration = duration
+            self._header._duration_seconds = 0.0  # no start time recorded
         self._header._line_count = self._total_received
         self._header._truncated_line_count = self._truncated_line_count  # B5: sync for header tail badge
         if self._total_received > COLLAPSE_THRESHOLD:
@@ -538,6 +541,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         elapsed_ms = (time.monotonic() - started) * 1000.0
         self._header._elapsed_ms = elapsed_ms
         self._header._duration = _format_duration_v4(elapsed_ms)
+        self._header._duration_seconds = elapsed_ms / 1000
         self._header.refresh()
 
     def _bytes_per_second(self) -> float | None:

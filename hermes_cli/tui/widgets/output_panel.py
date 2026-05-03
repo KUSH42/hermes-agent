@@ -477,6 +477,20 @@ class OutputPanel(ScrollableContainer):
             )
             resolver.resolve(inputs)
 
+        # TB-MED-2: resolve group tier via same pressure axis
+        from hermes_cli.tui.tool_group import ToolGroup as _TG
+        for group in self.query(_TG):
+            if not group.display:
+                continue
+            grp_y = getattr(getattr(group, "region", None), "y", 0)
+            grp_h = group.size.height if group.size else 0
+            grp_offscreen = (grp_y + grp_h) < scroll_top or grp_y > viewport_bottom
+            group._resolve_group_tier(
+                pressure=pressure,
+                viewport_rows=viewport_rows,
+                is_offscreen=grp_offscreen,
+            )
+
     def _resolve_layout(self) -> None:
         """Two-pass fixed-point per concept lines 375–381.
 

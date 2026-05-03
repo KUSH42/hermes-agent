@@ -164,7 +164,6 @@ from hermes_cli.tui.overlays._aliases import (  # noqa: F401,E402
 
 from .status_bar import SourcesBar, _extract_domain, _truncate  # noqa: F401
 
-from hermes_cli.stream_effects import make_stream_effect  # noqa: F401
 
 
 def _stream_effect_cfg() -> dict:

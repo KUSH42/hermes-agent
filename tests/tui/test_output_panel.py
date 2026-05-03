@@ -408,6 +408,11 @@ async def test_evict_old_turns_removes_beyond_threshold():
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         output = app.query_one(OutputPanel)
+        # Flush startup callbacks: watch_agent_running(False) fires at mount via
+        # reactive init=True, queuing call_after_refresh(evict_old_turns). Running
+        # pause() here drains that callback on an empty panel (no-op), so the
+        # subsequent mount loop isn't affected.
+        await pilot.pause()
         # Mount 30 turns (60 turn-boundary children) — exceeds _EVICTION_THRESHOLD=25
         for i in range(30):
             ump = UserMessagePanel(f"msg {i}")

@@ -101,6 +101,9 @@ class CopyableRichLog(RichLog, can_focus=False):
         self._plain_lines: list[str] = []
         self._line_links: list[str] = []
         self._render_width: int | None = None
+        # Set to True inside write_with_source() so write() knows not to
+        # re-append plain text (write_with_source already does it explicitly).
+        self._wws_active: bool = False
 
     def on_mount(self) -> None:
         # Best-effort pre-warm only; on_resize is authoritative.
@@ -169,6 +172,17 @@ class CopyableRichLog(RichLog, can_focus=False):
         (set authoritatively by on_resize) is preferred; pre-layout writes are
         deferred once via call_after_refresh so on_resize fires first.
         """
+        # Capture plain text for clipboard when write() is called directly
+        # (not via write_with_source, which already appends to _plain_lines).
+        # Done at the top, before the deferred-return branch, so the capture
+        # happens exactly once — even when the render is deferred for layout.
+        if not self._wws_active and not _deferred:
+            if isinstance(content, Text):
+                self._plain_lines.append(content.plain)
+                self._line_links.append(None)
+            elif isinstance(content, str):
+                self._plain_lines.append(content)
+                self._line_links.append(None)
         if width is None:
             if self._render_width is not None:
                 width = self._render_width
@@ -215,18 +229,23 @@ class CopyableRichLog(RichLog, can_focus=False):
         """
         self._plain_lines.append(plain)
         self._line_links.append(link)
+        # Suppress write()'s automatic plain-capture — we've already appended above.
+        self._wws_active = True
         try:
-            from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
-            if _osc8_supported():
-                import io as _io
-                from rich.console import Console as _Console
-                buf = _io.StringIO()
-                _Console(file=buf, force_terminal=True, width=10000, highlight=False).print(styled, end="")
-                ansi_str = buf.getvalue().rstrip("\n")
-                return self.write(Text.from_ansi(inject_osc8(ansi_str, _enabled=True)), **kwargs)
-        except Exception:
-            pass  # OSC8 hyperlink injection failed; fall through to plain write below
-        return self.write(styled, **kwargs)
+            try:
+                from hermes_cli.tui.osc8 import inject_osc8, _osc8_supported
+                if _osc8_supported():
+                    import io as _io
+                    from rich.console import Console as _Console
+                    buf = _io.StringIO()
+                    _Console(file=buf, force_terminal=True, width=10000, highlight=False).print(styled, end="")
+                    ansi_str = buf.getvalue().rstrip("\n")
+                    return self.write(Text.from_ansi(inject_osc8(ansi_str, _enabled=True)), **kwargs)
+            except Exception:
+                pass  # OSC8 hyperlink injection failed; fall through to plain write below
+            return self.write(styled, **kwargs)
+        finally:
+            self._wws_active = False
 
     def get_selection(self, selection: Selection) -> tuple[str, str] | None:
         """Return plain text for the selected region.

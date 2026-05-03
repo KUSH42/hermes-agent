@@ -687,13 +687,17 @@ class _EchoBullet(PulseMixin, Widget):
 
     Pulses from mount until the FIRST agent turn that follows this message
     completes.  Subsequent turns leave the bullet static (one-shot guard).
+
+    When the message is multiline, click toggles between truncated (first line
+    + "(+N lines)") and full expanded display.
     """
 
-    DEFAULT_CSS = "_EchoBullet { height: 1; }"
+    DEFAULT_CSS = "_EchoBullet { height: auto; }"
 
     def __init__(self, message: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._message = message
+        self._expanded: bool = False
         self._bullet_peak: str = "#FFBF00"
         self._bullet_dim: str = "#6e6e6e"
         self._turn_started: bool = False
@@ -739,7 +743,42 @@ class _EchoBullet(PulseMixin, Widget):
             self._pulse_stop()
             self._turn_complete = True
 
+    def on_click(self, event: Any) -> None:
+        """Toggle expanded/collapsed state for multiline messages."""
+        if "\n" not in self._message:
+            return
+        if getattr(event, "button", 1) != 1:
+            return
+        event.prevent_default()
+        self._expanded = not self._expanded
+        self.refresh(layout=True)
+
     def render(self) -> RenderResult:
+        if self._pulse_timer is not None:
+            color = lerp_color(self._bullet_dim, self._bullet_peak, self._pulse_t)
+        else:
+            color = self._bullet_peak
+        t = Text()
+        t.append("❯ ", style=f"bold {color}")
+        msg = self._message
+        if "\n" in msg:
+            lines = msg.split("\n")
+            line_count = len(lines)
+            if self._expanded:
+                t.append(lines[0], style="bold")
+                for line in lines[1:]:
+                    t.append(f"\n  {line}", style="bold")
+                t.append(f"\n  ▴ collapse", style="dim")
+            else:
+                t.append(lines[0], style="bold")
+                t.append(f" (+{line_count - 1} lines)", style="dim")
+        else:
+            t.append(msg, style="bold")
+        return t
+
+    def get_text(self) -> Text:
+        # Always return the collapsed-view text for external consumers
+        # (e.g. history search preview) — full text is shown only on expand.
         if self._pulse_timer is not None:
             color = lerp_color(self._bullet_dim, self._bullet_peak, self._pulse_t)
         else:
@@ -755,9 +794,6 @@ class _EchoBullet(PulseMixin, Widget):
         else:
             t.append(msg, style="bold")
         return t
-
-    def get_text(self) -> Text:
-        return self.render()  # type: ignore[return-value]
 
 
 class UserMessagePanel(Widget):

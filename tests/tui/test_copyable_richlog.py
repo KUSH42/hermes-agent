@@ -285,3 +285,181 @@ async def test_render_line_applies_selection_style():
         segs = list(strip)
         highlighted = [s for s in segs if s.style and s.style.bgcolor is not None]
         assert highlighted, "Selected region must have a background color applied"
+
+
+# ---------------------------------------------------------------------------
+# P0-B: write() plain-text capture (direct calls, no write_with_source)
+# ---------------------------------------------------------------------------
+
+def test_write_direct_text_captured_in_plain_lines():
+    """write() with a Rich Text object captures content in _plain_lines."""
+    log = CopyableRichLog()
+    log.write(Text("direct line"))
+    assert log._plain_lines == ["direct line"]
+
+
+def test_write_direct_str_captured_in_plain_lines():
+    """write() with a plain str captures content in _plain_lines."""
+    log = CopyableRichLog()
+    log.write("plain string line")
+    assert log._plain_lines == ["plain string line"]
+
+
+def test_write_with_source_no_double_append():
+    """write_with_source() does not double-append — plain text stored exactly once."""
+    log = CopyableRichLog()
+    log.write_with_source(Text("styled"), "plain")
+    assert log._plain_lines == ["plain"], (
+        f"Expected ['plain'] but got {log._plain_lines}"
+    )
+
+
+def test_write_direct_multiple_calls_accumulate():
+    """Multiple direct write() calls accumulate separately in _plain_lines."""
+    log = CopyableRichLog()
+    log.write(Text("line one"))
+    log.write(Text("line two"))
+    log.write(Text("line three"))
+    assert log._plain_lines == ["line one", "line two", "line three"]
+
+
+def test_write_mixed_direct_and_wws():
+    """Direct write() and write_with_source() can be intermixed; no doubles."""
+    log = CopyableRichLog()
+    log.write(Text("alpha"))
+    log.write_with_source(Text("beta styled"), "beta")
+    log.write("gamma")
+    assert log._plain_lines == ["alpha", "beta", "gamma"]
+
+
+def test_copy_content_includes_direct_writes():
+    """copy_content() returns text from direct write() calls."""
+    log = CopyableRichLog()
+    log.write(Text("cap marker line"))
+    assert "cap marker line" in log.copy_content()
+
+
+def test_write_non_text_non_str_not_captured():
+    """write() with Syntax or other non-Text/str objects: no crash, _plain_lines unchanged."""
+    from rich.syntax import Syntax
+    log = CopyableRichLog()
+    # Syntax object: not Text, not str — should not append to _plain_lines
+    try:
+        log.write(Syntax("print('hi')", "python"))
+    except Exception:
+        # May fail outside app context; that's OK — we just verify no crash in init path
+        pass
+    # _plain_lines should remain empty (no capture for non-Text/str)
+    assert log._plain_lines == []
+
+
+def test_clear_resets_after_direct_writes():
+    """clear() empties _plain_lines even when populated by direct write() calls."""
+    log = CopyableRichLog()
+    log.write(Text("before clear"))
+    assert log._plain_lines == ["before clear"]
+    log.clear()
+    assert log._plain_lines == []
+
+
+# ---------------------------------------------------------------------------
+# P1-E: _EchoBullet expand/collapse toggle
+# ---------------------------------------------------------------------------
+
+def test_echo_bullet_single_line_no_truncation():
+    """Single-line messages are rendered as-is with no (+N lines) suffix."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+    bullet = _EchoBullet("short message")
+    rendered = bullet.render()
+    plain = rendered.plain  # type: ignore[union-attr]
+    assert "short message" in plain
+    assert "(+" not in plain
+    assert "lines)" not in plain
+
+
+def test_echo_bullet_multiline_truncated_by_default():
+    """Multiline messages show only first line + (+N lines) when collapsed."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+    bullet = _EchoBullet("line one\nline two\nline three")
+    rendered = bullet.render()
+    plain = rendered.plain  # type: ignore[union-attr]
+    assert "line one" in plain
+    assert "(+2 lines)" in plain
+    assert "line two" not in plain
+    assert "line three" not in plain
+
+
+def test_echo_bullet_expand_shows_all_lines():
+    """After setting _expanded=True, all lines are visible."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+    bullet = _EchoBullet("line one\nline two\nline three")
+    bullet._expanded = True
+    rendered = bullet.render()
+    plain = rendered.plain  # type: ignore[union-attr]
+    assert "line one" in plain
+    assert "line two" in plain
+    assert "line three" in plain
+    assert "(+" not in plain
+
+
+def test_echo_bullet_collapse_hint_shown_when_expanded():
+    """Expanded state shows a collapse hint."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+    bullet = _EchoBullet("first\nsecond\nthird")
+    bullet._expanded = True
+    rendered = bullet.render()
+    plain = rendered.plain  # type: ignore[union-attr]
+    assert "collapse" in plain
+
+
+def test_echo_bullet_get_text_always_collapsed():
+    """get_text() always returns collapsed form regardless of _expanded."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+    bullet = _EchoBullet("a\nb\nc")
+    bullet._expanded = True
+    text = bullet.get_text()
+    plain = text.plain
+    assert "(+2 lines)" in plain
+    assert "b" not in plain
+
+
+def test_echo_bullet_on_click_toggles_expanded():
+    """on_click() toggles _expanded for multiline messages."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+
+    class _FakeEvent:
+        button = 1
+        def prevent_default(self): pass
+
+    bullet = _EchoBullet("first\nsecond")
+    assert bullet._expanded is False
+    bullet.on_click(_FakeEvent())
+    assert bullet._expanded is True
+    bullet.on_click(_FakeEvent())
+    assert bullet._expanded is False
+
+
+def test_echo_bullet_on_click_no_op_for_single_line():
+    """on_click() does nothing for single-line messages."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+
+    class _FakeEvent:
+        button = 1
+        def prevent_default(self): pass
+
+    bullet = _EchoBullet("single line message")
+    bullet.on_click(_FakeEvent())
+    assert bullet._expanded is False  # unchanged
+
+
+def test_echo_bullet_on_click_ignores_right_click():
+    """on_click() ignores non-left-click events."""
+    from hermes_cli.tui.widgets.message_panel import _EchoBullet
+
+    class _FakeEvent:
+        button = 3  # right click
+        def prevent_default(self): pass
+
+    bullet = _EchoBullet("first\nsecond")
+    bullet.on_click(_FakeEvent())
+    assert bullet._expanded is False  # unchanged

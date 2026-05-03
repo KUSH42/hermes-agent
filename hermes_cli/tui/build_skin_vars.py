@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from hermes_cli.tui.theme_manager import _NON_HEX_COMPONENT_VARS
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -397,8 +399,10 @@ def _compute_hash(specs: dict[str, VarSpec]) -> str:
 
 _HEX_HASH_RE = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _FORBIDDEN_GENERATOR_KEYS: frozenset[str] = frozenset({"syntax-theme", "syntax-scheme"})
-# Non-color vars that are skipped silently in the TCSS hex-only generator
-_SKIP_GENERATOR_KEYS: frozenset[str] = frozenset({"tool-header-max-gap"})
+# Non-color vars that are skipped silently in the TCSS hex-only generator.
+# Keep this aligned with theme_manager's validation allowlist so DESIGN.md
+# export doesn't regress when new non-hex runtime knobs are added.
+_SKIP_GENERATOR_KEYS: frozenset[str] = _NON_HEX_COMPONENT_VARS - _FORBIDDEN_GENERATOR_KEYS
 
 
 class GeneratorError(ValueError):

@@ -907,6 +907,8 @@ After `anim_engines/` was split from `drawbraille_overlay.py`, engine classes li
 
 ThinkingWidget reads three CSS vars at render time: `--thinking-chroma-a` (start color), `--thinking-chroma-b` (end color), `--thinking-hue-shift-speed` (float, hue rotation degrees per second). All three must be present in `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` and in the skin YAML under `x-hermes`. Missing vars cause silent fallback to defaults but log a WARNING.
 
+- **Non-hex component vars must stay in the generator skip allowlist too.** `thinking-hue-shift-speed` is a float-like string runtime knob, not a color. `theme_manager._NON_HEX_COMPONENT_VARS` is the source of truth for validation, and `build_skin_vars._SKIP_GENERATOR_KEYS` must derive from it rather than carrying a separate hard-coded subset. Otherwise `render_design_md_tcss_block()` starts emitting or rejecting non-hex defaults and breaks `test_design_md_skin.py` even though runtime skin validation still accepts the var.
+
 ## per-skin stream_effect in skin YAML — top-level key, not nested (2026-05-03)
 
 `stream_effect:` in a skin YAML file is a TOP-LEVEL key (same level as `name`, `palette`, `x-hermes`). It is NOT nested under `x-hermes`. If placed under `x-hermes`, it is silently ignored. Shape: `stream_effect: "cascade"` or `stream_effect: {enabled: true, cascade_ticks: 4}`.

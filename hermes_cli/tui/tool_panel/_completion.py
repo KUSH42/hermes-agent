@@ -249,7 +249,8 @@ class _ToolPanelCompletionMixin:
                 type(renderer).__name__,
             )
             # TBC-2: tag the block so this renderer class is skipped on density-change re-render.
-            view_state = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            _lookup = getattr(self, "_lookup_view_state", lambda: None)
+            view_state = getattr(self, "_view_state", None) or _lookup()  # type: ignore[attr-defined]
             if view_state is not None:
                 view_state.failed_renderer_classes.add(type(renderer))
             from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
@@ -294,7 +295,8 @@ class _ToolPanelCompletionMixin:
             from hermes_cli.tui.tool_panel.density import DensityTier
             from hermes_cli.tui.services.tools import ToolCallState
 
-            view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+            _lookup = getattr(self, "_lookup_view_state", lambda: None)
+            view = getattr(self, "_view_state", None) or _lookup()  # type: ignore[attr-defined]
             override = view.user_kind_override if view is not None else None
 
             # KO-3-A: only honor TEXT/EMPTY/SHELL early-returns when no override.
@@ -387,7 +389,8 @@ class _ToolPanelCompletionMixin:
             self._should_auto_collapse = True  # type: ignore[attr-defined]
             return
 
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
+        _lookup = getattr(self, "_lookup_view_state", lambda: None)
+        _vs = getattr(self, "_view_state", None) or _lookup()  # type: ignore[attr-defined]
         phase = _vs.state if _vs is not None else ToolCallState.DONE
         _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
         kind = _vs_kind.kind if _vs_kind is not None else None

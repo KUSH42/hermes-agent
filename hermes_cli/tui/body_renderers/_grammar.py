@@ -152,6 +152,8 @@ class SkinColors:
             return cls.default()
         try:
             css_vars: dict[str, str] = app.get_css_variables()
+            if not isinstance(css_vars, dict):
+                return cls.default()
         except Exception:
             _log.debug("SkinColors.from_app: get_css_variables failed", exc_info=True)
             return cls.default()

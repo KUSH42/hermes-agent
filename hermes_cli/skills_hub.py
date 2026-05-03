@@ -238,7 +238,7 @@ def _prompt_for_skill_name(c: Console, url: str, default: str = "") -> Optional[
     return answer
 
 
-def _prompt_for_category(c: Console, existing: List[str]) -> str:
+def _ask_skill_category(c: Console, existing: List[str]) -> str:
     """Prompt interactively for a category. Empty/None input means flat install."""
     c.print()
     if existing:
@@ -535,7 +535,7 @@ def do_install(identifier: str, category: str = "", force: bool = False,
     # caller didn't specify one (TTY only — non-interactive installs fall
     # through to flat install, matching all other sources).
     if bundle.source == "url" and not category and not skip_confirm:
-        category = _prompt_for_category(c, _existing_categories())
+        category = _ask_skill_category(c, _existing_categories())
 
     # Auto-detect category for official skills (e.g. "official/autonomous-ai-agents/blackbox")
     if bundle.source == "official" and not category:

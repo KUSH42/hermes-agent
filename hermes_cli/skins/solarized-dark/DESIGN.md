@@ -1,7 +1,8 @@
 ---
 version: alpha
 name: solarized-dark
-description: Solarized Dark — precision-crafted warm dark theme with teal/blue/amber accents
+description: Solarized Dark — precision-crafted warm dark theme with teal/blue/amber
+  accents
 colors:
   foreground: '#839496'
   background: '#002b36'
@@ -156,6 +157,9 @@ x-hermes:
     tool-tier-file-accent: '#2aa198'
     tool-tier-query-accent: '#268bd2'
     tool-tier-agent-accent: '#6c71c4'
+    thinking-spinner-dim: '#4a4a4a'
+    thinking-spinner-peak: '#d8d8d8'
+    tool-header-max-gap: '8'
 ---
 
 # Solarized-Dark

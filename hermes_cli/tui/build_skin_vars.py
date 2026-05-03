@@ -25,7 +25,7 @@ from typing import Iterable
 _REPO = Path(__file__).resolve().parents[2]
 TCSS_PATH = _REPO / "hermes_cli" / "tui" / "hermes.tcss"
 SKIN_ENGINE_PATH = _REPO / "hermes_cli" / "skin_engine.py"
-SKINS_DIR = _REPO / "skins"
+SKINS_DIR = _REPO / "hermes_cli" / "skins"
 TUI_DIR = _REPO / "hermes_cli" / "tui"
 
 

@@ -389,7 +389,7 @@ for frame in iter_frames("decrypt", "Connecting…"):
 1. `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` — sensible hex default.
 2. `hermes.tcss` under the `/* Component Part variables */` comment block — `$var-name: <default>;` (required IF the var is `$`-referenced from `hermes.tcss` or any `DEFAULT_CSS` block; Textual needs it at parse time).
 3. `skin_engine.py` module docstring `component_vars:` block — description line.
-4. Each bundled skin YAML (`skins/{matrix,catppuccin,solarized-dark,tokyo-night}.yaml`) — key under `component_vars:` when the default is not marked `optional_in_skin=True` in `VarSpec`. Use `python -m hermes_cli.tui.build_skin_vars --fill-skin skins/<name>.yaml` to auto-scaffold with defaults, then hand-tune per skin.
+4. Each bundled skin frontmatter block (`hermes_cli/skins/*/DESIGN.md`) — add the key under `x-hermes.component-vars` when the default is not marked `optional_in_skin=True` in `VarSpec`. Keep the bundled DESIGN.md skins fully populated so `scan_bundled_skins()` and the CSS-var drift tests see complete coverage. `build_skin_vars --fill-skin` still only scaffolds legacy top-level YAML skins, not DESIGN.md frontmatter.
 
 `tests/tui/test_css_var_single_source.py` gates CI: T1 (refs resolve), T2 ($-referenced defaults declared), T3 (bundled skins cover all keys), T4 (no orphan decls), T8 (no raw `COMPONENT_VAR_DEFAULTS[...]` access).
 

@@ -13,7 +13,7 @@ from rich.style import Style
 from rich.text import Text
 
 from hermes_cli.tui._color_utils import _resolve_color, _hex_to_rgb, _hue_rotate
-from hermes_cli.tui.animation import lerp_color, lerp_color_rgb, _parse_rgb
+from hermes_cli.tui.animation import lerp_color, lerp_color_rgb, _parse_rgb, _rgb_cached
 
 if TYPE_CHECKING:
     from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlayCfg
@@ -58,7 +58,7 @@ class DrawbrailleRenderer:
                 _resolve_color(c, app) for c in multi_color
             ]
             self._resolved_multi_color_rgbs = [
-                _parse_rgb(c) for c in self._resolved_multi_colors
+                _rgb_cached(c) for c in self._resolved_multi_colors
             ]
         except Exception:
             _LOG.debug("DrawbrailleRenderer.resolve_colors failed", exc_info=True)
@@ -170,7 +170,7 @@ class DrawbrailleRenderer:
         # Use pre-parsed RGB tuples (cached at resolve time, not per-frame).
         stop_rgbs = self._resolved_multi_color_rgbs
         if stop_rgbs is None:
-            stop_rgbs = [_parse_rgb(c) for c in colors]
+            stop_rgbs = [_rgb_cached(c) for c in colors]
 
         rows = frame_str.split("\n")
         pieces: list[tuple[str, Style]] = []

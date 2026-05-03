@@ -1286,3 +1286,133 @@ def blank_reason_worker(self) -> None:
         violations_blank = _ilw1_check_source(src_blank, "blank_reason.py")
         assert violations_blank, "Expected violation for blank il-w1 reason"
         assert "blank reason" in violations_blank[0].lower()
+
+
+# ---------------------------------------------------------------------------
+# IL-A1 — No module-level mutable buffers in animation modules
+# ---------------------------------------------------------------------------
+
+def _ila1_check_source(src: str, filename: str) -> list[str]:
+    """AST-walk source; return list of violation strings.
+
+    Rejects module-level Assign/AnnAssign whose name matches
+    re.fullmatch(r"_?[A-Z][A-Z0-9_]+", name) AND whose value is an ast.List,
+    ast.Dict, ast.Set, or ast.Call with func name in {"list", "dict", "set"},
+    UNLESS the immediately preceding source line is a comment of the form
+    '# il-a1: <reason>' (no blank line between comment and assignment).
+    """
+    lines = src.splitlines()
+    tree = ast.parse(src, filename=filename)
+
+    _MUTABLE_CONSTRUCTORS = {"list", "dict", "set"}
+    _NAME_RE = re.compile(r"_?[A-Z][A-Z0-9_]+")
+
+    violations: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        # Only look at module-level statements (col_offset == 0)
+        if node.col_offset != 0:
+            continue
+
+        # Extract assignment name(s)
+        if isinstance(node, ast.Assign):
+            names = []
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    names.append(t.id)
+            value = node.value
+        else:  # AnnAssign
+            if not isinstance(node.target, ast.Name):
+                continue
+            names = [node.target.id]
+            value = node.value
+
+        if value is None:
+            continue
+
+        for name in names:
+            if not _NAME_RE.fullmatch(name):
+                continue
+
+            # Check if value is a mutable literal or constructor call
+            is_mutable = False
+            if isinstance(value, (ast.List, ast.Dict, ast.Set)):
+                is_mutable = True
+            elif isinstance(value, ast.Call):
+                func = value.func
+                func_name = func.id if isinstance(func, ast.Name) else None
+                if func_name in _MUTABLE_CONSTRUCTORS:
+                    is_mutable = True
+
+            if not is_mutable:
+                continue
+
+            # Check for exemption comment on the immediately preceding non-blank line
+            lineno = node.lineno  # 1-based
+            exempt = False
+            if lineno >= 2:
+                prev_line = lines[lineno - 2].strip()  # lineno-2 = 0-based index before node
+                if re.match(r"^# il-a1:\s+\S", prev_line):
+                    exempt = True
+
+            if not exempt:
+                violations.append(
+                    f"{filename}:{lineno}: module-level mutable buffer {name!r} "
+                    f"lacks '# il-a1: <reason>' exemption comment"
+                )
+
+    return violations
+
+
+class TestAnimationSharedState:
+    """IL-A1: no module-level mutable buffers in animation modules without exemption."""
+
+    _ANIM_FILES = [
+        _TUI_ROOT / "anim_engines.py",
+        _TUI_ROOT / "animation.py",
+        _TUI_ROOT / "anim_orchestrator.py",
+    ]
+
+    def test_il_a1_no_module_level_mutable_buffers(self) -> None:
+        """AST-walk the three animation files; assert zero IL-A1 violations."""
+        all_violations: list[str] = []
+        for path in self._ANIM_FILES:
+            src = path.read_text(encoding="utf-8")
+            violations = _ila1_check_source(src, str(path))
+            all_violations.extend(violations)
+
+        assert all_violations == [], (
+            "IL-A1 violations found in animation modules:\n"
+            + "\n".join(f"  {v}" for v in all_violations)
+        )
+
+    def test_il_a1_passes_on_compliant_module(self, tmp_path: pathlib.Path) -> None:
+        """A module with no uppercase module-level mutable assignments passes."""
+        src = """\
+_SOME_CONSTANT: int = 42
+_lower_case: list[str] = []
+some_dict: dict[str, int] = {}
+"""
+        violations = _ila1_check_source(src, "compliant.py")
+        assert violations == [], f"Expected no violations, got: {violations}"
+
+    def test_il_a1_rejects_module_level_list(self, tmp_path: pathlib.Path) -> None:
+        """A module with _FOO_BUF: list[str] = [] (no exemption) triggers violation."""
+        src = """\
+_FOO_BUF: list[str] = []
+"""
+        violations = _ila1_check_source(src, "violator.py")
+        assert violations, "Expected a violation for _FOO_BUF without exemption comment"
+        combined = " ".join(violations)
+        assert "_FOO_BUF" in combined, f"Expected _FOO_BUF in violation: {combined}"
+
+    def test_il_a1_honors_exemption_comment(self, tmp_path: pathlib.Path) -> None:
+        """A module with '# il-a1: reason' immediately before the assignment passes."""
+        src = """\
+# il-a1: lazy-populated sine cache; each key is written once and never mutated
+_SINE_TABLES: dict[int, list[float]] = {}
+"""
+        violations = _ila1_check_source(src, "exempt.py")
+        assert violations == [], f"Expected no violations with exemption comment, got: {violations}"

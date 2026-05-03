@@ -173,12 +173,6 @@ def _depth_to_density(z: float, canvas: object, x: int, y: int, w: int, h: int) 
     _braille_density_set(canvas, x, y, density, w, h)
 
 
-# Non-reentrant: mutated in-place per call. Safe because _layer_frames is only
-# called from the Textual event loop (single-threaded). Do not call from workers.
-_LAYER_ROW_BUF: list[str] = []
-_LAYER_RESULT_BUF: list[str] = []
-
-
 def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> str:
     """Merge two canvas.frame() strings pixel-by-pixel using the given blend mode.
 
@@ -187,24 +181,26 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
            dissolve (random weighted by heat; heat=0 → equal; heat=1 → b wins).
     Non-braille chars pass through from upper layer (b).
     """
+    row_buf: list[str] = []
+    result_buf: list[str] = []
+
     lines_a = frame_a.split("\n")
     lines_b = frame_b.split("\n")
     n_rows = max(len(lines_a), len(lines_b))
 
     t_int = int(time.monotonic() * 4)
-    _LAYER_RESULT_BUF.clear()
     for r in range(n_rows):
         row_a = lines_a[r] if r < len(lines_a) else ""
         row_b = lines_b[r] if r < len(lines_b) else ""
         n_cols = max(len(row_a), len(row_b))
-        _LAYER_ROW_BUF.clear()
+        row_buf.clear()
         for c in range(n_cols):
             ca = row_a[c] if c < len(row_a) else " "
             cb = row_b[c] if c < len(row_b) else " "
             ma = 0x2800 <= ord(ca) <= 0x28FF
             mb = 0x2800 <= ord(cb) <= 0x28FF
             if not ma and not mb:
-                _LAYER_ROW_BUF.append(cb if cb != " " else ca)
+                row_buf.append(cb if cb != " " else ca)
                 continue
             ba = (ord(ca) - 0x2800) if ma else 0
             bb = (ord(cb) - 0x2800) if mb else 0
@@ -219,10 +215,10 @@ def _layer_frames(frame_a: str, frame_b: str, mode: str, heat: float = 0.0) -> s
                 bits = bb if dither < weight_b else ba
             else:  # overlay: upper (b) wins when non-zero
                 bits = bb if bb != 0 else ba
-            _LAYER_ROW_BUF.append(chr(0x2800 | bits))
-        _LAYER_RESULT_BUF.append("".join(_LAYER_ROW_BUF))
+            row_buf.append(chr(0x2800 | bits))
+        result_buf.append("".join(row_buf))
 
-    return "\n".join(_LAYER_RESULT_BUF)
+    return "\n".join(result_buf)
 
 
 def _easing(t: float, kind: str) -> float:
@@ -1612,7 +1608,6 @@ class CompositeEngine:
         frames = [e.next_frame(params) for e in self.layers]
         result = frames[0]
         for f in frames[1:]:
-            # THREADING: UI-thread only — _LAYER_ROW_BUF/_LAYER_RESULT_BUF not reentrant
             result = _layer_frames(result, f, self.blend_mode, params.heat)
         return result
 
@@ -1632,7 +1627,6 @@ class CrossfadeEngine:
         fa = self.engine_a.next_frame(params)
         fb = self.engine_b.next_frame(params)
         self.progress = min(1.0, self.progress + self.speed)
-        # THREADING: UI-thread only — _LAYER_ROW_BUF/_LAYER_RESULT_BUF not reentrant
         return _layer_frames(fa, fb, "overlay")
 
 
@@ -2037,6 +2031,7 @@ class MatrixRainEngine(_BaseEngine):
 
 # ── Engine registry + labels (no Textual dep — safe to import standalone) ────
 
+# il-a1: engine registry dict; written once at module load, never mutated at runtime
 ENGINES: dict[str, type] = {
     "dna":               DnaHelixEngine,
     "rotating":          RotatingHelixEngine,
@@ -2068,6 +2063,7 @@ ENGINES: dict[str, type] = {
     "matrix_rain":       MatrixRainEngine,
 }
 
+# il-a1: animation label registry; written once at module load, never mutated at runtime
 ANIMATION_LABELS: dict[str, str] = {
     "dna":               "DNA Double Helix",
     "rotating":          "Rotating 3D Helix",

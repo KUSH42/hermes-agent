@@ -1,7 +1,7 @@
-# DRAFT — ThinkingWidget Spinner Hue-Shift Chroma Gradient
+# IMPLEMENTED — ThinkingWidget Spinner Hue-Shift Chroma Gradient
 
 **Spec ID:** TW-CHROMA  
-**Status:** DRAFT  
+**Status:** IMPLEMENTED  
 **Scope:** `hermes_cli/tui/widgets/thinking.py`, `hermes_cli/tui/_color_utils.py`, `hermes_cli/tui/theme_manager.py`, `hermes_cli/tui/hermes.tcss`
 
 ---

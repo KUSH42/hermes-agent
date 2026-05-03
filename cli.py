@@ -5201,10 +5201,16 @@ class HermesCLI:
                 _produce_raised = True  # set before _handle_tte_producer_exc in case it re-raises later
                 self._handle_tte_producer_exc(exc)
             finally:
-                # Do NOT append a static frame — freeze on the last TTE frame.
-                # TTE's final frame has smoother color gradients than the hand-authored
-                # static banner; replacing it introduces visible banding.
-                # Static banner is still used as a fallback when TTE is disabled or errors.
+                # Append a gradient settle frame: the hero rendered with its skin-defined
+                # gradient colors (via _hero_ansi_colored) spliced into the banner template.
+                # This gives the smooth TTE-like gradient appearance for all effects,
+                # including destructive ones (vhstape, burn, crumble) whose last TTE
+                # frame is the dispersed/cleared state, not the gradient.
+                try:
+                    _settle = _process_raw_frame(self._hero_ansi_colored(plain_hero))
+                    anim_frames.append(_settle)
+                except Exception:
+                    logger.debug("TTE: gradient settle frame failed", exc_info=True)
                 producer_done.set()
                 prefetch_ready.set()  # unblock waiter if never hit _PREFETCH_FRAMES
                 if (_raw_for_cache
@@ -5312,7 +5318,11 @@ class HermesCLI:
                         if STARTUP_TTE_SKIP.is_set():
                             break
                         anim_frames.append(_process_raw_frame(raw_frame))
-                    # Do NOT append static — freeze on last TTE frame (same as cache-miss path).
+                    # Gradient settle frame — same as cache-miss path.
+                    try:
+                        anim_frames.append(_process_raw_frame(self._hero_ansi_colored(plain_hero)))
+                    except Exception:
+                        logger.debug("TTE cache: gradient settle frame failed", exc_info=True)
                 except Exception:
                     logger.debug("TTE cache bg processing failed", exc_info=True)
                 finally:

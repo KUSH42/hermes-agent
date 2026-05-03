@@ -307,7 +307,7 @@ class _SessionRow(Static):
         return f"{bullet} {label:<32}  {rel:<10}  {turn_count} {turn_word}"
 
 
-class ToolPanelHelpOverlay(Widget):
+class ToolPanelHelpOverlay(ModalOverlayMixin, Widget):
     """Binding reference for focused ToolPanel. Shown by F1, dismissed by Esc."""
 
     DEFAULT_CSS = """
@@ -381,6 +381,21 @@ TRACE        condensed view
 COMPACT      minimal view
 """
 
+    BINDINGS = [
+        Binding("escape",        "dismiss", "Close", priority=True, show=False),
+        Binding("question_mark", "dismiss", "Close", priority=True, show=False),
+    ]
+
+    def on_mount(self) -> None:
+        # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
+        # push_modal / --modal are managed per show_overlay() / dismiss_overlay() cycle.
+        pass
+
+    def on_unmount(self) -> None:
+        # Permanent widget: never removed from DOM. ModalOverlayMixin.on_unmount must NOT
+        # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
+        pass
+
     @classmethod
     def _fmt_key(cls, key: str) -> str:
         _SPECIAL = {
@@ -430,29 +445,43 @@ COMPACT      minimal view
         yield Static(markup, markup=True)
 
     def show_overlay(self) -> None:
+        if self.has_class("--visible"):
+            return  # already open — don't double-push the modal stack
         self.border_title = "Tool keys"
-        self.add_class("--visible")
+        self._capture_focus_caller()  # capture ToolPanel (or whatever has focus) before we steal it
+        try:
+            self.app.push_modal(self)  # il-m1: register in arbiter stack
+        except AttributeError:
+            _log.debug("ToolPanelHelpOverlay.show_overlay: app has no push_modal")
+        self.add_class("--modal", "--visible")  # il-m1: owned by show_overlay (permanent widget override)
+        self.focus()
 
     def hide_overlay(self) -> None:
-        self.remove_class("--visible")
+        """Alias kept for call-sites that use hide_overlay(); delegates to dismiss_overlay."""
+        self.dismiss_overlay()
+
+    def dismiss_overlay(self) -> None:
+        """Permanent-widget dismiss: hide without removing from DOM."""
+        target = self._restore_focus_to()
+        self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
+        try:
+            self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
+        except AttributeError:
+            _log.debug("ToolPanelHelpOverlay.dismiss_overlay: app has no pop_modal")
+        if target is not None:
+            try:
+                if target.is_mounted:
+                    target.focus()
+            except Exception:
+                _log.debug("ToolPanelHelpOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
     def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
+        """Public close helper — delegates to action_dismiss."""
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
-        self.remove_class("--visible")
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.app.query_one(HermesInput).focus()
-        except Exception:
-            _log.debug("ToolPanelHelpOverlay.action_dismiss: focus restore failed", exc_info=True)
-
-    def on_key(self, event: "object") -> None:
-        key = getattr(event, "key", None)
-        if key in ("escape", "question_mark"):
-            self.remove_class("--visible")
-            getattr(event, "stop", lambda: None)()
+        """Action bound to Esc/? via BINDINGS — delegates to dismiss_overlay."""
+        self.dismiss_overlay()
 
 
 

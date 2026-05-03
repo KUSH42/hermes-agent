@@ -568,6 +568,25 @@ class TestIL3MicrocopyForm:
         assert offenders == [], "IL-3 leading-space/empty labels:\n" + "\n".join(offenders)
 
 
+class TestChipRenderForm:
+    """TBM-9 LOW-5 — rendered "[X] label" chip width ≤ 18 chars (label ≤ 14)."""
+
+    def test_il_chip_render_form_under_18_chars(self) -> None:
+        # Per concept.md §microcopy contract clause 3: label ≤ 14 chars; with
+        # single-char key + "[] " overhead (4 chars) the rendered form ≤ 18.
+        # Multi-char keys (e.g. "shift+d") are exempt — the bound applies to
+        # the label, which is the variable part the contract clause governs.
+        offenders: list[str] = []
+        for key, label in _il3_collect_all_hints():
+            if len(label) > 14:
+                offenders.append(f"[{key}] {label} (label={len(label)} chars > 14)")
+            if len(key) == 1 and (len(key) + len(label) + 4) > 18:
+                offenders.append(f"[{key}] {label} (rendered > 18 with single-char key)")
+        assert offenders == [], (
+            "Chip render form contract violations:\n" + "\n".join(offenders)
+        )
+
+
 # ---------------------------------------------------------------------------
 # IL-4 — Per-tier chip drop-order under tight budget
 # ---------------------------------------------------------------------------

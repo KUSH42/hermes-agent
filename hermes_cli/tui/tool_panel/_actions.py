@@ -487,7 +487,8 @@ class _ToolPanelActionsMixin:
             inp.value = payload
             inp.focus()
             self._flash_header("edit cmd")
-        except Exception:  # noqa: bare-except
+        except Exception:
+            _log.exception("action_edit_cmd failed")
             self._flash_header("edit unavailable")
 
     def action_copy_err(self) -> None:
@@ -581,7 +582,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # CopyableRichLog not yet mounted; falls back to action_copy_body()
+            except Exception:  # CopyableRichLog not yet mounted
                 pass
         if not all_rich:
             self.action_copy_body()
@@ -610,7 +611,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # CopyableRichLog not yet mounted; falls back to action_copy_body()
+            except Exception:  # CopyableRichLog not yet mounted
                 pass
         if not all_rich:
             self._flash_header("HTML: nothing to copy", tone="warning")
@@ -921,6 +922,22 @@ class _ToolPanelActionsMixin:
             contextual.append(("*", "all"))
 
         if rs is not None:
+            # KO-4 / ML-3 / TBM-1: KIND cycle hint first — concept.md §Hint
+            # pipeline ranks level-3 KIND affordances above generic extras
+            # (e/o/u/E). Must precede the e/o/u/E appends below.
+            if not _block_streaming and not self._is_error():
+                _view = (
+                    getattr(self, "_view_state", None)
+                    or (getattr(self, "_lookup_view_state", lambda: None))()
+                )
+                _current_kind = getattr(_view, "user_kind_override", None) if _view else None
+                _next_kind_label = getattr(self, "_next_kind_label", None)
+                if _next_kind_label is not None:
+                    _next_label = _next_kind_label(_current_kind)
+                    contextual.append(("t", f"as {_next_label}"))
+                    if _current_kind is not None:
+                        contextual.append(("T", "auto"))  # ML-2: revert hint when override active
+
             has_copy_err = rs.stderr_tail or any(
                 a.kind == "copy_err" and a.payload for a in (rs.actions or ())
             )
@@ -935,22 +952,10 @@ class _ToolPanelActionsMixin:
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
                 contextual.append(("E", "edit"))
-            # Only add retry in contextual if it's not already in primary (error case)
+            # Error-state retry takes priority over t/T (paths are mutually
+            # exclusive via the not _is_error() guard above).
             if self._is_error() and "retry" not in visible_action_kinds and ("r", "retry") not in primary:
                 contextual.insert(0, ("r", "retry"))
-            # KO-4 / ML-3: Render-as cycle hint with next-kind preview.
-            if not _block_streaming and not self._is_error():
-                _view = (
-                    getattr(self, "_view_state", None)
-                    or (getattr(self, "_lookup_view_state", lambda: None))()
-                )
-                _current_kind = getattr(_view, "user_kind_override", None) if _view else None
-                _next_kind_label = getattr(self, "_next_kind_label", None)
-                if _next_kind_label is not None:
-                    _next_label = _next_kind_label(_current_kind)
-                    contextual.insert(0, ("t", f"as {_next_label}"))
-                    if _current_kind is not None:
-                        contextual.insert(1, ("T", "auto"))  # ML-2: revert hint when override active
 
         # DC-4: density cycle hints (D forward, Shift+D reverse) for complete blocks
         if not _block_streaming and not getattr(self, "collapsed", False):
@@ -1150,6 +1155,17 @@ class _ToolPanelActionsMixin:
         except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
 
+    def _clear_streaming_kind_hint(self, view: "object") -> None:
+        """TBM-3: single tear-down site for streaming_kind_hint axis. SK-2 contract.
+
+        Use set_axis so watchers fire and the hint clear is observable before
+        any subsequent state write. Routes through the helper from both
+        force_renderer and action_kind_revert.
+        """
+        from hermes_cli.tui.services.tools import set_axis
+        if getattr(view, "streaming_kind_hint", None) is not None:
+            set_axis(view, "streaming_kind_hint", None)
+
     def force_renderer(self, kind: "ResultKind | None") -> None:
         """Set the user KIND override on this panel's view-state and re-render.
 
@@ -1165,10 +1181,9 @@ class _ToolPanelActionsMixin:
 
             view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
             if view is not None:
-                # AB-1: clear stale classifier-driven hint BEFORE override write so the
-                # existing streaming_kind_hint watcher branch refreshes the header first.
-                if getattr(view, "streaming_kind_hint", None) is not None:
-                    set_axis(view, "streaming_kind_hint", None)
+                # AB-1 / TBM-3: clear stale classifier-driven hint BEFORE override write
+                # so the streaming_kind_hint watcher branch refreshes the header first.
+                self._clear_streaming_kind_hint(view)
                 set_user_kind_override(view, kind, source_widget=self)
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
@@ -1308,10 +1323,9 @@ class _ToolPanelActionsMixin:
         if view.user_kind_override is None:
             self._flash_header("render as: no override", tone="warning")
             return
-        # AB-1: clear stale hint BEFORE override write so the watcher fires first.
-        from hermes_cli.tui.services.tools import set_axis, set_user_kind_override
-        if getattr(view, "streaming_kind_hint", None) is not None:
-            set_axis(view, "streaming_kind_hint", None)
+        # AB-1 / TBM-3: clear stale hint BEFORE override write so the watcher fires first.
+        from hermes_cli.tui.services.tools import set_user_kind_override
+        self._clear_streaming_kind_hint(view)
         set_user_kind_override(view, None, source_widget=self)
         self.force_renderer(None)  # type: ignore[attr-defined]
         self._flash_header("render as: auto", tone="accent")

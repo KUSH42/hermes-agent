@@ -107,6 +107,7 @@ class BodyRenderer(ABC):
         cls_result: "ClassificationResult | None" = None,
     ) -> str:
         """One-line COMPACT summary. Override per kind for richer signal."""
+        # Subclasses may use density and cls_result; base is intentionally generic.
         rows = self.payload_row_count()
         return f"({rows} rows)" if rows else "(no output)"
 

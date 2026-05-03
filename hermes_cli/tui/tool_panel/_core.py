@@ -249,6 +249,9 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         self._pending_renderer_swap: "tuple[type, Any, Any] | None" = None
 
         self._view_state: "ToolCallViewState | None" = None  # wired by service after mount
+        # TBM-5: queue _apply_layout decisions that arrive before _view_state is wired,
+        # so the axis-bus density write is replayed once the service attaches view-state.
+        self._pending_layout_decisions: list[LayoutDecision] = []
         # TBC-3: per-block set of renderer classes that exceeded _SLOW_DEADLINE_S on first build.
         # Keyed by tool_call_id (or str(id(self)) as fallback). Evicted on block unmount.
         self._slow_renderer_classes_by_block: "dict[str, set[type]]" = {}
@@ -383,13 +386,41 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             return None
         try:
             svc = self.app._svc_tools
-            return svc._tool_views_by_id.get(tool_call_id)
+            vs = svc._tool_views_by_id.get(tool_call_id)
         except Exception:  # _svc_tools not yet attached; view-state lookup returns None safely
             return None
+        # TBM-5: when view-state is found for the first time, drain any
+        # _apply_layout decisions that arrived before it was wired so the
+        # axis bus catches up.
+        if vs is not None and self._pending_layout_decisions:
+            self._replay_pending_layout(vs)
+        return vs
 
     def _on_tier_change(self, decision: LayoutDecision) -> None:
         """Resolver subscriber — receives full LayoutDecision; delegate directly."""
         self._apply_layout(decision)
+
+    def _publish_layout_axis(self, vs: "Any", decision: LayoutDecision) -> None:
+        """TBM-5: write density tier + density_reason to the view-state axis bus."""
+        from hermes_cli.tui.services.tools import set_axis
+        set_axis(vs, "density", decision.tier)
+        # LL-1/LL-3: write density_reason to view so header can read it.
+        # Map "parent_clamp" → "user" for the 4-value density_reason type.
+        dr = decision.reason
+        if dr == "parent_clamp":
+            dr = "user"
+        vs.density_reason = dr  # type: ignore[assignment]
+
+    def _replay_pending_layout(self, vs: "Any") -> None:
+        """TBM-5: replay any _apply_layout calls that fired before view-state was wired.
+
+        Called by the service immediately after the first _view_state assignment.
+        Only the axis-bus write is replayed; CSS-class mutation already fired
+        at queue time.
+        """
+        while self._pending_layout_decisions:
+            decision = self._pending_layout_decisions.pop(0)
+            self._publish_layout_axis(vs, decision)
 
     def _apply_layout(self, decision: LayoutDecision) -> None:
         """Apply a resolved LayoutDecision atomically (view-state axis first).
@@ -408,16 +439,14 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             raise RuntimeError("_apply_layout must run on Textual message thread")
 
         # 1. Axis-bus write FIRST — fires synchronous watchers.
+        # TBM-5: when view-state is not yet wired, queue the decision so the
+        # axis-bus write is replayed by _replay_pending_layout. CSS-class
+        # mutation below still fires unconditionally.
         vs = self._view_state or self._lookup_view_state()
-        if vs is not None:
-            from hermes_cli.tui.services.tools import set_axis
-            set_axis(vs, "density", decision.tier)
-            # LL-1/LL-3: write density_reason to view so header can read it.
-            # Map "parent_clamp" → "user" for the 4-value density_reason type.
-            dr = decision.reason
-            if dr == "parent_clamp":
-                dr = "user"
-            vs.density_reason = dr  # type: ignore[assignment]
+        if vs is None:
+            self._pending_layout_decisions.append(decision)
+        else:
+            self._publish_layout_axis(vs, decision)
 
         # SLR-1: toggle tier class for CSS margin contract; mutual exclusion.
         for _cls in _TIER_CLASS_NAMES.values():
@@ -505,7 +534,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block_id=block_id,
             phase=phase,
             kind=kind_val,
-            density=self.density.value,
+            density=getattr(self.density, "value", "default"),
             focused=self.has_focus,
         )
 
@@ -525,7 +554,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block_id=block_id,
             phase=phase,
             kind=kind_val,
-            density=self.density.value,
+            density=getattr(self.density, "value", "default"),
             focused=self.has_focus,
         )
 
@@ -543,7 +572,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block_id=block_id,
             phase=phase,
             kind=kind_val,
-            density=self.density.value,
+            density=getattr(self.density, "value", "default"),
             focused=self.has_focus,
         )
 
@@ -561,6 +590,6 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             block_id=block_id,
             phase=phase,
             kind=kind_val,
-            density=self.density.value,
+            density=getattr(self.density, "value", "default"),
             focused=self.has_focus,
         )

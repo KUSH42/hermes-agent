@@ -80,6 +80,16 @@ _TERMINAL_STATES = (
     ToolCallState.REMOVED,
 )
 
+# TBM-2: cap streaming sniff-buffer growth. Tools emitting megabytes of leading
+# whitespace would otherwise grow the buffer unbounded; lstrip() on a multi-MB
+# string is O(n) per chunk.
+_SNIFF_BUFFER_CAP: int = 512
+
+# TBM-4: thread-local recursion guard for _set_view_state. RLock allows
+# re-entry on the same thread; this rejects watcher-driven recursion that
+# would double-fire hint clears and broker plan-state writes.
+_set_view_state_local = threading.local()
+
 
 @dataclass
 class ToolCallViewState:
@@ -322,22 +332,38 @@ class ToolRenderingService(AppService):
     # ------------------------------------------------------------------
 
     def _set_view_state(self, view: "ToolCallViewState", new: "ToolCallState") -> None:
-        """Single choke-point for all view state changes.  Thread-safe via RLock."""
-        with self._state_lock:
-            old = view.state
-            if old == new:
-                return
-            # SLR-3: clear streaming_kind_hint on resolving/terminal state transitions.
-            if new in (
-                ToolCallState.COMPLETING,
-                ToolCallState.ERROR,
-                ToolCallState.CANCELLED,
-                ToolCallState.DONE,
-            ) and view.streaming_kind_hint is not None:
-                set_axis(view, "streaming_kind_hint", None)
-            set_axis(view, "state", new)
-            if self._plan_broker is not None:
-                self._plan_broker.on_view_state(view, old, new)
+        """Single choke-point for all view state changes.  Thread-safe via RLock.
+
+        TBM-4: watchers must not call _set_view_state re-entrantly. Recursive
+        entry on the same thread is rejected with a WARNING log so plan-broker
+        and hint-clear effects fire exactly once per state change.
+        """
+        depth = getattr(_set_view_state_local, "depth", 0)
+        if depth >= 1:
+            logger.warning(
+                "_set_view_state: recursive entry detected; rejecting write to %s",
+                new,
+            )
+            return
+        _set_view_state_local.depth = depth + 1
+        try:
+            with self._state_lock:
+                old = view.state
+                if old == new:
+                    return
+                # SLR-3: clear streaming_kind_hint on resolving/terminal state transitions.
+                if new in (
+                    ToolCallState.COMPLETING,
+                    ToolCallState.ERROR,
+                    ToolCallState.CANCELLED,
+                    ToolCallState.DONE,
+                ) and view.streaming_kind_hint is not None:
+                    set_axis(view, "streaming_kind_hint", None)
+                set_axis(view, "state", new)
+                if self._plan_broker is not None:
+                    self._plan_broker.on_view_state(view, old, new)
+        finally:
+            _set_view_state_local.depth = depth
 
     def _snapshot_turn_tool_calls(self) -> "list[Any]":
         """Return an immutable snapshot of _turn_tool_calls records. Safe to call from worker threads."""
@@ -1549,6 +1575,13 @@ class ToolRenderingService(AppService):
             header = getattr(getattr(view, "block", None), "_header", None)
             if header is not None and hasattr(header, "attach_stream_axis_watcher"):
                 header.attach_stream_axis_watcher(view)
+            elif header is not None:
+                # TBM-9 LOW-4: surface header type-mismatches loudly so misrouted
+                # widgets are not silently bypassed.
+                logger.warning(
+                    "_register_header_hint_watcher: header %r missing attach_stream_axis_watcher",
+                    type(header).__name__,
+                )
         except Exception:
             logger.debug("_register_header_hint_watcher: failed for id=%s", view.tool_call_id, exc_info=True)
 
@@ -1556,7 +1589,15 @@ class ToolRenderingService(AppService):
         """Accumulate sniff buffer; fire streaming_kind_hint once at threshold."""
         if view._sniff_buffer is None:
             return  # already fired or cleared
+        # TBM-2: hard cap on sniff buffer. If we hit the cap without the lstrip
+        # threshold being reached, give up on the hint (same effect as the
+        # already-fired sentinel) so unbounded whitespace cannot grow memory.
+        if len(view._sniff_buffer) >= _SNIFF_BUFFER_CAP:
+            view._sniff_buffer = None
+            return
         view._sniff_buffer += chunk
+        if len(view._sniff_buffer) > _SNIFF_BUFFER_CAP:
+            view._sniff_buffer = view._sniff_buffer[:_SNIFF_BUFFER_CAP]
         if len(view._sniff_buffer.lstrip()) < self._MIN_HINT_PREFIX_BYTES:
             return
         # Lstrip before passing to renderers — threshold check uses lstripped length;

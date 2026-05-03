@@ -4710,15 +4710,13 @@ class HermesCLI:
         )
         logger.info("RENDER-BANNER: build_welcome +%.0fms", (time.monotonic() - _bw_t0) * 1000)
         _ex_t0 = time.monotonic()
-        rendered = Text.from_ansi(capture.export_text(styles=True))
+        # Strip embedded background ANSI codes so StartupBannerWidget's CSS
+        # `background: $app-bg` shows through — same approach as TTE frames.
+        ansi_text = _strip_ansi_bg(capture.export_text(styles=True))
+        rendered = Text.from_ansi(ansi_text)
         logger.info("RENDER-BANNER: export+from_ansi +%.0fms total=%.0fms",
                     (time.monotonic() - _ex_t0) * 1000,
                     (time.monotonic() - _rb_t0) * 1000)
-        try:
-            if app_bg:
-                rendered.stylize(f"on {app_bg}")
-        except Exception:
-            logger.debug("startup banner stylize failed", exc_info=True)
         return rendered
 
     def _build_startup_banner_template(self, plain_hero: str):

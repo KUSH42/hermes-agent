@@ -16,6 +16,7 @@ import asyncio
 import collections
 import dataclasses
 import enum
+from functools import cached_property
 import logging
 import math
 import platform
@@ -354,6 +355,9 @@ class HermesApp(App):
     # Compact layout — True = density-compact CSS class active
     compact: reactive[bool] = reactive(False)
     _compact_manual: "bool | None" = None  # None = auto; True/False = user override
+    # SVC-7: thresholds used by _recompute_auto_compact
+    _COMPACT_WIDTH: int = 120
+    _COMPACT_HEIGHT: int = 30
 
     # Animation hint for StatusBar — display-only
     _anim_hint: reactive[str] = reactive("")
@@ -641,21 +645,34 @@ class HermesApp(App):
         self._svc_watchers = WatchersService(self)
         self._svc_keys     = KeyDispatchService(self)
 
-    # --- Reduced-motion API ---
+    # --- Reduced-motion API (SVC-8) ---
 
-    def _resolve_reduced_motion(self) -> bool:
-        import os as _os
+    def _read_reduced_motion_from_config(self) -> bool:
+        """Read reduced-motion flag from config + env. Contains all file I/O."""
         try:
             from hermes_cli.config import read_raw_config
             cfg = read_raw_config().get("tui", {}).get("reduced_motion")
             if cfg is not None:
                 return bool(cfg)
         except Exception:
-            logger.warning("_resolve_reduced_motion: failed to read config", exc_info=True)
-        env = _os.environ.get("HERMES_REDUCED_MOTION")
+            logger.warning("_read_reduced_motion_from_config: failed to read config", exc_info=True)
+        env = _os_mod.environ.get("HERMES_REDUCED_MOTION")
         if env is not None:
             return env.lower() in ("1", "true", "yes")
         return False
+
+    @cached_property
+    def _reduced_motion_cached(self) -> bool:
+        return self._read_reduced_motion_from_config()
+
+    def refresh_reduced_motion(self) -> None:
+        """Invalidate and re-warm the reduced-motion cache. Call after any config change."""
+        self.__dict__.pop("_reduced_motion_cached", None)
+        _ = self._reduced_motion_cached  # re-warm immediately
+
+    def _resolve_reduced_motion(self) -> bool:
+        """Compatibility shim: delegates to cached property."""
+        return self._reduced_motion_cached
 
     def is_reduced_motion(self) -> bool:
         return self._reduced_motion
@@ -857,17 +874,11 @@ class HermesApp(App):
             pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
-        import os as _os
-        if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
+        if _os_mod.environ.get("HERMES_DENSITY", "").lower() == "compact":
             self._compact_manual = True
             self.compact = True  # triggers watch_compact → adds "density-compact"
         elif self._compact_manual is None:
-            try:
-                w, h = self.size.width, self.size.height
-                if w > 0 and h > 0:
-                    self.compact = w <= 120 or h <= 30
-            except Exception:
-                pass
+            self._recompute_auto_compact()  # SVC-7: use shared helper
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()
@@ -885,8 +896,7 @@ class HermesApp(App):
         if not self._browse_turn_boundary_always:
             self.add_class("--no-turn-boundary")
         # Yolo mode: sync reactive with env var state at startup
-        import os as _os2
-        self.yolo_mode = _os2.environ.get("HERMES_YOLO_MODE") == "1"
+        self.yolo_mode = _os_mod.environ.get("HERMES_YOLO_MODE") == "1"
         # Desktop notify: track turn start time
         self._turn_start_time: float = 0.0
         self._last_assistant_text: str = ""
@@ -921,7 +931,8 @@ class HermesApp(App):
                         if self._pane_manager._center_split:
                             self._pane_manager.apply_center_split(self)
         except Exception:
-            pass
+            # SVC-4: log pane restore failures so they are visible in debug logs
+            logger.warning("on_mount: pane layout restore failed; using default layout", exc_info=True)
         # Link AssistantNameplate animation to TitledRule so the nameplate's timer
         # drives TitledRule.refresh() — nameplate is display:none but keeps ticking.
         try:
@@ -986,16 +997,14 @@ class HermesApp(App):
         self._resize_timer = None
         self._maybe_reload_emoji(event)
         try:
-            w = event.size.width  # type: ignore[union-attr]
-            h = event.size.height  # type: ignore[union-attr]
+            size = event.size  # type: ignore[union-attr]  # SVC-6: single attribute fetch
+            w = size.width
+            h = size.height
         except AttributeError:
             return
         self._apply_min_size_overlay(w, h)
-        # Auto compact-mode detection (debounced here, not in watch_size)
-        if self._compact_manual is None:
-            should = w <= 120 or h <= 30
-            if self.compact != should:
-                self.compact = should
+        # SVC-7: delegate auto-compact logic to single helper
+        self._recompute_auto_compact()
         # Hard floor: w < 30 forces compact regardless of manual override
         if w < 30 and not self.compact:
             self.compact = True
@@ -1031,6 +1040,8 @@ class HermesApp(App):
         self._svc_bash.kill()
         self.hooks.shutdown()
         self._theme_manager.stop_hot_reload()
+        # SVC-1: release session notify socket on normal app exit
+        self._svc_sessions.stop_listener()
         for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
                       "_sessions_poll_timer", "_git_poll_h", "_resize_timer"):
             _h = getattr(self, _attr, None)
@@ -1038,7 +1049,7 @@ class HermesApp(App):
                 try:
                     _h.stop()
                 except Exception:
-                    pass
+                    logger.debug("on_unmount: %s stop failed", _attr, exc_info=True)
         # Safety-net: stop any lingering media players
         try:
             from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
@@ -1049,9 +1060,9 @@ class HermesApp(App):
                     if _w._ctrl:
                         _w._ctrl.stop()
                 except Exception:
-                    pass
+                    logger.debug("on_unmount: InlineMediaWidget stop failed", exc_info=True)
         except Exception:
-            pass
+            logger.debug("on_unmount: media player query failed", exc_info=True)
         # Safety-net delete-all: removes any TGP placements that leaked (e.g. crash path)
         try:
             import sys as _sys
@@ -1060,7 +1071,7 @@ class HermesApp(App):
                 _sys.stdout.write(_get_renderer().delete_all_sequence())
                 _sys.stdout.flush()
         except Exception:
-            pass
+            logger.debug("on_unmount: TGP delete-all failed", exc_info=True)
         # Persist pane layout blob for the current worktree session
         try:
             if (
@@ -1072,7 +1083,7 @@ class HermesApp(App):
                     self._own_session_id, self._pane_manager.dump_state()
                 )
         except Exception:
-            pass
+            logger.debug("on_unmount: save_layout_blob failed", exc_info=True)
         # Session switch: fire deferred exec (set by _svc_sessions.switch_to_session)
         _exec = getattr(self, "_pending_exec", None)
         if _exec is not None:
@@ -1080,7 +1091,7 @@ class HermesApp(App):
             try:
                 _exec()
             except Exception:
-                pass
+                logger.debug("on_unmount: _pending_exec failed", exc_info=True)
 
     # --- Bash passthrough ---
 
@@ -1114,7 +1125,6 @@ class HermesApp(App):
     @work(thread=True)
     def _init_workspace_tracker(self) -> None:
         """Resolve repo root in a worker thread, then set tracker on event loop."""
-        import os as _os
         import subprocess as _sp
         try:
             root = _sp.check_output(
@@ -1128,7 +1138,7 @@ class HermesApp(App):
                 "_init_workspace_tracker: git rev-parse failed; falling back to cwd",
                 exc_info=True,
             )
-            root = _os.getcwd()
+            root = _os_mod.getcwd()
             is_git_repo = False
         tracker = WorkspaceTracker(root, is_git_repo=is_git_repo)
         poller = GitPoller(root, is_git_repo=is_git_repo)
@@ -1137,8 +1147,7 @@ class HermesApp(App):
     def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
         self._workspace_tracker = tracker
         self._git_poller = poller
-        import os as _os
-        self.status_cwd = _os.getcwd()
+        self.status_cwd = _os_mod.getcwd()
         if not poller.is_git_repo:
             self._last_git_snapshot = GitSnapshot(
                 branch="",
@@ -2204,6 +2213,17 @@ class HermesApp(App):
         except Exception:  # widget absent or not yet mounted — focus skipped
             pass
 
+    def _recompute_auto_compact(self) -> None:
+        """SVC-7: single source of truth for auto-compact state. Respects manual override."""
+        if self._compact_manual is not None:
+            self.compact = self._compact_manual
+            return
+        try:
+            w, h = self.size.width, self.size.height
+            self.compact = w <= self._COMPACT_WIDTH or h <= self._COMPACT_HEIGHT
+        except Exception:
+            pass  # size not yet available — leave compact unchanged
+
     def action_toggle_density(self) -> None:
         """Toggle compact / normal density mode."""
         if self._compact_manual is None or not self.compact:
@@ -2212,8 +2232,7 @@ class HermesApp(App):
             self._flash_hint("Compact ON  (/density to toggle)", 1.5)
         else:
             self._compact_manual = None  # restore auto
-            w, h = self.size.width, self.size.height
-            self.compact = w <= 120 or h <= 30
+            self._recompute_auto_compact()
             self._flash_hint("Compact auto", 1.5)
 
     def action_enable_auto_mini(self) -> None:

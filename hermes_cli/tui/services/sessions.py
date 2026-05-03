@@ -4,6 +4,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+
+class SessionCreateTimeout(Exception):
+    """Raised when poll_state_until_pid times out and the orphan is killed."""
+
 _log = logging.getLogger(__name__)
 
 from textual import work
@@ -21,6 +25,37 @@ class SessionsService(AppService):
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         # All session state lives on app for backward compat; service holds no extra state.
+        self._has_other_active_sessions: bool = False  # SVC-12: set by NotifyListener
+
+    # ------------------------------------------------------------------
+    # SVC-1: listener teardown helpers
+    # ------------------------------------------------------------------
+
+    def stop_listener(self) -> None:
+        """Idempotent: stop the notify listener and release the socket."""
+        listener = self.app._notify_listener
+        if listener is not None:
+            try:
+                listener.stop()
+            except Exception:
+                _log.debug("stop_listener: stop failed", exc_info=True)
+            self.app._notify_listener = None
+
+    # ------------------------------------------------------------------
+    # SVC-12: poll gate helpers
+    # ------------------------------------------------------------------
+
+    def _is_session_overlay_visible(self) -> bool:
+        """Return True if the session-switcher overlay is mounted and visible."""
+        from hermes_cli.tui.overlays import SessionOverlay
+        try:
+            return self.app.query_one(SessionOverlay).display
+        except NoMatches:
+            # NoMatches is expected when the overlay is not mounted — not an error
+            return False
+        except Exception:
+            _log.debug("_is_session_overlay_visible: query failed", exc_info=True)
+            return False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -130,12 +165,21 @@ class SessionsService(AppService):
             pass
 
     def poll_session_index(self) -> None:
-        """Event-loop: re-read sessions.json every 2s and refresh bar on change."""
+        """Event-loop: re-read sessions.json every 2s and refresh bar on change (SVC-12 gated)."""
+        if not (self._is_session_overlay_visible() or self._has_other_active_sessions):
+            return  # skip I/O — nobody observes the session list right now
+        self._poll_session_index()
+
+    def _poll_session_index(self) -> None:
+        """Unconditional poll — called internally and by tests."""
         if not self.app._session_mgr:
             return
         try:
             records = self.app._session_mgr.index.get_sessions()
             active_id = self.app._session_mgr.index.get_active_id()
+            # Reset _has_other_active_sessions if only one session remains (SVC-12)
+            if len(records) <= 1:
+                self._has_other_active_sessions = False
             if records != self.app._session_records_cache or active_id != self.app._session_active_id:
                 self.app._session_records_cache = records
                 self.app._session_active_id = active_id
@@ -144,7 +188,7 @@ class SessionsService(AppService):
                 self.refresh_session_bar()
                 self.app._svc_watchers.sync_compact_visibility()
         except Exception as exc:
-            _log.warning("poll_session_index: index read failed", exc_info=True)
+            _log.warning("_poll_session_index: index read failed", exc_info=True)
 
     def refresh_session_records_from_index(self) -> None:
         """Re-read sessions.json and update bar. Event-loop only."""
@@ -190,7 +234,6 @@ class SessionsService(AppService):
 
     def switch_to_session(self, session_id: str) -> None:
         """Switch to a background session via os.execvp. Event-loop only."""
-        import sys as _sys
         if session_id == self.app._session_active_id or not self._sessions_enabled:
             return
         try:
@@ -198,29 +241,36 @@ class SessionsService(AppService):
                 self.app._session_mgr.index.update_active(session_id)
         except Exception as exc:
             _log.warning("switch_to_session: update_active failed", exc_info=True)
-        if self.app._notify_listener:
-            try:
-                self.app._notify_listener.stop()
-            except Exception as exc:
-                _log.debug("switch_to_session: listener stop failed: %s", exc, exc_info=True)
+        # SVC-1: do NOT stop listener here — _do_exec_switch worker stops it
+        # just before execvp so the listener remains live for any arriving notifications.
         if self.app._sessions_poll_timer:
             try:
                 self.app._sessions_poll_timer.stop()
             except Exception as exc:
                 _log.debug("switch_to_session: timer stop failed: %s", exc, exc_info=True)
-
-        import os as _os
         # RX4: fire session_switch hooks so callers can release blocking queues
         # before execvp replaces the process.
         self.app.hooks.fire("on_session_switch", target_id=session_id)
-        # Store exec callback on app; on_unmount fires it after Textual cleans up.
-        self.app._pending_exec = lambda: _os.execvp(
-            _sys.argv[0], [_sys.argv[0], "--worktree-session-id", session_id]
-        )
+        # Kick off the exec worker; it stops the listener then calls execvp.
+        self._do_exec_switch(session_id)
+        # Exit the app for clean UI teardown. execvp in the worker will replace
+        # the process; if the worker runs first the exit is a no-op.
         self.app.exit()
+
+    @work(thread=True)
+    def _do_exec_switch(self, session_id: str) -> None:
+        """Worker: stop listener then execvp into the target session."""
+        import os as _os
+        import sys as _sys
+        try:
+            self.stop_listener()  # safe: no more notifications expected at this point
+            _os.execvp(_sys.argv[0], [_sys.argv[0], "--worktree-session-id", session_id])
+        except Exception:
+            _log.exception("SessionsService._do_exec_switch: execvp failed")
 
     def _on_session_notify_event(self, event: dict) -> None:
         """Called from _NotifyListener daemon thread — must use call_from_thread."""
+        self._has_other_active_sessions = True  # SVC-12: another session is active
         self.app.call_from_thread(self.handle_session_event, event)
 
     def handle_session_event(self, event: dict) -> None:
@@ -266,7 +316,7 @@ class SessionsService(AppService):
                 )
                 return
             try:
-                _sp.Popen(
+                proc = _sp.Popen(
                     [_sys.argv[0], "--headless", "--worktree-session-id", new_id],
                     cwd=str(worktree_path),
                     start_new_session=True,
@@ -276,24 +326,47 @@ class SessionsService(AppService):
                     getattr(overlay, "_set_error", lambda m: None), f"Spawn failed: {exc}"
                 )
                 return
-            rec = self.app._session_mgr.poll_state_until_pid(new_id, timeout=3.0)
-            if rec is None:
-                self.app.call_from_thread(
-                    getattr(overlay, "_set_error", lambda m: None), "Session failed to start."
-                )
-                try:
-                    _sp.run(
-                        ["git", "worktree", "remove", "--force", str(worktree_path)],
-                        capture_output=True, timeout=5,
+            # SVC-3: kill orphan process on poll timeout before raising
+            try:
+                rec = self.app._session_mgr.poll_state_until_pid(new_id, timeout=3.0)
+                if rec is None:
+                    _log.warning(
+                        "create_new_session: poll timeout; killing orphan headless pid=%d",
+                        proc.pid,
                     )
-                except Exception as exc:
-                    _log.warning("create_new_session: worktree cleanup failed", exc_info=True)
-                return
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except _sp.TimeoutExpired:
+                        _log.warning(
+                            "create_new_session: SIGTERM ignored; sending SIGKILL to pid=%d",
+                            proc.pid,
+                        )
+                        proc.kill()
+                    self.app.call_from_thread(
+                        getattr(overlay, "_set_error", lambda m: None), "Session failed to start."
+                    )
+                    try:
+                        _sp.run(
+                            ["git", "worktree", "remove", "--force", str(worktree_path)],
+                            capture_output=True, timeout=5,
+                        )
+                    except Exception:
+                        _log.warning("create_new_session: worktree cleanup failed", exc_info=True)
+                    raise SessionCreateTimeout()
+            except SessionCreateTimeout:
+                raise  # already cleaned up above; don't re-enter cleanup
+            except Exception:
+                if proc.poll() is None:
+                    proc.terminate()
+                raise
             try:
                 self.app._session_mgr.index.add_session(rec)
             except Exception as exc:
                 _log.error("create_new_session: index.add_session failed", exc_info=True)
             self.app.call_from_thread(self.on_session_created, new_id, overlay)
+        except SessionCreateTimeout:
+            pass  # already logged and cleaned up by the inner raise path
         except Exception:
             _log.exception("sessions.create_new_session: failed")
 

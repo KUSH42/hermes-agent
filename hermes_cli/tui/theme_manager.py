@@ -709,8 +709,21 @@ class ThemeManager:
 
         Precedence (highest → lowest):
             component_vars overrides  >  skin vars  >  Textual defaults
+
+        Values must be flat strings or scalars; nested dicts/lists/sets are not
+        safe because the merge is shallow and callers could mutate shared internal
+        state. If a future component var needs nested structure, wrap with
+        MappingProxyType or deep-copy it here before returning.
         """
-        return {**self._css_vars, **self._component_vars}
+        merged = {**self._css_vars, **self._component_vars}
+        if __debug__:
+            for k, v in merged.items():
+                if isinstance(v, (dict, list, set)):
+                    raise AssertionError(
+                        f"ThemeManager.css_variables: nested value for {k!r} "
+                        f"({type(v).__name__}); values must be flat strings — see docstring"
+                    )
+        return merged
 
     # ------------------------------------------------------------------
     # Internal

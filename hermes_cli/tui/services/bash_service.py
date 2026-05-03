@@ -51,8 +51,12 @@ class BashService(AppService):
         if proc is not None:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+            except ProcessLookupError:
+                pass  # process already gone — expected
+            except PermissionError:
+                _log.warning("BashService.kill: PermissionError — sandbox or capability issue", exc_info=True)
+            except OSError:
+                _log.warning("BashService.kill: unexpected OSError", exc_info=True)
 
     def _exec_sync(self, cmd: str, block: "BashOutputBlock") -> None:
         """Blocking execution — runs inside @work(thread=True, group='bash')."""

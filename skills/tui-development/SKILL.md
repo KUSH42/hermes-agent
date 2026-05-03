@@ -1979,7 +1979,8 @@ top-level: `theme_manager.py`
 - `SkinColors.default()` `diff_add_bg`/`diff_del_bg` aligned to match `COMPONENT_VAR_DEFAULTS` (`#1a3a1a`/`#3a1a1a`).
 - `completion_list._styled_candidate`: path suffix reads `text-muted` via `self.app.get_css_variables()` (silent fallback to `#888888`).
 - `tool_panel/_actions.py` HTML export: `get("base", ...)` → `css.get("app-bg") or css.get("background") or "#1e1e2e"`.
-- All 4 bundled DESIGN.md skins (`catppuccin`, `matrix`, `solarized-dark`, `tokyo-night`) gained `overlay-selection-bg` in their `x-hermes.component-vars` block.
+- Bundled skins are scanned from `hermes_cli/skins/*/DESIGN.md`, not from the removed repo-root `skins/` directory. `build_skin_vars.SKINS_DIR` must stay aligned with the runtime resolver in `skin_engine.py`.
+- All bundled DESIGN.md skins now carry a fully populated `x-hermes.component-vars` block so `scan_bundled_skins()` and the RX3/TCSS drift tests can assert complete required-key coverage without depending on runtime fallback defaults.
 
 **Gotchas:**
 - DESIGN.md skin YAML frontmatter: `component-vars` is nested under `x-hermes`, not at top level. `fm.get("component-vars")` returns None; correct path is `fm["x-hermes"]["component-vars"]`.
@@ -3065,7 +3066,7 @@ internal clipping discipline.
 
 **Key gotcha — `_idle_beat_timer` vs `_timer`:** `_idle_beat_timer` is only set when the state machine cycles to IDLE (`_enter_idle_timer()` at lines 1000/1042). For tests that check whether animation started, assert `_timer is not None` (set directly in `on_mount` at line 843). Asserting `_idle_beat_timer` for the visible case always fails trivially; for the hidden case, always passes trivially — neither test would validate the guard.
 
-**Skin YAML structure for component-vars:** In all 4 bundled skins, keys live under `x-hermes.component-vars` in the YAML front-matter. Test must load the front-matter via regex `^---\n(.*?)\n---` (re.DOTALL), then navigate `data["x-hermes"]["component-vars"]`.
+**Skin YAML structure for component-vars:** In bundled skins, keys live under `x-hermes.component-vars` in the YAML front-matter, and the canonical bundled root is `hermes_cli/skins/<name>/DESIGN.md`. Test must load the front-matter via regex `^---\n(.*?)\n---` (re.DOTALL), then navigate `data["x-hermes"]["component-vars"]`.
 
 ## Changelog — 2026-04-28 — UX Audit C — Affordance/Discoverability fixes (C1/C2/C3/C5/C6) — 17 tests, commit `351361ec1`
 

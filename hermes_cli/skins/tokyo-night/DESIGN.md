@@ -156,6 +156,9 @@ x-hermes:
     tool-tier-file-accent: '#73daca'
     tool-tier-query-accent: '#7dcfff'
     tool-tier-agent-accent: '#bb9af7'
+    thinking-spinner-dim: '#4a4a4a'
+    thinking-spinner-peak: '#d8d8d8'
+    tool-header-max-gap: '8'
 ---
 
 # Tokyo-Night

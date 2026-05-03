@@ -109,7 +109,7 @@ def test_t2_all_defaults_declared_post_phase4() -> None:
 
 def test_t3_bundled_skins_cover_all_keys() -> None:
     skins = scan_bundled_skins()
-    assert skins, "No bundled skins found at skins/*.yaml"
+    assert skins, "No bundled skins found at hermes_cli/skins"
     required = {
         k for k, v in COMPONENT_VAR_DEFAULTS.items()
         if not (isinstance(v, VarSpec) and v.optional_in_skin)

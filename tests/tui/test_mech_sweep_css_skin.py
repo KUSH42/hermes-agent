@@ -17,7 +17,7 @@ import yaml
 # ---------------------------------------------------------------------------
 _REPO = pathlib.Path(__file__).parents[2]
 _TCSS = _REPO / "hermes_cli" / "tui" / "hermes.tcss"
-_SKINS_DIR = _REPO / "skins"
+_SKINS_DIR = _REPO / "hermes_cli" / "skins"
 
 # ---------------------------------------------------------------------------
 # CSS-1 — $tool-mcp-accent declaration and MCP rule

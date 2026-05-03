@@ -4893,6 +4893,40 @@ class HermesCLI:
         con.print(hero_rich, end="", highlight=False)
         return buf.getvalue()
 
+    def _hero_ansi_with_stops(self, plain_hero: str, stops: "list[str]") -> str:
+        """Return ANSI-colored hero applying multi-stop gradient by character position.
+
+        Mirrors TTE's final_gradient_stops coloring exactly: each character gets a
+        color interpolated from the stops based on its index in the visible character
+        sequence.  Using this for the settle frame eliminates the color snap that
+        occurs when the settle frame uses per-line markup colors instead of the same
+        gradient TTE rendered.
+        """
+        from io import StringIO
+        from rich.console import Console as _RichConsole
+        from rich.text import Text
+        from hermes_cli.tui.animation import lerp_color
+        if len(stops) < 2:
+            return self._hero_ansi_colored(plain_hero)
+        visible = [c for c in plain_hero if c != "\n"]
+        total = len(visible) or 1
+        n_segs = len(stops) - 1
+        out = Text()
+        vis_idx = 0
+        for ch in plain_hero:
+            if ch == "\n":
+                out.append("\n")
+                continue
+            t = vis_idx / (total - 1) if total > 1 else 0.0
+            seg = min(int(t * n_segs), n_segs - 1)
+            color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
+            out.append(ch, style=color)
+            vis_idx += 1
+        buf = StringIO()
+        con = _RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=200)
+        con.print(out, end="", highlight=False)
+        return buf.getvalue()
+
     def _splice_startup_banner_frame(self, template: dict[str, object], frame_text: str):
         """Return banner Text with the animated hero frame spliced in."""
         from rich.text import Text
@@ -5073,6 +5107,18 @@ class HermesCLI:
         # before the producer thread starts.
         _PREFETCH_FRAMES = 4
 
+        # Gradient stops for the settle frame — must match what TTE's
+        # final_gradient_stops are set to, so the settle frame is visually
+        # identical to the last TTE frame (eliminating the color snap).
+        _param_stops = (cfg.params or {}).get("final_gradient_stops")
+        if _param_stops and len(_param_stops) >= 2:
+            _settle_stops: list = [str(s) for s in _param_stops]
+        else:
+            try:
+                _settle_stops = list(_skin_colors)  # type: ignore[name-defined]
+            except NameError:
+                _settle_stops = ["#FFD700", "#FFBF00", "#CD7F32"]
+
         # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
         # Frames are appended to anim_frames as they are generated; playback
         # starts after _PREFETCH_FRAMES frames are ready rather than waiting
@@ -5201,13 +5247,12 @@ class HermesCLI:
                 _produce_raised = True  # set before _handle_tte_producer_exc in case it re-raises later
                 self._handle_tte_producer_exc(exc)
             finally:
-                # Append a gradient settle frame: the hero rendered with its skin-defined
-                # gradient colors (via _hero_ansi_colored) spliced into the banner template.
-                # This gives the smooth TTE-like gradient appearance for all effects,
-                # including destructive ones (vhstape, burn, crumble) whose last TTE
-                # frame is the dispersed/cleared state, not the gradient.
+                # Append a settle frame using the same gradient stops TTE used, so the
+                # settle frame is visually identical to TTE's final frame and no color snap
+                # occurs.  Destructive effects (burn, crumble) whose last TTE frame shows
+                # dispersed chars also benefit — the settle always shows complete text.
                 try:
-                    _settle = _process_raw_frame(self._hero_ansi_colored(plain_hero))
+                    _settle = _process_raw_frame(self._hero_ansi_with_stops(plain_hero, _settle_stops))
                     anim_frames.append(_settle)
                 except Exception:
                     logger.debug("TTE: gradient settle frame failed", exc_info=True)
@@ -5318,9 +5363,10 @@ class HermesCLI:
                         if STARTUP_TTE_SKIP.is_set():
                             break
                         anim_frames.append(_process_raw_frame(raw_frame))
-                    # Gradient settle frame — same as cache-miss path.
+                    # Gradient settle frame — same as cache-miss path; use _settle_stops
+                    # so colors match TTE's final frame exactly (no snap on transition).
                     try:
-                        anim_frames.append(_process_raw_frame(self._hero_ansi_colored(plain_hero)))
+                        anim_frames.append(_process_raw_frame(self._hero_ansi_with_stops(plain_hero, _settle_stops)))
                     except Exception:
                         logger.debug("TTE cache: gradient settle frame failed", exc_info=True)
                 except Exception:

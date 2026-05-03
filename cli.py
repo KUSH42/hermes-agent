@@ -5202,20 +5202,10 @@ class HermesCLI:
                 _produce_raised = True  # set before _handle_tte_producer_exc in case it re-raises later
                 self._handle_tte_producer_exc(exc)
             finally:
-                # Append static frame last so animation always ends on a clean still.
-                _static = _build_static()
-                try:
-                    _static_c = _Content.from_rich_text(_static, console=None)
-                    if _render_w > 0:
-                        try:
-                            _sl = _static_c._wrap_and_format(_render_w, no_wrap=True, overflow="fold")
-                            _ss = [_Strip(*_ln.to_strip(_base_style)) for _ln in _sl]
-                            _static_c = _CachedStripsVisual(_ss, _render_w, source=_static_c)  # type: ignore[assignment]
-                        except Exception:
-                            pass
-                    anim_frames.append(_static_c)
-                except Exception:
-                    anim_frames.append(_static)
+                # Do NOT append a static frame — freeze on the last TTE frame.
+                # TTE's final frame has smoother color gradients than the hand-authored
+                # static banner; replacing it introduces visible banding.
+                # Static banner is still used as a fallback when TTE is disabled or errors.
                 producer_done.set()
                 prefetch_ready.set()  # unblock waiter if never hit _PREFETCH_FRAMES
                 if (_raw_for_cache
@@ -5517,17 +5507,27 @@ class HermesCLI:
         playback_done.wait(timeout=MAX_WALL_S + 5.0)
 
         if rendered_any_flag[0]:
-            # Scroll to top after TTE so the banner is shown from the beginning.
-            # Deferred via call_from_thread→call_after_refresh so it fires after
-            # the final frame's layout pass completes.
+            # Scroll to END after TTE so the bottom of the banner is visible
+            # (meta info: model, path, session + full skills list).
+            # Force layout=True on the banner first — set_frame skips layout
+            # after frame 1, so height:auto stays sized to the first animation
+            # frame (shorter than the final static frame). The layout pass
+            # corrects virtual_size before scroll_end fires.
             from hermes_cli.tui.widgets.output_panel import OutputPanel
-            def _scroll_banner_top() -> None:
+            def _scroll_banner_end() -> None:
                 try:
                     panel = app.query_one(OutputPanel)
-                    app.call_after_refresh(panel.scroll_home, animate=False)
+                    # Double call_after_refresh: first pass lets the banner's
+                    # layout=True propagate to OutputPanel.virtual_size; second
+                    # pass fires scroll_end once max_scroll_y is non-zero.
+                    def _do_scroll(p=panel):
+                        p.scroll_end(animate=False)
+                    def _chain(p=panel):
+                        app.call_after_refresh(_do_scroll)
+                    app.call_after_refresh(_chain)
                 except Exception:
                     pass
-            app.call_from_thread(_scroll_banner_top)
+            app.call_from_thread(_scroll_banner_end)
             self._first_input_seen.wait(timeout=0.25)
 
         return rendered_any_flag[0]
@@ -5652,12 +5652,15 @@ class HermesCLI:
             try:
                 widget = app.query_one(StartupBannerWidget)
                 widget.set_frame(final_banner)
-                # Scroll to top so the banner is shown from the beginning.
-                # call_after_refresh defers until after the layout pass that
-                # incorporates the new banner height.
+                # Double call_after_refresh: first pass lets height:auto propagate
+                # to OutputPanel.virtual_size; second fires scroll_end.
                 try:
                     panel = app.query_one(OutputPanel)
-                    app.call_after_refresh(panel.scroll_home, animate=False)
+                    def _do_scroll(p=panel):
+                        p.scroll_end(animate=False)
+                    def _chain(p=panel):
+                        app.call_after_refresh(_do_scroll)
+                    app.call_after_refresh(_chain)
                 except Exception:
                     pass
             except Exception as exc:

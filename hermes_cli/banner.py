@@ -181,91 +181,32 @@ def get_cached_hero_width() -> tuple[str, int]:
     return _HERO_CACHE[key]
 
 
-_HEX_TAG_RE = re.compile(r"\[(?:[a-zA-Z]+\s+)*#([0-9A-Fa-f]{6})\]")
-_RICH_TAG_RE = re.compile(r"\[/?[^\[\]]*\]")
-
-
-def _per_row_anchor_colors(markup: str) -> tuple[list[str], list[str | None]]:
-    """Strip Rich markup line-by-line, returning (plain_lines, anchor_colors).
-
-    anchor_colors[i] is the first hex color tag found on row i, or None.
-    Used by hero/logo gradient builders to detect author-painted color stops
-    and smoothly interpolate between them across all rows.
-    """
-    raw_lines = markup.splitlines() if "\n" in markup else [markup]
-    plains: list[str] = []
-    anchors: list[str | None] = []
-    for line in raw_lines:
-        m = _HEX_TAG_RE.search(line)
-        anchors.append(f"#{m.group(1).upper()}" if m else None)
-        plains.append(_RICH_TAG_RE.sub("", line))
-    return plains, anchors
-
-
-def _smooth_anchor_color(i: int, n: int, anchors: list[str | None],
-                         fallback_stops: list[str]) -> str:
-    """Pick row i's color by lerping between adjacent author anchors.
-
-    Rows without an explicit anchor inherit from neighbours; if no anchors
-    exist, fall back to a smooth multi-stop gradient over fallback_stops.
-    """
-    if n <= 1:
-        return next((c for c in anchors if c), fallback_stops[0])
-
-    filled: list[str | None] = list(anchors)
-    last: str | None = None
-    for k in range(n):
-        if filled[k] is not None:
-            last = filled[k]
-        else:
-            filled[k] = last
-    last = None
-    for k in range(n - 1, -1, -1):
-        if filled[k] is not None:
-            last = filled[k]
-        else:
-            filled[k] = last
-
-    if any(c is None for c in filled):
-        m = len(fallback_stops) - 1
-        t = i / (n - 1) * m
-        seg = min(int(t), m - 1) if m else 0
-        return lerp_color(fallback_stops[seg], fallback_stops[seg + 1], t - seg) if m else fallback_stops[0]
-
-    stops: list[tuple[int, str]] = []
-    prev: str | None = None
-    for k, c in enumerate(filled):
-        if c != prev:
-            stops.append((k, c))
-            prev = c
-    if stops[-1][0] != n - 1:
-        stops.append((n - 1, filled[-1]))
-
-    for j in range(len(stops) - 1):
-        r0, c0 = stops[j]
-        r1, c1 = stops[j + 1]
-        if r0 <= i <= r1:
-            return c0 if r1 == r0 else lerp_color(c0, c1, (i - r0) / (r1 - r0))
-    return stops[-1][1]
-
-
 def render_banner_hero_text(markup_hero: str) -> Text:
-    """Render banner hero with a smooth per-row gradient.
-
-    Extracts per-line author color tags as anchor stops and interpolates
-    between them so multi-row color bands turn into smooth fades rather
-    than hard stripes. Falls back to a 3-stop accent→text→dim skin gradient
-    when the art has no explicit color tags.
-    """
+    """Render banner hero markup; plain text gets a smooth top→bottom 3-stop fade."""
+    try:
+        hero_text = Text.from_markup(markup_hero)
+    except Exception:
+        hero_text = Text(markup_hero)
     accent = _skin_color("banner_accent", "#FFBF00")
     text = _skin_color("banner_text", "#FFF8DC")
     dim = _skin_color("banner_dim", "#B8860B")
-    plains, anchors = _per_row_anchor_colors(markup_hero)
-    n = len(plains)
+    lines = hero_text.split("\n", allow_blank=True)
+    n = len(lines)
     out = Text()
-    for i, glyphs in enumerate(plains):
-        color = _smooth_anchor_color(i, n, anchors, [accent, text, dim])
-        out.append(glyphs, style=color)
+    for i, line in enumerate(lines):
+        if line.style or line.spans:
+            styled_line = line
+        else:
+            if n <= 1:
+                color = accent
+            else:
+                t = i / (n - 1)
+                if t <= 0.5:
+                    color = lerp_color(accent, text, t * 2.0)
+                else:
+                    color = lerp_color(text, dim, (t - 0.5) * 2.0)
+            styled_line = Text(line.plain, style=color)
+        out.append_text(styled_line)
         if i < n - 1:
             out.append("\n")
     return out
@@ -283,20 +224,23 @@ def _count_visual_rows(renderables: list) -> int:
 
 
 def render_banner_logo_text(markup_logo: str) -> Text:
-    """Render banner logo with a smooth per-row gradient.
+    """Render banner logo markup, tinting plain ASCII with an accent→dim gradient."""
+    try:
+        logo_text = Text.from_markup(markup_logo)
+    except Exception:
+        logo_text = Text(markup_logo)
+    if logo_text.style or logo_text.spans:
+        return logo_text
 
-    Same anchor-stop-interpolation as render_banner_hero_text. Falls back to
-    a 2-stop accent→dim gradient when the logo art has no color tags.
-    """
     accent = _skin_color("banner_accent", "#FFBF00")
     dim = _skin_color("banner_dim", "#B8860B")
-    plains, anchors = _per_row_anchor_colors(markup_logo)
-    n = len(plains)
+    lines = logo_text.plain.splitlines() or [logo_text.plain]
     out = Text()
-    for i, glyphs in enumerate(plains):
-        color = _smooth_anchor_color(i, n, anchors, [accent, dim])
-        out.append(glyphs, style=color)
-        if i < n - 1:
+    total = len(lines)
+    for idx, line in enumerate(lines):
+        t = 0.0 if total <= 1 else idx / (total - 1)
+        out.append(line, style=lerp_color(accent, dim, t))
+        if idx != total - 1:
             out.append("\n")
     return out
 

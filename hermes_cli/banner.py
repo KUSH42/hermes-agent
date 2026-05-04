@@ -186,7 +186,7 @@ def get_cached_hero_width() -> tuple[str, int]:
 
 
 def render_banner_hero_text(markup_hero: str) -> Text:
-    """Render banner hero markup; plain text gets a smooth top→bottom 3-stop fade."""
+    """Render banner hero markup; plain text gets a top→bottom three-tone gradient."""
     try:
         hero_text = Text.from_markup(markup_hero)
     except Exception:
@@ -201,14 +201,14 @@ def render_banner_hero_text(markup_hero: str) -> Text:
         if line.style or line.spans:
             styled_line = line
         else:
-            if n <= 1:
+            if n < 3:
                 color = accent
+            elif i < n // 3:
+                color = accent
+            elif i < 2 * (n // 3):
+                color = text
             else:
-                t = i / (n - 1)
-                if t <= 0.5:
-                    color = lerp_color(accent, text, t * 2.0)
-                else:
-                    color = lerp_color(text, dim, (t - 0.5) * 2.0)
+                color = dim
             styled_line = Text(line.plain, style=color)
         out.append_text(styled_line)
         if i < n - 1:

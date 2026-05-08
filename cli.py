@@ -4773,15 +4773,20 @@ class HermesCLI:
         hero_height = len(hero_lines) + 1  # +1 padding row
 
         # Compute cache key inputs.
-        # wide_layout / tall_layout must mirror the logo-gate in banner.py:891-892,
+        # wide_layout / tall_layout must mirror the logo-gate in banner.py
+        # (build_welcome_banner: `term_width >= 95` and `term_rows >= 32`),
         # which reads shutil.get_terminal_size() directly (not panel_w / capture_width).
+        # When term_rows is 20-31 banner.py falls back to a single-line wordmark
+        # in place of the 6-row block-letter logo; bucketing those rows under
+        # tall_layout=True caused stale cached hero_row/col to be reused, leaving
+        #  placeholder glyphs visible after the per-frame hero swap.
         term_size = shutil.get_terminal_size()
         term_width = term_size.columns
         term_rows = term_size.lines
         app = _hermes_app
         panel_w = int(getattr(app, "_startup_output_panel_width", 0) or 0) or term_width
         wide_layout = term_width >= 95
-        tall_layout = term_rows >= 20
+        tall_layout = term_rows >= 32
         try:
             skin_name = get_active_skin_name()
         except Exception:
@@ -5034,28 +5039,6 @@ class HermesCLI:
                     template_cell[0], self._hero_ansi_colored(plain_hero)
                 )
             return self._startup_banner_static or self._render_startup_banner_text(print_hero=True)
-
-        # Pre-flight: paint banner with BLANK hero so the banner layout is visible
-        # before animation starts, avoiding the jarring empty→frame-1 pop-in.
-        # Only fires when template is ready (template_cell[0] is populated before
-        # call_later fires); if template is unavailable we stay blank rather than
-        # flashing the static colored banner.
-        async def _apply_preflight() -> None:
-            from textual.css.query import NoMatches
-            from hermes_cli.tui.widgets import StartupBannerWidget
-            try:
-                widget = app.query_one(StartupBannerWidget)
-                tmpl = template_cell[0]
-                if tmpl is not None:
-                    hero_height = int(tmpl["hero_height"])
-                    hero_width = int(tmpl["hero_width"])
-                    blank_hero = "\n".join(" " * hero_width for _ in range(hero_height))
-                    widget.set_frame(self._splice_startup_banner_frame(tmpl, blank_hero))
-                # else: template not ready — leave widget empty; TTE frame 1 will fill it
-            except NoMatches:
-                logger.debug("TTE: StartupBannerWidget not found for pre-flight")
-            except Exception:
-                logger.debug("TTE: pre-flight failed", exc_info=True)
 
         # Minimal Visual subclass that returns pre-rendered Strip lists at O(1) with
         # zero allocation — used by Phase 1.5 to eliminate _wrap_and_format() at
@@ -5460,11 +5443,6 @@ class HermesCLI:
                 target=_produce, daemon=True, name="hermes-tte-producer"
             )
             producer_thread.start()
-
-        # Pre-flight: show banner with blank hero so the layout appears before
-        # animation starts.  template_cell[0] is guaranteed set at this point
-        # (populated before call_later fires on the event loop).
-        app.call_later(_apply_preflight)
 
         # Wait for the first batch before handing off to the event loop.
         if not _cache_hit:

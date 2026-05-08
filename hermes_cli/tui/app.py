@@ -759,11 +759,26 @@ class HermesApp(App):
             from hermes_cli.tui.overlays import InterruptOverlay as _IO
             yield _IO(id="interrupt-overlay")
         with Horizontal(id="nameplate-hint-row"):
-            yield AssistantNameplate(
-                id="nameplate",
-                name=getattr(self, "_nameplate_name", "Hermes"),
-                morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
-            )
+            _np_kwargs: dict[str, Any] = {
+                "id": "nameplate",
+                "name": getattr(self, "_nameplate_name", "Hermes"),
+                "morph_speed": getattr(self, "_nameplate_morph_speed", 1.0),
+            }
+            # Recording/demo override: speed up idle beats so they fire often
+            # enough to capture in a short take. Default behavior unchanged.
+            _np_min = _os_mod.environ.get("HERMES_NP_IDLE_MIN_S")
+            _np_max = _os_mod.environ.get("HERMES_NP_IDLE_MAX_S")
+            if _np_min:
+                try:
+                    _np_kwargs["idle_beat_min_s"] = float(_np_min)
+                except ValueError:
+                    logger.warning("HERMES_NP_IDLE_MIN_S not a float: %r", _np_min)
+            if _np_max:
+                try:
+                    _np_kwargs["idle_beat_max_s"] = float(_np_max)
+                except ValueError:
+                    logger.warning("HERMES_NP_IDLE_MAX_S not a float: %r", _np_max)
+            yield AssistantNameplate(**_np_kwargs)
             yield HintBar(id="hint-bar")
         yield SessionBar(id="session-bar")
         yield _SessionNotification(id="session-notification")
@@ -1770,6 +1785,7 @@ class HermesApp(App):
                         ov.refresh_data(tracker, self._last_git_snapshot)
                         ov.show_overlay()
                         self._sync_workspace_polling_state()
+                        self._trigger_git_poll()
                 except NoMatches:
                     pass  # WorkspaceOverlay not yet in DOM — skip auto-show
 

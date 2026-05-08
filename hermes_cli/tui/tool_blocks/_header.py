@@ -466,18 +466,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         if self._flash_msg and now < self._flash_expires:
             _c = self._colors()
             if self._flash_tone == "error":
-                try:
-                    _err_color = self.app.get_css_variables().get("status-error-color", _c.error)
-                except Exception:  # get_css_variables unavailable; fall back to SkinColors error color
-                    _err_color = _c.error
-                _flash_style = f"dim {_err_color}"
+                _flash_style = f"dim {_c.error}"
                 _flash_glyph = "✗"
             elif self._flash_tone == "warning":
                 _flash_style = f"dim {_c.warning}"
                 _flash_glyph = "⚠"
             else:
-                accent_color = getattr(self, "_focused_gutter_color", None) or _c.accent
-                _flash_style = f"dim {accent_color}"
+                _flash_style = f"dim {_c.success}"
                 _flash_glyph = "✓"
             _msg = self._flash_msg
             _tw = self.size.width

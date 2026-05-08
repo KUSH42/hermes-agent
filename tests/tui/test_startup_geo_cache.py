@@ -196,7 +196,7 @@ class TestGeoCacheIntegration:
         stub, fake_text, plain_hero = _make_stub_class(monkeypatch, tmp_path)
         with patch.object(stub, "_render_startup_banner_text", return_value=fake_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             result = stub._build_startup_banner_template(plain_hero)
         assert result is not None
         assert result["hero_row"] == 1
@@ -207,7 +207,7 @@ class TestGeoCacheIntegration:
         stub, fake_text, plain_hero = _make_stub_class(monkeypatch, tmp_path)
         with patch.object(stub, "_render_startup_banner_text", return_value=fake_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)), \
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)), \
              patch("threading.Thread"):
             result = stub._build_startup_banner_template(plain_hero)
         assert result is not None
@@ -226,7 +226,7 @@ class TestGeoCacheIntegration:
         no_placeholder_text = _FakeRichText(["line_a", "line_b", "line_c"])
         with patch.object(stub, "_render_startup_banner_text", return_value=no_placeholder_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             # Prime the cache by doing a real scan first with text that has the placeholder.
             hero_width = len(plain_hero)
             placeholder_row = _PLACEHOLDER * hero_width
@@ -246,7 +246,7 @@ class TestGeoCacheIntegration:
 
         # Pre-populate cache with specific values.
         with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
             key = geo_cache_key(100, "hermes", True, True)
             save_geo(key, {"hero_row": 7, "hero_col": 3})
@@ -259,7 +259,7 @@ class TestGeoCacheIntegration:
 
         with patch.object(stub, "_render_startup_banner_text", return_value=scan_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             result = stub._build_startup_banner_template(plain_hero)
 
         assert result is not None
@@ -271,7 +271,7 @@ class TestGeoCacheIntegration:
         stub, _, plain_hero = _make_stub_class(monkeypatch, tmp_path)
 
         with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
             key = geo_cache_key(100, "hermes", True, True)
             save_geo(key, {"hero_row": 2, "hero_col": 0})
@@ -283,7 +283,7 @@ class TestGeoCacheIntegration:
 
         with patch.object(stub, "_render_startup_banner_text", render_mock), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             stub._build_startup_banner_template(plain_hero)
 
         render_mock.assert_called_once()
@@ -293,7 +293,7 @@ class TestGeoCacheIntegration:
         stub, _, plain_hero = _make_stub_class(monkeypatch, tmp_path)
 
         with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
             key = geo_cache_key(100, "hermes", True, True)
             save_geo(key, {"hero_row": 1, "hero_col": 0})
@@ -304,7 +304,7 @@ class TestGeoCacheIntegration:
 
         with patch.object(stub, "_render_startup_banner_text", return_value=fake_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             result = stub._build_startup_banner_template(plain_hero)
 
         assert result is not None
@@ -329,7 +329,7 @@ class TestGeoCacheIntegration:
 
         with patch.object(stub, "_render_startup_banner_text", return_value=fake_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)), \
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)), \
              patch("threading.Thread", return_value=thread_mock) as thread_cls:
             stub._build_startup_banner_template(plain_hero)
 
@@ -343,7 +343,7 @@ class TestGeoCacheIntegration:
 
         # Pre-populate cache so we hit the cache-hit path.
         with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
             key = geo_cache_key(100, "hermes", True, True)
             save_geo(key, {"hero_row": 0, "hero_col": 0})
@@ -355,7 +355,7 @@ class TestGeoCacheIntegration:
 
         with patch.object(stub, "_render_startup_banner_text", return_value=fake_text), \
              patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=25)):
+             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
             result = stub._build_startup_banner_template(plain_hero)
 
         assert result is not None

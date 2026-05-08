@@ -46,7 +46,7 @@ kitty --override font_size="$FONT_SIZE" \
       --override remember_window_size=no \
       --override initial_window_width=1920 \
       --override initial_window_height=1080 \
-      --hold bash -lc "cd /home/xush/.hermes/hermes-agent && python3 scripts/demo_anim.py \
+      --hold bash -lc "cd /home/xush/.hermes/hermes-agent && venv/bin/python scripts/demo_anim.py \
           --engines '$ENGINES' \
           --duration $PER_ENGINE_S \
           --fps $FPS \

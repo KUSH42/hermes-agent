@@ -14,8 +14,12 @@ import time
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+fastapi = pytest.importorskip("fastapi")
+testclient = pytest.importorskip("fastapi.testclient")
+
+FastAPI = fastapi.FastAPI
+TestClient = testclient.TestClient
 
 from hermes_cli import kanban_db as kb
 

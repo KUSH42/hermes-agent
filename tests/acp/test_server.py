@@ -200,6 +200,8 @@ class TestSessionOps:
             "context",
             "reset",
             "compact",
+            "steer",
+            "queue",
             "version",
         ]
         model_cmd = next(
@@ -207,6 +209,16 @@ class TestSessionOps:
         )
         assert model_cmd.input is not None
         assert model_cmd.input.root.hint == "model name to switch to"
+        steer_cmd = next(
+            cmd for cmd in update.available_commands if cmd.name == "steer"
+        )
+        assert steer_cmd.input is not None
+        assert steer_cmd.input.root.hint == "guidance for the active turn"
+        queue_cmd = next(
+            cmd for cmd in update.available_commands if cmd.name == "queue"
+        )
+        assert queue_cmd.input is not None
+        assert queue_cmd.input.root.hint == "prompt to run next"
 
     @pytest.mark.asyncio
     async def test_cancel_sets_event(self, agent):

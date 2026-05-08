@@ -30,10 +30,10 @@ hold 3 "holding cursor blink on prompt"
 obs_toggle
 echo "    stopped recording"
 
-# Quit hermes
-press "ctrl+q"
-sleep 1
-kill "$HPID" 2>/dev/null
+# Quit hermes — kill by PID, never xdotool ctrl+q (could hit OBS)
+kill -TERM "$HPID" 2>/dev/null
+sleep 0.5
+kill -KILL "$HPID" 2>/dev/null
 wait "$HPID" 2>/dev/null
 
 rename_latest "take13_${SKIN}.mkv"

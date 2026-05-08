@@ -422,7 +422,7 @@ class MathBlockWidget(Widget):
                 label_text = self._latex
         else:
             label_text = "∫ Math expression"
-        yield Static(label_text, classes="--math-label")
+        yield Static(Text.from_ansi(label_text), classes="--math-label", markup=False)
         yield InlineImage(image=self._image_path, max_rows=self._max_rows)
 
     def copy_content(self) -> str:

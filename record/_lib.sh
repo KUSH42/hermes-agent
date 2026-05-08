@@ -5,6 +5,7 @@ set -uo pipefail
 
 REPO="/home/xush/.hermes/hermes-agent"
 RAW="$REPO/raw_takes"
+PYTHON="$REPO/venv/bin/python"
 mkdir -p "$RAW"
 
 # ── audio cue (uses sine wave via ffmpeg → paplay) ───────────────────────────
@@ -37,9 +38,16 @@ hold() {
     echo
 }
 
-# ── OBS hotkey (assumes F10 set as global hotkey for start/stop) ─────────────
+# ── OBS hotkey — sends F10 directly to the OBS window (bypasses focus) ───────
 obs_toggle() {
-    xdotool key F10
+    local obs_wid
+    obs_wid=$(xdotool search --classname obs 2>/dev/null | head -1)
+    if [ -n "$obs_wid" ]; then
+        xdotool key --window "$obs_wid" F10
+    else
+        echo "[obs_toggle] WARNING: OBS window not found, sending F10 to focused window" >&2
+        xdotool key F10
+    fi
     sleep 0.3
 }
 
@@ -53,16 +61,22 @@ type_slow() {
 press() { xdotool key "$1"; sleep 0.2; }
 
 # ── rename the latest mkv in raw_takes/ ──────────────────────────────────────
+# Output goes to $RAW/rename.log, never to tty — visible echoes between scenes
+# get captured by OBS on the next recording start as a stray row of glyphs.
 rename_latest() {
     local target="$1"
+    local log="$RAW/rename.log"
     local latest
-    latest=$(ls -t "$RAW"/*.mkv 2>/dev/null | head -1)
-    if [ -z "$latest" ]; then
-        echo "ERROR: no mkv found in $RAW" >&2
+    # Only pick up FRESH mkvs (mtime within the last 60s) — avoids re-renaming
+    # a previous scene's already-renamed mkv when this scene failed to record.
+    latest=$(find "$RAW" -maxdepth 1 -name '*.mkv' -mmin -1 -printf '%T@ %p\n' 2>/dev/null \
+             | sort -rn | head -1 | cut -d' ' -f2-)
+    if [ -z "$latest" ] || [ "$(basename "$latest")" = "$target" ]; then
+        echo "[$(date +%H:%M:%S)] ERROR: no fresh mkv for $target" >>"$log"
         return 1
     fi
     mv "$latest" "$RAW/$target"
-    echo "    saved: $RAW/$target ($(du -h "$RAW/$target" | cut -f1))"
+    echo "[$(date +%H:%M:%S)] saved: $target ($(du -h "$RAW/$target" | cut -f1))" >>"$log"
 }
 
 # ── verify a file exists and is non-trivial ──────────────────────────────────

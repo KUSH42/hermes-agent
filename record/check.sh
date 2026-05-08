@@ -5,19 +5,17 @@ source "$(dirname "$0")/_lib.sh"
 echo "=== Take inventory ==="
 echo
 
+# Per-skin take1 files (must match SKINS array in take1.sh)
+TAKE1_SKINS=(matrix charizard poseidon ares hermes tokyo-night)
+
 REQUIRED=(
-    take1.mkv      # matrix cold open
-    take2.mkv      # TTE montage
-    take3.mkv      # composer + skill picker
-    take4.mkv      # HERO Kimi run
-    take5_browser.mkv  # art.html in browser
-    take6.mkv      # streaming effects
-    take7.mkv      # drawbraille engines
-    take8.mkv      # syntax highlighting
-    take9.mkv      # live skin switch
-    take10.mkv     # /model picker
-    take11.mkv     # navigation overlays
-    take12.mkv     # static final hold
+    take2.mkv            # TTE montage
+    take6.mkv            # streaming token effects
+    take7.mkv            # drawbraille engines (short)
+    take8.mkv            # syntax highlighting
+    take_drawbraille.mkv # 192×52 engine showcase
+    take_emoji.mkv       # custom emoji registry
+    take_nameplate.mkv   # nameplate idle-beat anims
 )
 
 OPTIONAL=(
@@ -30,6 +28,13 @@ OPTIONAL=(
 )
 
 missing=0
+
+echo "TAKE 1 (per-skin startup montage):"
+for skin in "${TAKE1_SKINS[@]}"; do
+    check_file "take1_${skin}.mkv" || missing=$((missing+1))
+done
+
+echo
 echo "REQUIRED:"
 for f in "${REQUIRED[@]}"; do
     check_file "$f" || missing=$((missing+1))
@@ -48,7 +53,7 @@ done
 
 echo
 if [ $missing -eq 0 ]; then
-    echo "✓ All required takes present. Optional: $opt_present/6"
+    echo "✓ All required takes present. Optional: $opt_present/${#OPTIONAL[@]}"
     echo "Tell me 'takes ready' to proceed to edit."
 else
     echo "✗ $missing required takes missing. Re-record those before proceeding."

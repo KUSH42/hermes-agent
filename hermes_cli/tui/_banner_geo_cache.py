@@ -34,8 +34,8 @@ def geo_cache_key(
     """Compute a 12-hex-char cache key from layout inputs.
 
     wide_layout: term_width >= 95 (logo/wordmark prints)
-    tall_layout: term_rows >= 20  (full logo, not wordmark)
-    These must mirror the checks in hermes_cli/banner.py:891-892.
+    tall_layout: term_rows >= 32  (full block-letter logo, not wordmark)
+    These must mirror the gate in hermes_cli/banner.py build_welcome_banner.
     """
     blob = "\x00".join([
         str(_GEO_CACHE_FORMAT_VER),

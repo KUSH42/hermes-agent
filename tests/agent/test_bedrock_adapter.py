@@ -117,24 +117,39 @@ class TestResolveBedrocRegion:
 
     def test_defaults_to_us_east_1(self):
         from agent.bedrock_adapter import resolve_bedrock_region
-        from unittest.mock import patch, MagicMock
         mock_session = MagicMock()
         mock_session.get_config_variable.return_value = None
-        with patch("botocore.session.get_session", return_value=mock_session):
+        with patch.dict(
+            "sys.modules",
+            {"botocore": MagicMock(), "botocore.session": MagicMock()},
+        ):
+            import botocore.session as _bs
+
+            _bs.get_session = MagicMock(return_value=mock_session)
             assert resolve_bedrock_region({}) == "us-east-1"
 
     def test_falls_back_to_botocore_profile_region(self):
         from agent.bedrock_adapter import resolve_bedrock_region
-        from unittest.mock import patch, MagicMock
         mock_session = MagicMock()
         mock_session.get_config_variable.return_value = "eu-central-1"
-        with patch("botocore.session.get_session", return_value=mock_session):
+        with patch.dict(
+            "sys.modules",
+            {"botocore": MagicMock(), "botocore.session": MagicMock()},
+        ):
+            import botocore.session as _bs
+
+            _bs.get_session = MagicMock(return_value=mock_session)
             assert resolve_bedrock_region({}) == "eu-central-1"
 
     def test_botocore_failure_falls_back_to_us_east_1(self):
         from agent.bedrock_adapter import resolve_bedrock_region
-        from unittest.mock import patch
-        with patch("botocore.session.get_session", side_effect=Exception("no botocore")):
+        with patch.dict(
+            "sys.modules",
+            {"botocore": MagicMock(), "botocore.session": MagicMock()},
+        ):
+            import botocore.session as _bs
+
+            _bs.get_session = MagicMock(side_effect=Exception("no botocore"))
             assert resolve_bedrock_region({}) == "us-east-1"
 
 
@@ -1284,19 +1299,22 @@ class TestIsStaleConnectionError:
 
     def test_detects_botocore_connection_closed_error(self):
         from agent.bedrock_adapter import is_stale_connection_error
-        from botocore.exceptions import ConnectionClosedError
+        botocore_exceptions = pytest.importorskip("botocore.exceptions")
+        ConnectionClosedError = botocore_exceptions.ConnectionClosedError
         exc = ConnectionClosedError(endpoint_url="https://bedrock.example")
         assert is_stale_connection_error(exc) is True
 
     def test_detects_botocore_endpoint_connection_error(self):
         from agent.bedrock_adapter import is_stale_connection_error
-        from botocore.exceptions import EndpointConnectionError
+        botocore_exceptions = pytest.importorskip("botocore.exceptions")
+        EndpointConnectionError = botocore_exceptions.EndpointConnectionError
         exc = EndpointConnectionError(endpoint_url="https://bedrock.example")
         assert is_stale_connection_error(exc) is True
 
     def test_detects_botocore_read_timeout(self):
         from agent.bedrock_adapter import is_stale_connection_error
-        from botocore.exceptions import ReadTimeoutError
+        botocore_exceptions = pytest.importorskip("botocore.exceptions")
+        ReadTimeoutError = botocore_exceptions.ReadTimeoutError
         exc = ReadTimeoutError(endpoint_url="https://bedrock.example")
         assert is_stale_connection_error(exc) is True
 

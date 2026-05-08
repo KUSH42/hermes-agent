@@ -411,7 +411,7 @@ HermesInput.--locked:focus {
 #spinner-overlay {
     display: none;
     height: 1;
-    width: 1fr;
+    width: auto;
     color: $text-muted;
 }
 

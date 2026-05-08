@@ -809,8 +809,8 @@ class HermesApp(App):
             yield _ILB(id="input-legend-bar")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
-                yield _HI(id="input-area")
                 yield Static("", id="spinner-overlay")
+                yield _HI(id="input-area")
             # PathSearchProvider is invisible — position is irrelevant.
             yield _PSP(id="path-search-provider")
         else:

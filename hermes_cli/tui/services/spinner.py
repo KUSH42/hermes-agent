@@ -70,7 +70,7 @@ class SpinnerService(AppService):
                 input_width=self.input_bar_width(inp),
             )
             spinner_display = f"{frame} {hint_suffix}" if frame and hint_suffix else (frame or hint_suffix)
-            padded = f" {spinner_display}" if spinner_display else ""
+            padded = spinner_display if spinner_display else ""
             if hasattr(inp, "placeholder"):
                 # While the running spinner/status is visible, suppress the idle
                 # composer hint so the row reads as one active state instead of

@@ -367,16 +367,9 @@ def _format_compact_tokens(value: int) -> str:
 
 def _format_elapsed_compact(seconds: float) -> str:
     """Format response elapsed time compactly for message headers."""
-    seconds = max(0.0, float(seconds))
-    if seconds < 10:
-        return f"{seconds:.1f}s"
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    minutes, sec = divmod(int(round(seconds)), 60)
-    if minutes < 60:
-        return f"{minutes}m {sec:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes:02d}m"
+    from hermes_cli.tui.tool_blocks._shared import _format_duration_v4
+    ms = max(0.0, float(seconds)) * 1000
+    return _format_duration_v4(ms) or f"{seconds:.1f}s"
 
 
 # Avoid NameError at annotation evaluation time

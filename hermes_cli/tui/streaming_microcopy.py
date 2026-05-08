@@ -12,6 +12,7 @@ from hermes_cli.tui.body_renderers._grammar import (
     GLYPH_WARNING,
     glyph as _glyph,
 )
+from hermes_cli.tui.tool_blocks._shared import _format_duration_v4
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_category import ToolSpec
@@ -104,7 +105,7 @@ def _microcopy_text(
         t.append(frag, style=style)
     if elapsed_s > 2.0:
         t.append(f" {_SEP} ", style=_SEP_STYLE)
-        t.append(f"{elapsed_s:.1f}s", style=_ELAPSED_STYLE)
+        t.append(_format_duration_v4(elapsed_s * 1000), style=_ELAPSED_STYLE)
     if stall is not None:
         t.append_text(stall)
     return t

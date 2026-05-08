@@ -171,7 +171,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._follow_tail: bool = False
         self._follow_tail_dirty: bool = False
         self._cached_body_log: "CopyableRichLog | None" = None
-        self._microcopy_tick: int = 0
         self._shimmer_phase: float = 0.0
         self._microcopy_shown: bool = False
         self._secondary_args_snapshot: str = ""
@@ -211,7 +210,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._header._duration = "0.0s"
         self._header._duration_seconds = 0.0
         self._render_timer = self._register_timer(self.set_interval(1 / 60, self._flush_pending))
-        self._duration_timer = self._register_timer(self.set_interval(0.1, self._tick_duration))
+        self._duration_timer = self._register_timer(self.set_interval(1 / 20, self._tick_duration))
         try:
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
             self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
@@ -543,6 +542,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._header._duration = _format_duration_v4(elapsed_ms)
         self._header._duration_seconds = elapsed_ms / 1000
         self._header.refresh()
+        self._update_microcopy()
 
     def _bytes_per_second(self) -> float | None:
         now = time.monotonic()
@@ -627,12 +627,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 if not self._is_unmounted:  # PERF-4: don't resurrect timer after unmount
                     self._render_timer = self._register_timer(self.set_interval(1 / 10, self._flush_pending))
 
-        self._microcopy_tick = (self._microcopy_tick + 1) % 6
-        do_microcopy = self._microcopy_tick == 0
-
         if not self._pending:
-            if do_microcopy:
-                self._update_microcopy()
             return
         batch = self._pending
         self._pending = []
@@ -695,9 +690,6 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             visible_cap = getattr(self, "_visible_cap", _VISIBLE_CAP)
             if total > visible_cap:
                 self.rerender_window(total - visible_cap, total)
-
-        if do_microcopy:
-            self._update_microcopy()
 
     # ------------------------------------------------------------------
     # OmissionBar callbacks

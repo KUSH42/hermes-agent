@@ -39,6 +39,12 @@ x-hermes:
     effect: spotlights
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#839496'
+        - '#2aa198'
+        - '#268bd2'
+        - '#1a5c99'
   schema: 1
   vars:
     preview-syntax-theme: solarized-dark

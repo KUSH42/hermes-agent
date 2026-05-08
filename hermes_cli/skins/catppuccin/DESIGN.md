@@ -44,6 +44,12 @@ x-hermes:
     effect: bubbles
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#cdd6f4'
+        - '#f5c2e7'
+        - '#cba6f7'
+        - '#7f57b4'
   schema: 1
   vars:
     preview-syntax-theme: catppuccin

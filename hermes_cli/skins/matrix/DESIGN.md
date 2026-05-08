@@ -23,9 +23,15 @@ colors:
   ui-warn: '#ffb000'
 x-hermes:
   startup_tte:
-    effect: matrix
+    effect: rain
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#aaffc8'
+        - '#00ff41'
+        - '#00d849'
+        - '#00a839'
   schema: 1
   branding:
     agent_name: Morpheus

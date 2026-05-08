@@ -38,6 +38,12 @@ x-hermes:
     effect: decrypt
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#c0caf5'
+        - '#bb9af7'
+        - '#7aa2f7'
+        - '#3d5994'
   schema: 1
   vars:
     preview-syntax-theme: tokyo-night

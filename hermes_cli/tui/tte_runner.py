@@ -161,7 +161,7 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
         )
         cfg = getattr(effect, "effect_config", None)
         if color_cls is not None and cfg and hasattr(cfg, "final_gradient_stops") and not has_colors_override:
-            effect.effect_config.final_gradient_stops = tuple(color_cls(c) for c in gradient)
+            _apply_skin_gradient(cfg, gradient, color_cls)
         tc = getattr(effect, "terminal_config", None)
         if tc:
             tc.frame_rate = 0  # disable TTE's internal sleep; producer in cli.py paces via deadline loop
@@ -170,6 +170,15 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
 
     for frame in effect:
         yield frame
+
+
+def _apply_skin_gradient(cfg, gradient: tuple[str, ...], color_cls) -> None:
+    """Apply gradient stops to effect config.
+
+    Precondition: only call when cfg is not None, has a final_gradient_stops
+    attribute, and the skin has not supplied an explicit override.
+    """
+    cfg.final_gradient_stops = tuple(color_cls(c) for c in gradient)
 
 
 def _coerce_effect_param(raw: object, current: object, color_cls: type | None) -> object:

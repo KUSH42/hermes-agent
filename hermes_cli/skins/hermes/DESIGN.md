@@ -29,6 +29,12 @@ x-hermes:
     effect: vhstape
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#FFD700'
+        - '#FFBF00'
+        - '#CD7F32'
+        - '#B8860B'
   schema: 1
   branding:
     agent_name: Hermes Agent

@@ -29,6 +29,15 @@ x-hermes:
     effect: laseretch
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#F1E6CF'
+        - '#DD4A3A'
+        - '#C93C24'
+        - '#9F1C1C'
+        - '#6B1717'
+        - '#9F1C1C'
+        - '#DD4A3A'
   schema: 1
   branding:
     agent_name: Ares Agent

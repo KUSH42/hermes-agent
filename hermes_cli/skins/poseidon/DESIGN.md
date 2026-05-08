@@ -29,6 +29,15 @@ x-hermes:
     effect: waves
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#A9DFFF'
+        - '#EAF7FF'
+        - '#5DB8F5'
+        - '#2A6FB9'
+        - '#153C73'
+        - '#2A6FB9'
+        - '#5DB8F5'
   schema: 1
   branding:
     agent_name: Poseidon Agent

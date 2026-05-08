@@ -29,6 +29,14 @@ x-hermes:
     effect: crumble
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#F5F5F5'
+        - '#E7E7E7'
+        - '#D3D3D3'
+        - '#B7B7B7'
+        - '#919191'
+        - '#4A4A4A'
   schema: 1
   branding:
     agent_name: Sisyphus Agent

@@ -29,6 +29,13 @@ x-hermes:
     effect: binarypath
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#c9d1d9'
+        - '#7eb8f6'
+        - '#8EA8FF'
+        - '#4b5563'
+        - '#1a2a40'
   schema: 1
   branding:
     agent_name: Hermes Agent

@@ -29,6 +29,12 @@ x-hermes:
     effect: print
     max_wall_s: 7.0
     max_frames: 360
+    params:
+      final_gradient_stops:
+        - '#e6edf3'
+        - '#c9d1d9'
+        - '#aaaaaa'
+        - '#444444'
   schema: 1
   branding:
     agent_name: Hermes Agent

@@ -319,8 +319,8 @@ _KM_SECTIONS_WIDE: list = [
     ]),
     ("Pane Layout", [
         ("Focus left / center / right", "F5", "F6", "F7"),
-        ("Collapse left / right pane",  "Ctrl+[", "Ctrl+]"),
-        ("Toggle center split",         "Ctrl+\\"),
+        ("Collapse left / right pane",  "Alt+,", "Alt+."),
+        ("Toggle center split",         "Alt+M"),
         ("Focus output / input",        "o", "i"),
         ("Prev / next subagent",        "Ctrl+Alt+↑", "Ctrl+Alt+↓"),
     ]),

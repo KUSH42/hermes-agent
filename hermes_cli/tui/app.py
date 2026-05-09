@@ -298,11 +298,20 @@ class HermesApp(App):
         Binding("f7", "focus_right_pane", "Right pane", show=False),
         Binding("f9", "cycle_pane_forward", "Next pane", show=False),
         Binding("shift+f9", "cycle_pane_backward", "Prev pane", show=False),
-        Binding("ctrl+[", "collapse_left_pane", "Collapse left", show=False),
-        Binding("ctrl+]", "collapse_right_pane", "Collapse right", show=False),
-        Binding("alt+[", "collapse_left_pane", "Collapse left", show=False),
-        Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
-        Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
+        # Pane layout — primary (layout-agnostic; reachable on QWERTY and QWERTZ)
+        Binding("alt+comma", "collapse_left_pane", "Collapse left", show=False),
+        Binding("alt+full_stop", "collapse_right_pane", "Collapse right", show=False),
+        Binding("alt+m", "toggle_center_split", "Split center", show=False),
+        # Alt+digit pane-focus aliases (tmux/i3 muscle memory)
+        Binding("alt+1", "focus_left_pane", show=False),
+        Binding("alt+2", "focus_center_pane", show=False),
+        Binding("alt+3", "focus_right_pane", show=False),
+        # Compat aliases — US QWERTY legacy (kept for muscle memory; not advertised)
+        Binding("ctrl+left_square_bracket", "collapse_left_pane", show=False),
+        Binding("ctrl+right_square_bracket", "collapse_right_pane", show=False),
+        Binding("alt+left_square_bracket", "collapse_left_pane", show=False),
+        Binding("alt+right_square_bracket", "collapse_right_pane", show=False),
+        Binding("ctrl+backslash", "toggle_center_split", show=False),
         Binding("end", "scroll_to_latest", "Latest", show=False),
         Binding("u", "dismiss_update_banner", "Dismiss update notice", show=False),
     ]

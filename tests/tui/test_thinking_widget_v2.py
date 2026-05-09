@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -195,8 +196,8 @@ async def test_T9_long_wait_label_suffix() -> None:
         # Drive another tick to capture label text
         w._tick()
         if mock_calls:
-            assert any("(10s)" in t or "s)" in t for t in mock_calls), \
-                f"Expected elapsed suffix in label, got: {mock_calls}"
+            assert any(re.search(r"\d+(\.\d+)?s\b", t) for t in mock_calls), \
+                f"Expected elapsed seconds suffix in label, got: {mock_calls}"
 
 
 # ── T10: deactivate() sets ABOUT_TO_STREAM; still visible immediately; hidden after call_later ──
@@ -446,16 +447,15 @@ async def test_V2_deactivate_removes_thinking_active_class() -> None:
 # ── V4: UserMessagePanel default left padding ─────────────────────────────────
 
 def test_V4_user_message_panel_default_padding_is_2() -> None:
-    """UserMessagePanel DEFAULT_CSS must have padding: 0 2 (2-col left gutter)."""
+    """UserMessagePanel DEFAULT_CSS padding: 0 1 — LP-GUTTER-2 (rail(1)+pad(1)=col 2)."""
     from hermes_cli.tui.widgets.message_panel import UserMessagePanel
     css = UserMessagePanel.DEFAULT_CSS
-    # Extract the padding value from the CSS block
     import re
     match = re.search(r"padding\s*:\s*(\S+)\s+(\d+)", css)
     assert match is not None, "Could not find padding in UserMessagePanel.DEFAULT_CSS"
     left_padding = match.group(2)
-    assert left_padding == "2", (
-        f"UserMessagePanel left padding is {left_padding!r}, expected '2'"
+    assert left_padding == "1", (
+        f"UserMessagePanel left padding is {left_padding!r}, expected '1' (LP-GUTTER-2)"
     )
 
 

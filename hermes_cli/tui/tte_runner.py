@@ -274,6 +274,50 @@ def _apply_effect_params(
     return has_colors_override
 
 
+def get_effect_gradient_direction(
+    effect_name: str,
+    params: dict[str, object] | None = None,
+) -> str:
+    """Return the final_gradient_direction name for *effect_name*.
+
+    Instantiates the effect, applies *params*, and reads the direction from
+    effect_config.  Returns the enum member name ('VERTICAL', 'HORIZONTAL',
+    'DIAGONAL', 'RADIAL') or 'DIAGONAL' on any failure.
+    """
+    import importlib
+
+    spec = resolve_effect(effect_name)
+    if spec is None:
+        return "DIAGONAL"
+    try:
+        mod = importlib.import_module(spec[0])
+        cls = getattr(mod, spec[1])
+    except (ImportError, AttributeError):
+        return "DIAGONAL"
+    try:
+        effect = cls("x")
+        color_cls = None
+        try:
+            color_mod = importlib.import_module("terminaltexteffects.utils.graphics")
+            color_cls = getattr(color_mod, "Color")
+        except Exception:
+            _log.debug("get_effect_gradient_direction: graphics import failed", exc_info=True)
+        _apply_effect_params(effect_name, effect, color_cls, params)
+        cfg = getattr(effect, "effect_config", None)
+        if cfg is None:
+            return "DIAGONAL"
+        d = getattr(cfg, "final_gradient_direction", None)
+        if d is None:
+            return "DIAGONAL"
+        name = getattr(d, "name", None)
+        return name if isinstance(name, str) else "DIAGONAL"
+    except Exception:
+        _log.debug(
+            "get_effect_gradient_direction: failed for %r", effect_name, exc_info=True
+        )
+        return "DIAGONAL"
+
+
 def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object] | None = None) -> bool:
     """Run a TTE effect synchronously.
 

@@ -4898,35 +4898,67 @@ class HermesCLI:
         con.print(hero_rich, end="", highlight=False)
         return buf.getvalue()
 
-    def _hero_ansi_with_stops(self, plain_hero: str, stops: "list[str]") -> str:
-        """Return ANSI-colored hero applying multi-stop gradient by character position.
+    def _hero_ansi_with_stops(
+        self,
+        plain_hero: str,
+        stops: "list[str]",
+        direction: str = "DIAGONAL",
+    ) -> str:
+        """Return ANSI-colored hero applying multi-stop gradient matching *direction*.
 
-        Mirrors TTE's final_gradient_stops coloring exactly: each character gets a
-        color interpolated from the stops based on its index in the visible character
-        sequence.  Using this for the settle frame eliminates the color snap that
-        occurs when the settle frame uses per-line markup colors instead of the same
-        gradient TTE rendered.
+        VERTICAL: all chars in a row share one color; gradient advances row-to-row.
+        HORIZONTAL: all chars in a column share one color; gradient advances col-to-col.
+        DIAGONAL / RADIAL / default: per-character-index linear gradient (original behaviour).
         """
         from io import StringIO
         from rich.console import Console as _RichConsole
         from rich.text import Text
         from hermes_cli.tui.animation import lerp_color
+
         if len(stops) < 2:
             return self._hero_ansi_colored(plain_hero)
-        visible = [c for c in plain_hero if c != "\n"]
-        total = len(visible) or 1
+
         n_segs = len(stops) - 1
         out = Text()
-        vis_idx = 0
-        for ch in plain_hero:
-            if ch == "\n":
-                out.append("\n")
-                continue
-            t = vis_idx / (total - 1) if total > 1 else 0.0
-            seg = min(int(t * n_segs), n_segs - 1)
-            color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
-            out.append(ch, style=color)
-            vis_idx += 1
+
+        if direction == "VERTICAL":
+            lines = plain_hero.split("\n")
+            n = len(lines)
+            for i, line in enumerate(lines):
+                t = i / (n - 1) if n > 1 else 0.0
+                seg = min(int(t * n_segs), n_segs - 1)
+                color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
+                out.append(line, style=color)
+                if i < n - 1:
+                    out.append("\n")
+
+        elif direction == "HORIZONTAL":
+            lines = plain_hero.split("\n")
+            max_col = max((len(ln) for ln in lines), default=1)
+            for i, line in enumerate(lines):
+                for c, ch in enumerate(line):
+                    t = c / (max_col - 1) if max_col > 1 else 0.0
+                    seg = min(int(t * n_segs), n_segs - 1)
+                    color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
+                    out.append(ch, style=color)
+                if i < len(lines) - 1:
+                    out.append("\n")
+
+        else:
+            # DIAGONAL, RADIAL, unknown — original character-count approach
+            visible = [c for c in plain_hero if c != "\n"]
+            total = len(visible) or 1
+            vis_idx = 0
+            for ch in plain_hero:
+                if ch == "\n":
+                    out.append("\n")
+                    continue
+                t = vis_idx / (total - 1) if total > 1 else 0.0
+                seg = min(int(t * n_segs), n_segs - 1)
+                color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
+                out.append(ch, style=color)
+                vis_idx += 1
+
         buf = StringIO()
         con = _RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=200)
         con.print(out, end="", highlight=False)
@@ -5102,6 +5134,15 @@ class HermesCLI:
             except NameError:
                 _settle_stops = ["#FFD700", "#FFBF00", "#CD7F32"]
 
+        # Gradient direction for the settle frame — must match TTE's final_gradient_direction
+        # so the settle frame is visually identical to the last animated frame.
+        try:
+            from hermes_cli.tui.tte_runner import get_effect_gradient_direction
+            _settle_direction: str = get_effect_gradient_direction(cfg.effect_name, cfg.params)
+        except Exception:
+            logger.debug("TTE: could not read settle direction; falling back to DIAGONAL", exc_info=True)
+            _settle_direction = "DIAGONAL"
+
         # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
         # Frames are appended to anim_frames as they are generated; playback
         # starts after _PREFETCH_FRAMES frames are ready rather than waiting
@@ -5235,7 +5276,9 @@ class HermesCLI:
                 # occurs.  Destructive effects (burn, crumble) whose last TTE frame shows
                 # dispersed chars also benefit — the settle always shows complete text.
                 try:
-                    _settle = _process_raw_frame(self._hero_ansi_with_stops(plain_hero, _settle_stops))
+                    _settle = _process_raw_frame(
+                        self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction)
+                    )
                     anim_frames.append(_settle)
                 except Exception:
                     logger.debug("TTE: gradient settle frame failed", exc_info=True)
@@ -5349,7 +5392,9 @@ class HermesCLI:
                     # Gradient settle frame — same as cache-miss path; use _settle_stops
                     # so colors match TTE's final frame exactly (no snap on transition).
                     try:
-                        anim_frames.append(_process_raw_frame(self._hero_ansi_with_stops(plain_hero, _settle_stops)))
+                        anim_frames.append(_process_raw_frame(
+                            self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction)
+                        ))
                     except Exception:
                         logger.debug("TTE cache: gradient settle frame failed", exc_info=True)
                 except Exception:

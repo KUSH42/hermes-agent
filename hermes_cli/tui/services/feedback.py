@@ -60,6 +60,7 @@ HINT_KEY_COPY_OK           = "copy-ok"
 HINT_KEY_COPY_TRUNCATED    = "copy-truncated"
 HINT_KEY_IMAGE_NOT_IN_VIEW = "image-not-in-view"
 HINT_KEY_ATTACHMENT_DETACH = "attachment-detach"
+HINT_KEY_PASTE_LARGE       = "paste-large"
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +464,22 @@ class FeedbackService:
         self._active[channel] = state
 
         return FlashHandle(displayed=True)
+
+    def flash_paste(self, char_count: int) -> None:
+        """Flash a paste-size hint when a large paste (>80 chars) arrives.
+
+        PS-NB-3: both HermesInput._on_paste and app.on_paste route through
+        this helper so the flash is consistent regardless of which widget
+        has focus at paste time.
+        """
+        if char_count > 80:
+            self.flash(
+                "hint-bar",
+                f"⎘  {char_count} chars pasted",
+                duration=1.2,
+                priority=2,
+                key=HINT_KEY_PASTE_LARGE,
+            )
 
     def cancel(self, channel: str, key: str | None = None) -> bool:
         """Cancel the active flash on a channel.

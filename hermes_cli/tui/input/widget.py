@@ -965,3 +965,24 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     def action_history_next_prompt(self) -> None:
         """Alt+Down: jump to the next turn."""
         self.app.action_jump_turn_next()
+
+    def action_undo(self) -> None:
+        """Ctrl+Z: restore pre-drop state when a drop undo slot is pending (DD-PL-7)."""
+        from hermes_cli.tui.services.watchers import WatchersService
+        try:
+            ws = self.app.query_one(WatchersService)
+        except Exception:
+            super().action_undo()
+            return
+        state = ws._last_drop_undo_state
+        if state is not None:
+            prior_text, prior_attached = state
+            ws._last_drop_undo_state = None
+            self.load_text(prior_text)
+            try:
+                self.app.attached_images.clear()
+                self.app.attached_images.extend(prior_attached)
+            except Exception as exc:
+                _log.warning("action_undo: attached_images reversion failed: %s", exc, exc_info=True)
+            return
+        super().action_undo()

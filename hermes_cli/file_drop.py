@@ -13,11 +13,13 @@ from typing import Literal
 from urllib.parse import unquote, urlparse
 import mimetypes
 import os
+import shlex
 
 
 IMAGE_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".webp",
     ".bmp", ".tiff", ".tif", ".svg", ".ico",
+    ".heic", ".heif", ".avif",
 })
 
 LINKABLE_TEXT_EXTENSIONS = frozenset({
@@ -40,7 +42,7 @@ LINKABLE_TEXT_FILENAMES = frozenset({
 @dataclass(frozen=True)
 class DroppedFile:
     path: Path
-    kind: Literal["image", "linkable_text", "unsupported_binary", "directory", "invalid"]
+    kind: Literal["image", "linkable_text", "unsupported_binary", "directory", "directory_rejected", "directory_glob", "invalid"]
     reason: str = ""
 
 
@@ -92,12 +94,15 @@ def _looks_like_text_path(path: Path) -> bool:
     }
 
 
-def classify_dropped_file(path: Path, cwd: Path) -> DroppedFile:
+def classify_dropped_file(path: Path, cwd: Path, *, allow_directory: bool = False) -> DroppedFile:
     """Classify one dropped local path for TUI routing."""
     if not path.exists():
         return DroppedFile(path=path, kind="invalid", reason="file no longer exists")
     if not path.is_file():
-        return DroppedFile(path=path, kind="directory", reason="")
+        if path.is_dir() and allow_directory:
+            return DroppedFile(path=path, kind="directory_glob")
+        return DroppedFile(path=path, kind="directory_rejected",
+                           reason="drop a file, not a folder (use /index <dir>)")
 
     suffix = path.suffix.lower()
     mime, _ = mimetypes.guess_type(str(path))
@@ -111,17 +116,15 @@ def classify_dropped_file(path: Path, cwd: Path) -> DroppedFile:
 
 
 def format_link_token(path: Path, cwd: Path) -> str:
-    """Format a path as a quoted path token.
+    """Format a path as a shell-safe single-quoted token.
 
-    No @ prefix — just the path, double-quoted if it contains spaces.
+    Uses shlex.quote so paths with spaces, quotes, or other shell-special
+    characters are always safe. Tokens are relative when under cwd.
     """
     target = path
     if path.is_relative_to(cwd):
         target = path.relative_to(cwd)
-    text = target.as_posix()
-    if " " in text:
-        return f'"{text}"'
-    return text
+    return shlex.quote(target.as_posix())
 
 
 _MAX_FILE_DROP_CHARS = 4096  # paste payloads longer than this are prose, not file drops
@@ -264,7 +267,8 @@ def detect_file_drop_text(user_input: str) -> FileDropMatch | None:
         # screenshot names). Check the full raw string first, then each
         # space-terminated prefix from longest to shortest.
         candidates: list[tuple[int, str]] = [(len(raw), raw)]
-        space_positions = [i for i, c in enumerate(raw) if c == " "]
+        # Bound to 12 space positions to avoid O(N) stat syscalls on long prose pastes.
+        space_positions = [i for i, c in enumerate(raw) if c == " "][:12]
         candidates.extend((sp, raw[:sp]) for sp in reversed(space_positions))
         found_path: Path | None = None
         found_pos: int = pos

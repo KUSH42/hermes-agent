@@ -98,8 +98,8 @@ async def test_handle_file_drop_accepts_text_path_with_spaces(tmp_path, monkeypa
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        # Spaces in path now supported — quoted token inserted
-        assert inp.value == '"my notes.py"'
+        # shlex.quote always wraps in single-quotes (DD-PL-4)
+        assert inp.value == "'my notes.py'"
         hint = app.query_one("#hint-bar").hint
         assert "linked" in hint
 
@@ -129,7 +129,8 @@ async def test_handle_file_drop_rejects_while_overlay_active(tmp_path, monkeypat
 
         inp = app.query_one(HermesInput)
         assert inp.value == ""
-        assert "file drop unavailable" in app.query_one("#hint-bar").hint
+        # DD-PL-6: drops during modal are queued, not discarded
+        assert "queued" in app.query_one("#hint-bar").hint
 
 
 @pytest.mark.asyncio
@@ -177,17 +178,17 @@ async def test_input_paste_intercepts_dragged_file_path(tmp_path, monkeypatch) -
 
 
 def test_classify_dropped_file_directory(tmp_path: Path) -> None:
-    """classify_dropped_file returns kind='directory' for a real directory."""
+    """classify_dropped_file returns kind='directory_rejected' by default (DD-PL-1)."""
     subdir = tmp_path / "myproject"
     subdir.mkdir()
     result = classify_dropped_file(subdir, tmp_path)
-    assert result.kind == "directory"
+    assert result.kind == "directory_rejected"
     assert result.path == subdir
 
 
 @pytest.mark.asyncio
-async def test_handle_file_drop_directory_inserts_path(tmp_path, monkeypatch) -> None:
-    """Dropping a directory path inserts it as text instead of flashing 'unsupported'."""
+async def test_handle_file_drop_directory_rejected(tmp_path, monkeypatch) -> None:
+    """Dropping a directory flashes a skip hint (DD-PL-1: directories rejected by default)."""
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
@@ -200,15 +201,14 @@ async def test_handle_file_drop_directory_inserts_path(tmp_path, monkeypatch) ->
         await pilot.pause()
 
         inp = app.query_one(HermesInput)
-        assert inp.value == "hermes-agent"
+        assert inp.value == ""
         hint = app.query_one("#hint-bar").hint
-        assert "unsupported" not in hint
-        assert "linked" in hint
+        assert "skipped" in hint or "unsupported" in hint
 
 
 @pytest.mark.asyncio
 async def test_input_paste_intercepts_dragged_directory_path(tmp_path, monkeypatch) -> None:
-    """Pasting a directory path from terminal drag-and-drop inserts it as text."""
+    """Pasting a directory path flashes a skip hint (DD-PL-1: rejected by default)."""
     app = HermesApp(cli=_make_cli())
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("TERMINAL_CWD", raising=False)
@@ -221,4 +221,7 @@ async def test_input_paste_intercepts_dragged_directory_path(tmp_path, monkeypat
         await inp._on_paste(events.Paste(str(subdir)))
         await pilot.pause()
 
-        assert inp.value == "hermes-agent"
+        # Directory rejected — no token inserted into input
+        assert inp.value == ""
+        hint = app.query_one("#hint-bar").hint
+        assert "skipped" in hint or "unsupported" in hint

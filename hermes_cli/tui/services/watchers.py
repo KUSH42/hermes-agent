@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 
+_INTERRUPT_ATTRS = ("approval_state", "interrupt_state", "confirm_state")
+
+
 class WatchersService(AppService):
     """Reactive watcher logic and file-drop helpers extracted from _WatchersMixin."""
 
@@ -28,6 +31,11 @@ class WatchersService(AppService):
         self._compact_warn_flashed: bool = False  # A7-1: guard single warn flash per cycle
         self._last_compact_value: bool | None = None  # PERF-3: dedup guard (None forces first call through)
         self._approval_state_seen: bool = False  # M-1: skip initial reactive fire-through
+        self._pending_drop_queue: list[Path] = []  # DD-PL-6: buffered drops during modal
+        self._last_drop_undo_state: tuple[str, list] | None = None  # DD-PL-7: single-slot undo
+
+    def _modal_active(self) -> bool:
+        return any(getattr(self.app, attr, None) is not None for attr in _INTERRUPT_ATTRS)
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -251,6 +259,14 @@ class WatchersService(AppService):
             inp = self.app.query_one("#input-area")
         except NoMatches:
             return
+
+        # DD-PL-7: snapshot pre-drop state for single-slot undo
+        prior_text = getattr(inp, "value", "")
+        prior_attached = list(getattr(self.app, "attached_images", []))
+
+        if hasattr(inp, "history"):
+            inp.history.checkpoint()
+
         selection = getattr(inp, "selection", None)
         if hasattr(inp, "_location_to_flat") and selection is not None:
             start = end = inp.cursor_pos
@@ -274,6 +290,11 @@ class WatchersService(AppService):
                 inp.replace(payload, start, end)
         else:
             inp.insert_text(payload)
+
+        if hasattr(inp, "history"):
+            inp.history.checkpoint()
+
+        self._last_drop_undo_state = (prior_text, prior_attached)
 
     # ------------------------------------------------------------------
     # File drop
@@ -299,6 +320,13 @@ class WatchersService(AppService):
             return rel.replace(_os_mod.sep, "/")
         return path.as_posix()
 
+    def _replay_pending_drops(self) -> None:
+        """Replay buffered drops once all modals are dismissed (DD-PL-6)."""
+        if self._pending_drop_queue and not self._modal_active():
+            queued = list(self._pending_drop_queue)
+            self._pending_drop_queue.clear()
+            self.handle_file_drop_inner(queued)
+
     def handle_file_drop(self, paths: list[Path]) -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
         try:
@@ -308,25 +336,38 @@ class WatchersService(AppService):
             self.app._flash_hint("file drop failed — see log for details", 2.0)
 
     def handle_file_drop_inner(self, paths: list[Path]) -> None:
-        if any(getattr(self.app, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
-            self.app._flash_hint("file drop unavailable while prompt is open", 1.5)
+        if self._modal_active():
+            self._pending_drop_queue.extend(paths)
+            n = len(paths)
+            self.app._flash_hint(
+                f"queued {n} path(s) — will attach after prompt closes",
+                2.0,
+            )
             return
+
+        allow_dir = bool(
+            getattr(self.app, "config", {}) and
+            getattr(self.app.config, "display", {}) and
+            getattr(self.app.config.display, "drop_directory_as_glob", False)
+        )
 
         cwd = self.app.get_working_directory()
         link_tokens: list[str] = []
         image_paths: list[Path] = []
-        rejected: list[str] = []
+        rejected_names: list[str] = []
 
         for path in paths:
-            dropped = classify_dropped_file(path, cwd)
+            dropped = classify_dropped_file(path, cwd, allow_directory=allow_dir)
             if dropped.kind == "image":
                 image_paths.append(path)
-            elif dropped.kind in ("linkable_text", "directory"):
+            elif dropped.kind == "directory_glob":
+                link_tokens.append(format_link_token(path, cwd) + "/**/*")
+            elif dropped.kind in ("linkable_text",):
                 link_tokens.append(format_link_token(path, cwd))
-            elif dropped.kind == "unsupported_binary":
-                rejected.append(dropped.reason or "unsupported file type")
+            elif dropped.kind in ("unsupported_binary", "directory_rejected", "invalid"):
+                rejected_names.append(path.name)
             else:
-                rejected.append(dropped.reason or dropped.kind)
+                rejected_names.append(path.name)
 
         if image_paths:
             self.append_attached_images(image_paths)
@@ -340,9 +381,12 @@ class WatchersService(AppService):
         if image_paths:
             noun = "image" if len(image_paths) == 1 else "images"
             hint_parts.append(f"attached {len(image_paths)} {noun}")
-        if rejected:
-            noun = "item" if len(rejected) == 1 else "items"
-            hint_parts.append(f"dropped {len(rejected)} unsupported {noun}")
+        if rejected_names:
+            first = rejected_names[0]
+            rest = len(rejected_names) - 1
+            suffix = f" (+{rest} more)" if rest else ""
+            self.app._flash_hint(f"⚠ skipped {first}{suffix} (unsupported)", 2.5)
+            return
 
         if hint_parts:
             self.app._flash_hint(" · ".join(hint_parts), 1.2)
@@ -435,6 +479,7 @@ class WatchersService(AppService):
         else:
             ov.hide_if_kind(InterruptKind.APPROVAL)
             self._post_interrupt_focus()
+            self._replay_pending_drops()
         self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:

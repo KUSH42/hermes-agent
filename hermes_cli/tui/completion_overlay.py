@@ -39,7 +39,7 @@ from .preview_panel import PreviewPanel
 from .resize_utils import THRESHOLD_COMP_NARROW, crosses_threshold
 
 
-_NO_DESCRIPTION_FALLBACK = "[dim]—[/dim]"
+_NO_DESCRIPTION_FALLBACK = "[dim]no description[/dim]"
 
 
 class SlashDescPanel(RichLog):
@@ -62,17 +62,23 @@ class SlashDescPanel(RichLog):
         self.watch(self.app, "highlighted_candidate", self._on_candidate)
 
     def _on_candidate(self, c: object) -> None:
-        if isinstance(c, SlashCandidate):
+        if not isinstance(c, SlashCandidate):
             self.clear()
-            # Build title line: "/command [args_hint]"
-            args = f" [dim]{c.args_hint}[/dim]" if c.args_hint else ""
-            title = f"[bold]{c.command}[/bold]{args}"
-            desc = c.description or _NO_DESCRIPTION_FALLBACK
-            # Keybind hint on same line as description (right-aligned dim)
-            keybind = f"  [dim]{c.keybind_hint}[/dim]" if c.keybind_hint else ""
-            self.write(f"{title}\n\n{desc}{keybind}")
+            return
+        self.clear()
+        badge = f"[dim]{c.source}[/dim]  " if c.source else ""
+        args  = f" [dim]{c.args_hint}[/dim]" if c.args_hint else ""
+        title = f"{badge}[bold]{c.command}[/bold]{args}"
+        if c.description:
+            desc = c.description
         else:
-            self.clear()
+            logger.debug("SlashDescPanel: no description for %s", c.command)
+            desc = _NO_DESCRIPTION_FALLBACK
+        keybind = f"  [dim]{c.keybind_hint}[/dim]" if c.keybind_hint else ""
+        body = f"{title}\n\n{desc}{keybind}"
+        if c.trigger_hint:
+            body += f"\n\n[dim italic]{c.trigger_hint}[/dim italic]"
+        self.write(body)
 
 
 class _ContentRow(Horizontal):

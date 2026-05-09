@@ -207,7 +207,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
                 label = _SOURCE_LABELS.get(src, src.title())
                 option_list.add_option(Option(f"── {label} ──", disabled=True))
             disabled_badge = "  [dim](disabled)[/dim]" if not candidate.enabled else ""
-            _desc = candidate.description[:40] if candidate.description else "—"
+            _desc = candidate.description[:40] if candidate.description else "no description"
             option_list.add_option(
                 Option(
                     f"${candidate.name}{disabled_badge}  [dim]{_desc}[/dim]",

@@ -54,7 +54,7 @@ class TestListRowDescriptions:
             await pilot.pause()
             option_list = picker.query_one("#picker-list", OptionList)
             label = str(option_list.get_option("my-skill").prompt)
-            assert "[dim]—[/dim]" in label
+            assert "[dim]no description[/dim]" in label
 
     @pytest.mark.asyncio
     async def test_list_row_long_description_truncated(self):
@@ -97,7 +97,7 @@ class TestDetailPaneDescriptions:
             await pilot.pause()
             detail_statics = list(picker.query("#picker-right Static").results(Static))
             contents = [str(s.content) for s in detail_statics]
-            assert any("(no description)" in c for c in contents)
+            assert any("no description" in c for c in contents)
 
     @pytest.mark.asyncio
     async def test_detail_pane_disabled_skill_still_shows_fallback(self):
@@ -110,5 +110,5 @@ class TestDetailPaneDescriptions:
             await pilot.pause()
             detail_statics = list(picker.query("#picker-right Static").results(Static))
             contents = [str(s.content) for s in detail_statics]
-            assert any("(no description)" in c for c in contents)
+            assert any("no description" in c for c in contents)
             assert any("Skill is disabled" in c for c in contents)

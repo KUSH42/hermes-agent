@@ -59,6 +59,18 @@ _MAX_CITATIONS: int = 500
 _MAX_MATH_LINES: int = 10_000
 _MAX_CODE_FENCE_BUFFER: int = 500
 
+# I-1: canonical site names for _dup_trace — also exported for test assertions.
+_DUP_TRACE_SITES: tuple[str, ...] = (
+    "prose_main",          # _write_prose
+    "prose_separator",     # _render_footnote_section — divider line
+    "footnote_ref",        # _render_footnote_section — superscript + body
+    "math_sync_unicode",   # _flush_math_block sync fallback (both branches)
+    "math_unicode_late",   # _mount_math_unicode (late via call_from_thread)
+    "ansi_block_fallback", # _flush_code_fence_buffer — mount failed, multi-line
+    "ansi_block_single",   # _flush_code_fence_buffer — single-line prose path
+    "hr",                  # _emit_rule
+)
+
 # Matches opening fence: ```lang or ~~~lang (3+ backticks or tildes)
 # Group 1: fence chars (length = fence depth)
 # Group 2: language specifier (may be empty string)
@@ -635,6 +647,11 @@ class ResponseFlowEngine:
 
     _MAX_EMOJI_MOUNTS: int = 50
 
+    # R-B1 follow-up: structured commit-site logging (I-1).
+    # Flip True via HERMES_DUP_TRACE=1 env var or directly in tests.
+    _DUP_TRACE_ENABLED: bool = False
+    _DUP_TRACE_SITES: tuple[str, ...] = _DUP_TRACE_SITES  # re-export module constant
+
     def _init_fields(self) -> None:
         """Initialise all app-independent instance fields.
 
@@ -720,6 +737,39 @@ class ResponseFlowEngine:
         self._citations_enabled = getattr(_app, "_citations_enabled", True)
         self._emoji_registry = getattr(_app, "_emoji_registry", None)
         self._emoji_images_enabled = getattr(_app, "_emoji_images_enabled", True)
+        # I-1: instance-level shadow so env can be flipped between sessions.
+        self._DUP_TRACE_ENABLED = os.environ.get("HERMES_DUP_TRACE") == "1"
+
+    def _dup_trace(self, site: str, plain: str) -> None:
+        """I-1: log one DEBUG record per _commit_to_log call when tracing is enabled."""
+        if not self._DUP_TRACE_ENABLED:
+            return
+        snippet = plain[:60].replace("\n", "\\n")
+        _log.debug(
+            "dup_trace site=%s logical_index=%d len_texts=%d plain=%r",
+            site,
+            self._logical_index,
+            len(self._log_texts),
+            snippet,
+        )
+
+    def _assert_log_invariant(self, site: str) -> None:
+        """I-2: verify _log_texts/_log_plains parity after every commit or rewrite."""
+        if len(self._log_texts) != len(self._log_plains):
+            _log.warning(
+                "log_invariant_violation site=%s len_texts=%d len_plains=%d",
+                site,
+                len(self._log_texts),
+                len(self._log_plains),
+            )
+        if self._DUP_TRACE_ENABLED:
+            if len(self._log_texts) != self._logical_index:
+                _log.warning(
+                    "log_index_violation site=%s logical_index=%d len_texts=%d",
+                    site,
+                    self._logical_index,
+                    len(self._log_texts),
+                )
 
     def _reset_log_state(self) -> None:
         """Reset R-B1 parallel tracking. Call when _prose_log is replaced."""
@@ -738,6 +788,7 @@ class ResponseFlowEngine:
         self._log_texts.append(rich_text)
         self._log_plains.append(plain)
         self._logical_index += 1
+        self._assert_log_invariant("_commit_to_log")
 
     def _apply_write_to_log(self, logical_index: int, new_text: "Text") -> None:
         """R-B1 idempotency helper for late-arriving writes.
@@ -753,6 +804,7 @@ class ResponseFlowEngine:
             self._prose_log.clear()
             for t, p in zip(self._log_texts, self._log_plains):
                 self._prose_log.write_with_source(t, p)
+            self._assert_log_invariant("_apply_write_to_log")
         else:
             if len(self._log_texts) == 0:
                 _log.debug(
@@ -776,6 +828,7 @@ class ResponseFlowEngine:
                 _log.debug("_write_prose: DOUBLE-EMIT detected plain=%r", plain)
             self._last_prose_plain = plain.strip()
         _log.debug("_write_prose: plain=%r", plain[:120] if len(plain) > 120 else plain)
+        self._dup_trace("prose_main", plain)
         self._commit_to_log(rich_text, plain)
         if self._prose_callback is not None and plain.strip():
             try:
@@ -1530,6 +1583,7 @@ class ResponseFlowEngine:
             return
         self._sync_prose_log()
         sep = Text("─" * 40, style="dim")
+        self._dup_trace("prose_separator", "─" * 40)
         self._commit_to_log(sep, "─" * 40)
         ref_style = self._skin_vars.get("footnote-ref-color", "dim")
         for label in self._footnote_order:
@@ -1539,6 +1593,7 @@ class ResponseFlowEngine:
             line = Text()
             line.append(sup + " ", style=ref_style)
             line.append_text(styled_body)
+            self._dup_trace("footnote_ref", sup + " " + body)
             self._commit_to_log(line, sup + " " + body)
 
     # ------------------------------------------------------------------
@@ -1582,6 +1637,7 @@ class ResponseFlowEngine:
             unicode_repr = _get_math_renderer().render_unicode(latex)
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
+            self._dup_trace("math_sync_unicode", unicode_repr)
             self._commit_to_log(t, unicode_repr)
             return
 
@@ -1592,6 +1648,7 @@ class ResponseFlowEngine:
             unicode_repr = _get_math_renderer().render_unicode(latex)
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
+            self._dup_trace("math_sync_unicode", unicode_repr)
             self._commit_to_log(t, unicode_repr)
             return
 
@@ -1630,6 +1687,7 @@ class ResponseFlowEngine:
         """
         self._sync_prose_log()
         t = Text(f"  {unicode_repr}  ", style="italic")
+        self._dup_trace("math_unicode_late", unicode_repr)
         self._commit_to_log(t, unicode_repr)
 
     def _mount_math_image(self, path: "Path", max_rows: int, latex: str = "") -> None:
@@ -1710,10 +1768,12 @@ class ResponseFlowEngine:
                 )
                 # Fallback: write as plain prose
                 for line in buf:
+                    self._dup_trace("ansi_block_fallback", line)
                     self._commit_to_log(Text.from_ansi(line), line)
         else:
             # Single line — write as plain prose
             for line in buf:
+                self._dup_trace("ansi_block_single", line)
                 self._commit_to_log(Text.from_ansi(line), line)
 
     def _emit_prose_line(self, raw: str) -> None:
@@ -1747,6 +1807,7 @@ class ResponseFlowEngine:
         """Emit a width-bounded horizontal rule to the prose log."""
         self._sync_prose_log()
         rule = _make_rule(self._prose_log)
+        self._dup_trace("hr", "---")
         self._commit_to_log(rule, "---")
 
     def _flush_block_buf(self) -> None:

@@ -173,6 +173,8 @@ class GroupHeader(Widget):
         self._child_count = 0
         self._collapsed = False
         self._error_count: int = 0  # B2: child error count for header chip
+        self._terminal_at: float | None = None
+        self._group_state_value: str = ""
 
     def update(
         self,
@@ -183,6 +185,8 @@ class GroupHeader(Widget):
         child_count: int,
         collapsed: bool,
         error_count: int = 0,  # B2: number of errored child panels
+        terminal_at: float | None = None,
+        group_state: str = "",
     ) -> None:
         self._summary_text = summary_text
         self._diff_add = diff_add
@@ -191,6 +195,8 @@ class GroupHeader(Widget):
         self._child_count = child_count
         self._collapsed = collapsed
         self._error_count = error_count  # B2
+        self._terminal_at = terminal_at
+        self._group_state_value = group_state
         self.refresh()
 
     def render(self) -> Text:
@@ -199,6 +205,9 @@ class GroupHeader(Widget):
         t.append(f"  {GLYPH_GUTTER_GROUP} ", style="dim")
         toggle = "▸" if self._collapsed else "▾"
         t.append(toggle + " ", style="bold")
+        glyph_char, glyph_style = _OUTCOME_GLYPH.get(self._group_state_value, ("", ""))
+        if glyph_char:
+            t.append(f"{glyph_char} ", style=glyph_style)
 
         # Summary text — truncate to terminal width budget
         term_w = self.size.width if self.size.width > 0 else 80
@@ -215,13 +224,22 @@ class GroupHeader(Widget):
         if self._diff_del:
             t.append(f"  -{self._diff_del}", style="red")  # il-tok-1-exempt: semantic diff color; red=deleted lines
 
-        # Duration (v4 §2.2 rule)
-        ms = self._duration_ms
-        if ms >= 50:
-            if ms < 5000:
-                t.append(f"  {int(ms)}ms", style="dim")
+        # Duration / terminal chip (GHF-H1 + v4 §2.2 rule)
+        if self._terminal_at is not None:
+            # GHF-H1: frozen terminal summary chip
+            from hermes_cli.tui.tool_blocks._group_header_stats import terminal_stats, _clock_hhmm
+            chip = terminal_stats(
+                tool_count=self._child_count,
+                total_span_s=self._duration_ms / 1000.0,
+                clock_hhmm=_clock_hhmm(self._terminal_at),
+            )
+            t.append(f"  {chip}", style="dim")
+        elif self._duration_ms >= 50:
+            # live duration while still running
+            if self._duration_ms < 5000:
+                t.append(f"  {int(self._duration_ms)}ms", style="dim")
             else:
-                t.append(f"  {ms / 1000:.1f}s", style="dim")
+                t.append(f"  {self._duration_ms / 1000:.1f}s", style="dim")
 
         # B2: error count chip — shown before op count for prominence
         if self._error_count > 0:
@@ -256,6 +274,16 @@ _TERMINAL_GROUP_STATES = frozenset({
     ToolGroupState.ERR,
     ToolGroupState.CANCELLED,
 })
+
+# GHF-M1: group-state → (glyph, style) for left-side outcome column.
+# Colors use hardcoded Rich names — il-tok-1-exempt: semantic outcome colors,
+# no SkinColors token defined for group-level outcome glyphs.
+_OUTCOME_GLYPH: dict[str, tuple[str, str]] = {
+    "done":      ("✓", "green"),    # il-tok-1-exempt
+    "err":       ("✗", "bold red"), # il-tok-1-exempt
+    "cancelled": ("–", "dim"),
+    # "pending" and "running": no entry → falls through to ("", "")
+}
 
 
 def _recompute_group_state(
@@ -472,6 +500,8 @@ class ToolGroup(Widget):
         self._last_header_kwargs: dict = {}
         # PG-4: group-level terminal state
         self._group_state: ToolGroupState = ToolGroupState.PENDING
+        # GHF-H1: monotonic timestamp of first transition into terminal state
+        self._group_terminal_at: float | None = None
         # TB-MED-2: group tier cap + HERO lock
         self._user_hero: bool = False
         from hermes_cli.tui.tool_panel.layout_resolver import ToolBlockLayoutResolver
@@ -807,6 +837,8 @@ class ToolGroup(Widget):
             child_count=len(children),
             collapsed=self.collapsed,
             error_count=error_count + self._terminal_err_count,  # B2 + PG-3
+            terminal_at=self._group_terminal_at,
+            group_state=self._group_state.value,
         )
         # PG-3: save for _refresh_header_counts partial updates
         self._last_header_kwargs = dict(kwargs)
@@ -869,9 +901,13 @@ class ToolGroup(Widget):
                 [c for c in self._body.children if isinstance(c, _TP)]
                 if self._body is not None else []
             )
-            self.recompute_aggregate()
-            # PG-4: recompute group terminal state
+            # PG-4: compute new group state BEFORE recompute_aggregate so terminal_at
+            # is captured when recompute_aggregate calls _header.update
             self._group_state = _recompute_group_state(children, current_state=self._group_state)
+            # GHF-H1: capture terminal timestamp on first transition into terminal state
+            if self._group_state in _TERMINAL_GROUP_STATES and self._group_terminal_at is None:
+                self._group_terminal_at = time.monotonic()
+            self.recompute_aggregate()
             # Reflect terminal group state on the ToolGroup widget via CSS classes
             # so hermes.tcss can style border-left based on outcome.
             try:

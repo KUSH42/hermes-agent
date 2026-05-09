@@ -21,7 +21,7 @@ from textual.strip import Strip
 from textual.widget import Widget
 from textual.widgets import Static
 
-from .renderers import CopyableRichLog, _apply_span_style
+from .renderers import CopyableRichLog, _WriteOp, _apply_span_style
 
 if TYPE_CHECKING:
     pass
@@ -52,9 +52,15 @@ class InlineProseLog(CopyableRichLog):
         self._logical_visual_rows: dict[int, int] = {}
         self._image_cache = _get_image_cache()
         self._last_cell_px: tuple[int, int] = (0, 0)
+        # Track column width for paint-plan rebuild on terminal resize.
+        self._last_content_width: int = 0
         # Cached _RenderMode — avoids ioctl on every render_line call.
         # Set to None to force recompute on first use or after resize.
         self._render_mode_cache: "Any | None" = None
+        # Set to True inside write_inline() before calling super().write_with_source()
+        # so the base write_with_source() does not record a duplicate "wws" op
+        # (the "inline" op stored by write_inline() already covers this write).
+        self._inline_source_appending: bool = False
 
     # ------------------------------------------------------------------ #
     # Write API
@@ -73,8 +79,22 @@ class InlineProseLog(CopyableRichLog):
         line_index = self._logical_count  # incremented by write() below
         self._inline_lines[line_index] = line
         self._inline_paint[line_index] = self._build_paint_plan(line, text)
-        # super().write_with_source() → self.write() → increments _logical_count
-        super().write_with_source(text, plain)
+        # Record the "inline" op for reflow replay (REFLOW-H2).
+        # Guard: skip during _do_reflow replay — _replay_inline_op → write_inline
+        # would otherwise double-append on every reflow cycle.
+        if not self._replaying:
+            self._source_ops.append(_WriteOp(kind="inline", content=line))
+            if len(self._source_ops) > self._SOURCE_OPS_CAP:
+                drop = len(self._source_ops) - self._SOURCE_OPS_CAP
+                del self._source_ops[:drop]
+        # Suppress write_with_source from also recording a "wws" op for this call
+        # (the "inline" op above already covers it for reflow purposes).
+        self._inline_source_appending = True
+        try:
+            # super().write_with_source() → self.write() → increments _logical_count
+            super().write_with_source(text, plain)
+        finally:
+            self._inline_source_appending = False
         # Pre-render images outside of render_line to avoid PIL/stdout writes
         # during Textual's render phase (which causes kitty screen glitches).
         has_images = any(isinstance(s, ImageSpan) for s in line)
@@ -130,23 +150,29 @@ class InlineProseLog(CopyableRichLog):
     # ------------------------------------------------------------------ #
 
     def on_resize(self, _event: "events.Resize") -> None:
-        """Invalidate image cache + render mode cache; rebuild paint plans when cell_px changes."""
+        """Invalidate image cache + render mode cache; rebuild paint plans when cell_px or column width changes."""
         from hermes_cli.tui.kitty_graphics import _cell_px, _reset_cell_px_cache
         # Reset the public-wrapper cache so cell_width_px()/cell_height_px()
         # reflect new dims after this resize.
         _reset_cell_px_cache()
         new_px = _cell_px()
-        if new_px != self._last_cell_px:
+        new_width = self.scrollable_content_region.width
+        cell_px_changed = new_px != self._last_cell_px
+        width_changed = new_width != self._last_content_width and new_width > 0
+        if cell_px_changed or width_changed:
             self._last_cell_px = new_px
-            self._render_mode_cache = None  # moved inside — only reset when dims change
-            self._image_cache.invalidate_for_resize()
+            self._last_content_width = new_width
+            self._render_mode_cache = None
+            if cell_px_changed:
+                self._image_cache.invalidate_for_resize()
             for idx, iline in list(self._inline_lines.items()):
                 plan = self._build_paint_plan(iline, self._line_to_text(iline))
                 self._inline_paint[idx] = plan
                 self._logical_visual_rows[idx] = max(len(plan), 1)
-            # Re-pre-render all inline lines with updated cell dims
-            for idx, iline in list(self._inline_lines.items()):
-                self._prerender_line_images(idx, iline)
+            if cell_px_changed:
+                # Re-pre-render all inline lines with updated cell dims
+                for idx, iline in list(self._inline_lines.items()):
+                    self._prerender_line_images(idx, iline)
         self.refresh()
 
     def on_unmount(self) -> None:
@@ -158,6 +184,26 @@ class InlineProseLog(CopyableRichLog):
                 from hermes_cli.tui.inline_prose import ImageSpan
                 if isinstance(span, ImageSpan):
                     self._image_cache.decrement_refcount(span, mode, wid)
+
+    # ------------------------------------------------------------------ #
+    # Reflow overrides (REFLOW-H2)
+    # ------------------------------------------------------------------ #
+
+    def _do_reflow(self) -> None:
+        """Override: reset inline-specific state before replaying ops.
+
+        Clears _inline_lines/_inline_paint/_logical_visual_rows/_logical_count
+        so that write_inline() calls during replay rebuild them at the new width.
+        """
+        self._inline_lines.clear()
+        self._inline_paint.clear()
+        self._logical_visual_rows.clear()
+        self._logical_count = 0
+        super()._do_reflow()
+
+    def _replay_inline_op(self, op: "_WriteOp") -> None:
+        """Replay a single "inline" op by delegating to write_inline."""
+        self.write_inline(op.content)
 
     # ------------------------------------------------------------------ #
     # get_selection — prefer _plain_lines for inline lines
@@ -382,10 +428,9 @@ class InlineProseLog(CopyableRichLog):
         """
         cumulative = 0
         for logical_idx in range(self._logical_count):
-            if logical_idx in self._inline_paint:
-                n_rows = len(self._inline_paint[logical_idx])
-            else:
-                n_rows = self._logical_visual_rows.get(logical_idx, 1)
+            # Always use _logical_visual_rows (the actual RichLog row count).
+            # _inline_paint row count can differ if paint plan was built before layout.
+            n_rows = self._logical_visual_rows.get(logical_idx, 1)
             if cumulative + n_rows > content_y:
                 is_inline = logical_idx in self._inline_lines
                 return (logical_idx if is_inline else -1, content_y - cumulative)

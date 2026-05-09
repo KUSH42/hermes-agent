@@ -187,6 +187,8 @@ class ReasoningPanel(Widget):
             self._reasoning_engine._list_cont_indent = ""
             self._reasoning_engine._fence_char = "`"
             self._reasoning_engine._fence_depth = 3
+        # Gate reflow so it does not fire while reasoning tokens are arriving (REFLOW-M1)
+        self._reasoning_log.set_streaming(True)
         # Force a layout refresh so the RichLog receives a Resize event and
         # sets _size_known=True, enabling deferred writes to be committed.
         self.call_after_refresh(self.refresh, layout=True)
@@ -244,6 +246,8 @@ class ReasoningPanel(Widget):
         self.add_class("visible")
         self.add_class("--closeable")
         self._sync_collapsed_state()
+        # Release reflow gate — reasoning stream is complete (REFLOW-M1)
+        self._reasoning_log.set_streaming(False)
         # Don't remove "visible" — reasoning stays shown as part of the
         # message so it isn't lost when tool output or the next response
         # pushes new content into the same MessagePanel.

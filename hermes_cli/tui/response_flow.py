@@ -1650,7 +1650,11 @@ class ResponseFlowEngine:
                 inline_ansi = apply_inline_markdown(block_ansi)
                 self._sync_prose_log()
                 plain = _strip_ansi(inline_ansi)
-                self._commit_prose_line(inline_ansi, plain)
+                rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
+                if not self._write_prose_inline_emojis(rich_text, plain):
+                    self._commit_prose_line(inline_ansi, plain)
+                else:
+                    self._flush_code_fence_buffer()
 
     def _mount_code_block(self, block: "StreamingCodeBlock") -> None:
         """Mount block into output DOM. Override in subclasses."""

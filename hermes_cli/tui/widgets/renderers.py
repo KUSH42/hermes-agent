@@ -11,8 +11,9 @@ import asyncio
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 # Matches orphaned CSI tails (missing leading ESC): e.g. "[38;2;...m" or "[0m"
 _ORPHANED_CSI_RE = re.compile(r"\[[0-9;]+[A-Za-z]")
@@ -59,6 +60,21 @@ import logging
 _log = logging.getLogger(__name__)
 
 
+@dataclass
+class _WriteOp:
+    """Stored write operation for reflow replay.
+
+    kind: "text"   — content is a Rich Text or str; written via write()
+          "wws"    — content is a Rich Text; written via write_with_source()
+          "inline" — content is an InlineLine (list); written via write_inline()
+                     Only InlineProseLog produces/replays "inline" ops.
+    """
+    kind: Literal["text", "wws", "inline"]
+    content: Any            # Text or str for "text"/"wws"; InlineLine for "inline"
+    plain: str = ""         # populated for "wws" ops (plain text for copy)
+    link: "str | None" = None
+
+
 class CopyableRichLog(RichLog, can_focus=False):
     class LinkClicked(Message):
         def __init__(self, url: str, ctrl: bool = False) -> None:
@@ -95,6 +111,8 @@ class CopyableRichLog(RichLog, can_focus=False):
     }
     """
 
+    _SOURCE_OPS_CAP: ClassVar[int] = 2000  # max stored ops per widget (REFLOW-M2)
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         _boost_layout_caches(self)
@@ -104,6 +122,12 @@ class CopyableRichLog(RichLog, can_focus=False):
         # Set to True inside write_with_source() so write() knows not to
         # re-append plain text (write_with_source already does it explicitly).
         self._wws_active: bool = False
+        # Reflow buffer (REFLOW-H1)
+        self._source_ops: list[_WriteOp] = []
+        self._rendered_max_width: int = 0
+        self._reflow_scheduled: bool = False
+        self._replaying: bool = False
+        self._streaming_active: bool = False
 
     def on_mount(self) -> None:
         # Best-effort pre-warm only; on_resize is authoritative.
@@ -115,10 +139,19 @@ class CopyableRichLog(RichLog, can_focus=False):
 
     def on_resize(self, event: events.Resize) -> None:
         w = event.size.width
-        if w > 0:
-            self._render_width = w
-        else:
+        if w <= 0:
             _log.debug("CopyableRichLog.on_resize: event.size.width == 0; skipping update")
+            return
+        self._render_width = w
+        # Trigger reflow when viewport narrows below the widest rendered width (REFLOW-H1)
+        if (
+            self._source_ops
+            and w < self._rendered_max_width
+            and not self._reflow_scheduled
+            and not self._replaying
+        ):
+            self._reflow_scheduled = True
+            self.call_after_refresh(self._do_reflow)
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.
@@ -192,6 +225,18 @@ class CopyableRichLog(RichLog, can_focus=False):
                 elif getattr(self, "_size_known", True):
                     self._plain_lines.append(plain_text)
                     self._line_links.append(None)
+        # Append to reflow buffer (REFLOW-H1). Done before deferred branch so each
+        # logical write is recorded exactly once regardless of layout deferral.
+        # _replaying: skip — ops are already in the buffer (we are replaying them)
+        # _wws_active: skip — write_with_source handles "wws" op storage itself
+        # _deferred: skip — the non-deferred call already recorded it
+        if not _deferred and not self._replaying and not self._wws_active:
+            if isinstance(content, (Text, str)):
+                self._source_ops.append(_WriteOp(kind="text", content=content, link=link))
+                # Cap enforcement (REFLOW-M2)
+                if len(self._source_ops) > self._SOURCE_OPS_CAP:
+                    drop = len(self._source_ops) - self._SOURCE_OPS_CAP
+                    del self._source_ops[:drop]
         if width is None:
             if self._render_width is not None:
                 width = self._render_width
@@ -216,6 +261,9 @@ class CopyableRichLog(RichLog, can_focus=False):
                     except Exception:
                         # CSS variable unavailable; use default value
                         width = 80
+        # Track widest rendered width for reflow trigger (REFLOW-H1)
+        if width is not None and not self._replaying:
+            self._rendered_max_width = max(self._rendered_max_width, width)
         return super().write(  # type: ignore[return-value]
             content,
             width=width,
@@ -238,6 +286,20 @@ class CopyableRichLog(RichLog, can_focus=False):
         """
         self._plain_lines.append(plain)
         self._line_links.append(link)
+        # Append to reflow buffer (REFLOW-H1).
+        # Guard: skip during _replaying (already replaying from buffer),
+        # and skip when _inline_source_appending (InlineProseLog stores an "inline"
+        # op instead; the "wws" duplicate would break reflow for inline lines).
+        if not self._replaying and not getattr(self, "_inline_source_appending", False):
+            self._source_ops.append(_WriteOp(kind="wws", content=styled, plain=plain, link=link))
+            self._rendered_max_width = max(
+                self._rendered_max_width,
+                self._render_width if self._render_width is not None else 0,
+            )
+            # Cap enforcement (REFLOW-M2)
+            if len(self._source_ops) > self._SOURCE_OPS_CAP:
+                drop = len(self._source_ops) - self._SOURCE_OPS_CAP
+                del self._source_ops[:drop]
         # Suppress write()'s automatic plain-capture — we've already appended above.
         self._wws_active = True
         try:
@@ -300,6 +362,59 @@ class CopyableRichLog(RichLog, can_focus=False):
         self._line_links.clear()
         self._plain_replay_index = 0
         return super().clear()
+
+    # ------------------------------------------------------------------ #
+    # Reflow API (REFLOW-H1)
+    # ------------------------------------------------------------------ #
+
+    def set_streaming(self, active: bool) -> None:
+        """Mark whether content is actively streaming into this log.
+
+        When active=False, any pending reflow is dispatched immediately.
+        Call set_streaming(True) before the first write, set_streaming(False)
+        when the stream ends to release the reflow gate.
+        """
+        self._streaming_active = active
+        if not active and self._reflow_scheduled:
+            self.call_after_refresh(self._do_reflow)
+
+    def _do_reflow(self) -> None:
+        """Clear the log and replay all stored write ops at the current width.
+
+        Called via call_after_refresh when the viewport narrows below the
+        widest-ever rendered width and streaming is inactive.
+        """
+        self._reflow_scheduled = False
+        if not self._source_ops:
+            return
+        # Guard: don't reflow during active streaming (content may arrive concurrently)
+        if self._streaming_active:
+            # Reschedule; set_streaming(False) will clear this and dispatch
+            self._reflow_scheduled = True
+            self.call_after_refresh(self._do_reflow)
+            return
+        ops = list(self._source_ops)
+        self._replaying = True
+        try:
+            # Reset all accumulated state before replaying
+            self._source_ops.clear()
+            self._plain_lines.clear()
+            self._line_links.clear()
+            self._rendered_max_width = 0
+            self.clear()  # RichLog.clear() resets _lines and virtual size
+            for op in ops:
+                if op.kind == "text":
+                    self.write(op.content, link=op.link)
+                elif op.kind == "wws":
+                    self.write_with_source(op.content, op.plain, link=op.link)
+                elif op.kind == "inline":
+                    self._replay_inline_op(op)
+        finally:
+            self._replaying = False
+
+    def _replay_inline_op(self, op: "_WriteOp") -> None:
+        """Replay a single "inline" op. Overridden by InlineProseLog."""
+        raise NotImplementedError("only InlineProseLog handles 'inline' ops")
 
     def on_click(self, event: Any) -> None:
         if getattr(event, "button", 1) != 1:
@@ -380,6 +495,10 @@ CopyableBlock {
             self.query_one("#copy-btn")
         except NoMatches:
             self.mount(Static(ICON_COPY, id="copy-btn"))
+
+    def set_streaming(self, active: bool) -> None:
+        """Delegate streaming flag to the inner log for reflow gating (REFLOW-M1)."""
+        self._log.set_streaming(active)
 
 
 class LiveLineWidget(ManagedTimerMixin, Widget):

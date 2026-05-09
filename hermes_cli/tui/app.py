@@ -2148,6 +2148,14 @@ class HermesApp(App):
             self._response_segment_start_time = _time.monotonic()
         self._last_stream_chunk_ts = None
         self._refresh_live_response_metrics()
+        # Gate reflow so it does not fire while tokens are arriving (REFLOW-M1)
+        try:
+            panel = self.query_one(OutputPanel).current_message
+            if panel is not None:
+                panel._active_prose_block.set_streaming(True)
+        except Exception:
+            # OutputPanel or current_message absent at stream start — gate skipped
+            pass
 
     def mark_response_stream_delta(self, text: str) -> None:
         """Record streamed response text for rolling live tok/s."""
@@ -2187,7 +2195,22 @@ class HermesApp(App):
         _stream_probe.summarize()
         self._last_stream_chunk_ts = None
         self._response_token_window.clear()
-        self.hooks.fire("on_streaming_end")
+        # Capture active panel before hook fires (panel may change during hook)
+        _reflow_panel = None
+        try:
+            _reflow_output = self.query_one(OutputPanel)
+            _reflow_panel = _reflow_output.current_message
+        except Exception:
+            pass
+        try:
+            self.hooks.fire("on_streaming_end")
+        finally:
+            # Release reflow gate so any pending reflow fires now (REFLOW-M1)
+            if _reflow_panel is not None:
+                try:
+                    _reflow_panel._active_prose_block.set_streaming(False)
+                except Exception:
+                    pass
         try:
             output = self.query_one(OutputPanel)
         except NoMatches:

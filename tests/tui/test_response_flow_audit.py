@@ -366,18 +366,12 @@ class TestA5FlushPendingSourceLine:
         """R-18 guard: leading _flush_block_buf() drains setext-buffered state so that
         _emit_prose_line's _block_buf call receives only the pending source line.
 
-        Without R-18: process_line(_partial) setext-buffers "Heading"; then
-        _emit_prose_line("hi :smile:") calls _block_buf.process_line → gets "Heading"
-        back (setext flush), "hi :smile:" buffered. "Heading" goes through emoji path.
+        Without R-18: "Heading" setext-buffered in _block_buf; _emit_prose_line("hi :smile:")
+        gets "Heading" back first → wrong ordering.
 
-        With R-18: leading _flush_block_buf() drains "Heading" BEFORE _emit_prose_line;
-        _emit_prose_line("hi :smile:") → process_line("hi :smile:") → returns "hi :smile:"
-        directly → correct emoji path.
-
-        Setup uses stubs to simulate the setext-buffer state without going through the
-        full engine pipeline (which would drain _pending_source_line prematurely via
-        _dispatch_normal_state). _block_buf.flush simulates "Heading" held in buffer;
-        _block_buf.process_line returns its input immediately (no secondary buffering).
+        With R-18: leading _flush_block_buf() drains "Heading" BEFORE _emit_prose_line,
+        then "hi :smile:" goes through the emoji path.
+        Both lines now route through _write_prose_inline_emojis; the invariant is ordering.
         """
         eng, log = _make_engine()
 
@@ -406,14 +400,20 @@ class TestA5FlushPendingSourceLine:
         eng._write_prose_inline_emojis = fake_emoji
         eng._pending_source_line = "hi :smile:"
         eng.flush()
-        # With R-18 fix: "Heading" is committed via _flush_block_buf/_commit_prose_line
-        # (NOT emoji path), then "hi :smile:" goes through _emit_prose_line → emoji path.
+        # With R-18 fix: leading _flush_block_buf() drains "Heading" first, then
+        # "hi :smile:" goes through _emit_prose_line → emoji path.
+        # Both now route through _write_prose_inline_emojis (emoji check for all lines).
+        # R-18 invariant: "Heading" must appear BEFORE "hi :smile:" in the call order.
         assert any("smile" in p or "hi" in p for p in emoji_path_calls), (
             f"Pending source line did not reach emoji path; emoji_path_calls={emoji_path_calls}"
         )
-        # Also verify "Heading" did not appear in emoji_path_calls (it went to commit, not emoji)
-        assert not any("Heading" in p for p in emoji_path_calls), (
-            f"'Heading' should have been committed, not routed to emoji; calls={emoji_path_calls}"
+        assert any("Heading" in p for p in emoji_path_calls), (
+            f"'Heading' should have reached emoji path via _flush_block_buf; calls={emoji_path_calls}"
+        )
+        heading_idx = next(i for i, p in enumerate(emoji_path_calls) if "Heading" in p)
+        smile_idx = next(i for i, p in enumerate(emoji_path_calls) if "smile" in p or "hi" in p)
+        assert heading_idx < smile_idx, (
+            f"'Heading' must be emitted before 'hi :smile:'; calls={emoji_path_calls}"
         )
 
 

@@ -181,32 +181,111 @@ def get_cached_hero_width() -> tuple[str, int]:
     return _HERO_CACHE[key]
 
 
+def _hex_luminance(hex6: str) -> float:
+    h = hex6.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _hero_gradient_stops() -> list[str] | None:
+    """Return active skin's TTE final_gradient_stops for hero coloring (mirror tail
+    trimmed so the hero ramp stays monotonic), or None."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        tte = get_active_skin().get_startup_tte() or {}
+        params = tte.get("params") or {}
+        stops = params.get("final_gradient_stops")
+        if not isinstance(stops, (list, tuple)) or len(stops) < 2:
+            return None
+        stops = [str(s) for s in stops]
+        # Trim mirror tail (e.g. ares laser-bounce ramp E8…→6B…→9A…→B8…):
+        # cut once the direction reverses *significantly* (>10% of the total
+        # luminance span), so palettes with minor non-monotonic nuance like
+        # tokyo-night a48ee8→7aa2f7 are kept intact.
+        lums = [_hex_luminance(s) for s in stops]
+        span = max(lums) - min(lums)
+        threshold = span * 0.10 if span > 0 else 0
+        decreasing = lums[1] < lums[0]
+        cut = len(stops)
+        for i in range(2, len(lums)):
+            delta = lums[i] - lums[i - 1]
+            if decreasing and delta > threshold:
+                cut = i
+                break
+            if not decreasing and -delta > threshold:
+                cut = i
+                break
+        trimmed = stops[:cut]
+        # Drop the lightest stop too: sparse braille glyphs render the lightest
+        # color washed-out on dark backgrounds (e.g. ares #E8915A peach reads
+        # as cream). Always start from the second stop so the gradient lands
+        # in a more saturated band end-to-end.
+        if len(trimmed) >= 3:
+            trimmed = trimmed[1:]
+        return trimmed
+    except Exception:
+        return None
+
+
+def _interp_stops(stops: list[str], t: float) -> str:
+    """Linear-interpolate hex stops at parameter t in [0, 1]."""
+    if t <= 0.0:
+        return stops[0]
+    if t >= 1.0:
+        return stops[-1]
+    n = len(stops) - 1
+    pos = t * n
+    seg = int(pos)
+    frac = pos - seg
+    return lerp_color(stops[seg], stops[seg + 1], frac)
+
+
 def render_banner_hero_text(markup_hero: str) -> Text:
-    """Render banner hero markup; plain text gets a smooth top→bottom 3-stop fade."""
+    """Render banner hero markup; unstyled lines get a per-char diagonal gradient
+    using the skin's startup_tte final_gradient_stops, falling back to a 3-stop
+    top→bottom fade across banner_accent → banner_text → banner_dim."""
     try:
         hero_text = Text.from_markup(markup_hero)
     except Exception:
         hero_text = Text(markup_hero)
     accent = _skin_color("banner_accent", "#FFBF00")
-    text = _skin_color("banner_text", "#FFF8DC")
+    text_c = _skin_color("banner_text", "#FFF8DC")
     dim = _skin_color("banner_dim", "#B8860B")
+    stops = _hero_gradient_stops()
     lines = hero_text.split("\n", allow_blank=True)
     n = len(lines)
+    width = max((len(l.plain) for l in lines), default=1) or 1
     out = Text()
     for i, line in enumerate(lines):
         if line.style or line.spans:
-            styled_line = line
+            out.append_text(line)
+        elif stops is not None:
+            plain = line.plain
+            for j, ch in enumerate(plain):
+                if ch == " " or ch == "⠀":
+                    out.append(ch)
+                    continue
+                # diagonal: equal weight on row + col, biased into the
+                # deeper 80% of the ramp so the lightest stop (which would
+                # render as washed-out cream against the dark background on
+                # sparse braille glyphs) is skipped.
+                ty = i / (n - 1) if n > 1 else 0.0
+                tx = j / (width - 1) if width > 1 else 0.0
+                t_raw = 0.5 * ty + 0.5 * tx
+                t = t_raw  # full ramp; lightest stop already trimmed in _hero_gradient_stops
+                # bold so sparse braille glyphs render with visible saturation
+                # (otherwise tiny dots look washed even with rich colors)
+                out.append(ch, style=f"bold {_interp_stops(stops, t)}")
         else:
             if n <= 1:
                 color = accent
             else:
                 t = i / (n - 1)
                 if t <= 0.5:
-                    color = lerp_color(accent, text, t * 2.0)
+                    color = lerp_color(accent, text_c, t * 2.0)
                 else:
-                    color = lerp_color(text, dim, (t - 0.5) * 2.0)
-            styled_line = Text(line.plain, style=color)
-        out.append_text(styled_line)
+                    color = lerp_color(text_c, dim, (t - 0.5) * 2.0)
+            out.append_text(Text(line.plain, style=color))
         if i < n - 1:
             out.append("\n")
     return out

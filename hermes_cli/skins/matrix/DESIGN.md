@@ -42,9 +42,11 @@ x-hermes:
     params:
       final_gradient_stops:
         - '#aaffc8'
+        - '#66ff7e'
         - '#00ff41'
         - '#00d849'
         - '#00a839'
+        - '#006622'
   logo_startup_tte:
     effect: rain
   schema: 1

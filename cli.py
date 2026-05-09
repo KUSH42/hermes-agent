@@ -5132,6 +5132,29 @@ class HermesCLI:
         con.print(out, end="", highlight=False)
         return buf.getvalue()
 
+    def _hero_ansi_with_stops_at(
+        self,
+        plain_hero: str,
+        stops: "list[str]",
+        direction: str,
+        t: float,
+        bg: str = "#1e1e1e",
+    ) -> str:
+        """Return gradient hero ANSI at brightness t ∈ [0, 1].
+
+        t=0 → every stop color is bg (invisible on dark bg).
+        t=1 → full gradient stops (identical to _hero_ansi_with_stops).
+        Intermediate t linearly lerps each stop from bg toward its target.
+
+        Note: the fade ramp loop calls this with t = (i+1)/N, so t never
+        reaches 0 in practice — the first frame is at 1/N brightness, not
+        fully dark. This is intentional: a t=0 frame (pitch black) would
+        appear as a glitch flash before the fade begins.
+        """
+        from hermes_cli.tui.animation import lerp_color
+        dimmed = [lerp_color(bg, s, t) for s in stops]
+        return self._hero_ansi_with_stops(plain_hero, dimmed, direction)
+
     def _splice_startup_banner_frame(
         self,
         template: dict[str, object],
@@ -5251,6 +5274,8 @@ class HermesCLI:
         MAX_FRAMES = cfg.max_frames
         MAX_WALL_S = cfg.max_wall_s
         DISPLAY_FPS = min(_tc.MAX_FPS, max(1, cfg.fps))
+        # max(2, ...) guarantees at least a start frame + full-brightness frame on any FPS.
+        _POST_FADE_FRAMES = max(2, round(DISPLAY_FPS * 0.42))
 
         # template_cell[0] starts as None; populated after _ensure_startup_banner_artefacts
         # returns so that _produce() (started earlier on cache miss) sees the resolved
@@ -5334,6 +5359,14 @@ class HermesCLI:
         except Exception:
             logger.debug("TTE: could not read settle direction; falling back to DIAGONAL", exc_info=True)
             _settle_direction = "DIAGONAL"
+
+        try:
+            from hermes_cli.skin_engine import get_active_skin as _get_active_skin_bg
+            _settle_bg: str = (
+                _get_active_skin_bg().get_color("background", "#1e1e1e") or "#1e1e1e"
+            )
+        except Exception:
+            _settle_bg = "#1e1e1e"
 
         # --- Streaming producer: Phase 1 + Phase 1.5 per frame ---
         # Frames are appended to anim_frames as they are generated; playback
@@ -5580,12 +5613,14 @@ class HermesCLI:
                 # occurs.  Destructive effects (burn, crumble) whose last TTE frame shows
                 # dispersed chars also benefit — the settle always shows complete text.
                 try:
-                    _settle = _process_raw_frame(
-                        self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction)
-                    )
-                    anim_frames.append(_settle)
+                    for _fi in range(_POST_FADE_FRAMES):
+                        _t = (_fi + 1) / _POST_FADE_FRAMES
+                        _fade = _process_raw_frame(
+                            self._hero_ansi_with_stops_at(plain_hero, _settle_stops, _settle_direction, _t, _settle_bg)
+                        )
+                        anim_frames.append(_fade)
                 except Exception:
-                    logger.debug("TTE: gradient settle frame failed", exc_info=True)
+                    logger.debug("TTE: gradient fade frames failed", exc_info=True)
                 producer_done.set()
                 prefetch_ready.set()  # unblock waiter if never hit _PREFETCH_FRAMES
                 if (_raw_for_cache
@@ -5707,15 +5742,19 @@ class HermesCLI:
                         if STARTUP_TTE_SKIP.is_set():
                             break
                         anim_frames.append(_process_raw_frame(raw_frame, _get_logo_frame_at(_ci2)))
-                    # Gradient settle frame — same as cache-miss path; use _settle_stops
+                    # Gradient fade ramp — same as cache-miss path; use _settle_stops
                     # so colors match TTE's final frame exactly (no snap on transition).
                     try:
-                        anim_frames.append(_process_raw_frame(
-                            self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction),
-                            _get_logo_frame_at(_cap),
-                        ))
+                        for _fi in range(_POST_FADE_FRAMES):
+                            _t = (_fi + 1) / _POST_FADE_FRAMES
+                            anim_frames.append(_process_raw_frame(
+                                self._hero_ansi_with_stops_at(
+                                    plain_hero, _settle_stops, _settle_direction, _t, _settle_bg
+                                ),
+                                _get_logo_frame_at(_cap),
+                            ))
                     except Exception:
-                        logger.debug("TTE cache: gradient settle frame failed", exc_info=True)
+                        logger.debug("TTE cache: gradient fade frames failed", exc_info=True)
                 except Exception:
                     logger.debug("TTE cache bg processing failed", exc_info=True)
                 finally:

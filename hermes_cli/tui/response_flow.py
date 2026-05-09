@@ -682,6 +682,15 @@ class ResponseFlowEngine:
         self._clf: _LineClassifier = _LineClassifier()
         self._dropped_citation_count: int = 0
         self._cite_partial_buf: "list[str] | None" = None  # buffer for multi-line [CITE:…] blocks
+        # R-B1: parallel tracking for committed prose logical lines.
+        # _logical_index increments on every primary prose-line commit (one per \n-delimited chunk).
+        # _log_texts[i] / _log_plains[i] mirror the i-th committed line for late-arriving idempotent updates.
+        # Late-arriving writes (from call_from_thread callbacks) MUST route through
+        # _apply_write_to_log() rather than calling _prose_log.write* directly, to prevent duplication.
+        self._logical_index: int = 0
+        self._log_texts: list["Text"] = []
+        self._log_plains: list[str] = []
+        self._tracked_prose_log: "object | None" = None  # identity tracker; reset state on switch
 
     def _reset_fence_state(self) -> None:
         """Drop fence-timer + per-fence config. Idempotent. Safe from any state."""
@@ -712,6 +721,52 @@ class ResponseFlowEngine:
         self._emoji_registry = getattr(_app, "_emoji_registry", None)
         self._emoji_images_enabled = getattr(_app, "_emoji_images_enabled", True)
 
+    def _reset_log_state(self) -> None:
+        """Reset R-B1 parallel tracking. Call when _prose_log is replaced."""
+        self._logical_index = 0
+        self._log_texts.clear()
+        self._log_plains.clear()
+
+    def _commit_to_log(self, rich_text: "Text", plain: str) -> None:
+        """R-B1 primary commit: write to prose log AND record in parallel tracking.
+
+        Use for every primary prose-line commit (one per \\n-delimited chunk).
+        Increments _logical_index in lock-step with the write so late-arriving
+        callbacks can capture committed_idx = _logical_index - 1.
+        """
+        self._prose_log.write_with_source(rich_text, plain)
+        self._log_texts.append(rich_text)
+        self._log_plains.append(plain)
+        self._logical_index += 1
+
+    def _apply_write_to_log(self, logical_index: int, new_text: "Text") -> None:
+        """R-B1 idempotency helper for late-arriving writes.
+
+        If logical_index is in range, replace the entry in _log_texts/_log_plains
+        and rewrite the prose log via clear+rewrite (Textual's RichLog.write
+        renders Text into Strip segments, so mutating _log_texts[i] in place is
+        not visible — only clear+rewrite updates the displayed content).
+        """
+        if logical_index < len(self._log_texts):
+            self._log_texts[logical_index] = new_text
+            self._log_plains[logical_index] = new_text.plain
+            self._prose_log.clear()
+            for t, p in zip(self._log_texts, self._log_plains):
+                self._prose_log.write_with_source(t, p)
+        else:
+            if len(self._log_texts) == 0:
+                _log.debug(
+                    "Late write for logical_index=%d dropped (log cleared)",
+                    logical_index,
+                )
+            else:
+                _log.warning(
+                    "Late write for logical_index=%d out of range (log size=%d); "
+                    "possible bug: _logical_index not incremented at all commit sites",
+                    logical_index,
+                    len(self._log_texts),
+                )
+
     def _write_prose(self, rich_text: "Text", plain: str) -> None:
         """Write a prose line and optionally fire the prose callback."""
         # Bug-1 debug: detect repeated lines emitted in the same turn.
@@ -721,7 +776,7 @@ class ResponseFlowEngine:
                 _log.debug("_write_prose: DOUBLE-EMIT detected plain=%r", plain)
             self._last_prose_plain = plain.strip()
         _log.debug("_write_prose: plain=%r", plain[:120] if len(plain) > 120 else plain)
-        self._prose_log.write_with_source(rich_text, plain)
+        self._commit_to_log(rich_text, plain)
         if self._prose_callback is not None and plain.strip():
             try:
                 self._prose_callback(plain)
@@ -729,13 +784,23 @@ class ResponseFlowEngine:
                 _log.exception("prose callback failed in _write_prose")
 
     def _sync_prose_log(self) -> None:
-        """Refresh the active prose destination from the owning message panel."""
+        """Refresh the active prose destination from the owning message panel.
+
+        R-B1: when the prose-log instance changes, reset parallel tracking.
+        Pending late-arriving callbacks for the previous log capture a stale
+        index (>= len(_log_texts) == 0 after reset) and are dropped silently
+        in _apply_write_to_log — correct.
+        """
         getter = getattr(type(self._panel), "current_prose_log", None)
-        self._prose_log = (
+        new_log = (
             self._panel.current_prose_log()
             if callable(getter)
             else self._panel.response_log
         )
+        if self._tracked_prose_log is not None and new_log is not self._tracked_prose_log:
+            self._reset_log_state()
+        self._tracked_prose_log = new_log
+        self._prose_log = new_log
 
     def _get_prose_width(self) -> int:
         """Return current prose log column width for pre-wrap calculations."""
@@ -1305,6 +1370,13 @@ class ResponseFlowEngine:
             spans.append(TextSpan(text=rich_text[cursor:]))
 
         prose_log.write_inline(spans)
+        # R-B1: track this committed line for count invariant. Note: rewrite
+        # fallback in _apply_write_to_log uses write_with_source and would lose
+        # ImageSpans; acceptable since no current late-arriving callback updates
+        # an inline-emoji line (audit confirms _mount_emoji is mount-only).
+        self._log_texts.append(rich_text)
+        self._log_plains.append(plain)
+        self._logical_index += 1
         if self._prose_callback is not None and plain.strip():
             try:
                 self._prose_callback(plain)
@@ -1458,7 +1530,7 @@ class ResponseFlowEngine:
             return
         self._sync_prose_log()
         sep = Text("─" * 40, style="dim")
-        self._prose_log.write_with_source(sep, "─" * 40)
+        self._commit_to_log(sep, "─" * 40)
         ref_style = self._skin_vars.get("footnote-ref-color", "dim")
         for label in self._footnote_order:
             body = self._footnote_defs.get(label, "")
@@ -1467,7 +1539,7 @@ class ResponseFlowEngine:
             line = Text()
             line.append(sup + " ", style=ref_style)
             line.append_text(styled_body)
-            self._prose_log.write_with_source(line, sup + " " + body)
+            self._commit_to_log(line, sup + " " + body)
 
     # ------------------------------------------------------------------
     # Math helpers
@@ -1510,7 +1582,7 @@ class ResponseFlowEngine:
             unicode_repr = _get_math_renderer().render_unicode(latex)
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
-            self._prose_log.write_with_source(t, unicode_repr)
+            self._commit_to_log(t, unicode_repr)
             return
 
         # Async image path — dispatch to worker thread
@@ -1520,7 +1592,7 @@ class ResponseFlowEngine:
             unicode_repr = _get_math_renderer().render_unicode(latex)
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
-            self._prose_log.write_with_source(t, unicode_repr)
+            self._commit_to_log(t, unicode_repr)
             return
 
         dpi = self._math_dpi
@@ -1550,10 +1622,15 @@ class ResponseFlowEngine:
         _app.run_worker(_render_worker, thread=True)
 
     def _mount_math_unicode(self, unicode_repr: str) -> None:
-        """App-thread: write unicode math fallback to prose log."""
+        """App-thread: write unicode math fallback to prose log.
+
+        Late-arriving from worker thread via call_from_thread (see _flush_math_block).
+        Appends a NEW logical line (math block) — instrumented as primary commit,
+        not routed through _apply_write_to_log (no prior committed_idx to update).
+        """
         self._sync_prose_log()
         t = Text(f"  {unicode_repr}  ", style="italic")
-        self._prose_log.write_with_source(t, unicode_repr)
+        self._commit_to_log(t, unicode_repr)
 
     def _mount_math_image(self, path: "Path", max_rows: int, latex: str = "") -> None:
         """App-thread: mount MathBlockWidget for a rendered PNG."""
@@ -1633,11 +1710,11 @@ class ResponseFlowEngine:
                 )
                 # Fallback: write as plain prose
                 for line in buf:
-                    self._prose_log.write_with_source(Text.from_ansi(line), line)
+                    self._commit_to_log(Text.from_ansi(line), line)
         else:
             # Single line — write as plain prose
             for line in buf:
-                self._prose_log.write_with_source(Text.from_ansi(line), line)
+                self._commit_to_log(Text.from_ansi(line), line)
 
     def _emit_prose_line(self, raw: str) -> None:
         """Render one already-resolved prose line through the full inline pipeline."""
@@ -1670,7 +1747,7 @@ class ResponseFlowEngine:
         """Emit a width-bounded horizontal rule to the prose log."""
         self._sync_prose_log()
         rule = _make_rule(self._prose_log)
-        self._prose_log.write_with_source(rule, "---")
+        self._commit_to_log(rule, "---")
 
     def _flush_block_buf(self) -> None:
         """Emit any pending StreamingBlockBuffer state to the prose log."""

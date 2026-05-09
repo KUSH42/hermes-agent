@@ -60,6 +60,7 @@ class InlineImage(Widget):
         self._src_path: str = ""
         self._pending_image = image
         self.max_rows = max_rows
+        self._last_resize_size: tuple[int, int] = (-1, -1)
 
     def on_mount(self) -> None:
         if self._pending_image is not None:
@@ -230,8 +231,19 @@ class InlineImage(Widget):
             self._image_id = None
 
     def on_resize(self, event: object) -> None:
-        if self.image is not None:
-            self.watch_image(self.image)
+        # Use _reactive_image (internal backing attr) to avoid ReactiveError
+        # when on_resize fires before the widget is fully mounted.
+        img = self._reactive_image  # type: ignore[attr-defined]
+        if img is None:
+            return
+        new_size = (
+            getattr(getattr(event, "size", None), "width", 0),
+            getattr(getattr(event, "size", None), "height", 0),
+        )
+        if new_size == self._last_resize_size:
+            return
+        self._last_resize_size = new_size
+        self.watch_image(img)
 
 
 class InlineThumbnail(TooltipMixin, Widget):

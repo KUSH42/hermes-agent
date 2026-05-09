@@ -132,11 +132,13 @@ class InlineProseLog(CopyableRichLog):
     def on_resize(self, event: Any) -> None:
         """Invalidate image cache + render mode cache; rebuild paint plans when cell_px changes."""
         from hermes_cli.tui.kitty_graphics import _cell_px, _reset_cell_px_cache
+        # Reset the public-wrapper cache so cell_width_px()/cell_height_px()
+        # reflect new dims after this resize.
         _reset_cell_px_cache()
-        self._render_mode_cache = None  # force recompute with new cell dims
         new_px = _cell_px()
         if new_px != self._last_cell_px:
             self._last_cell_px = new_px
+            self._render_mode_cache = None  # moved inside — only reset when dims change
             self._image_cache.invalidate_for_resize()
             for idx, iline in list(self._inline_lines.items()):
                 plan = self._build_paint_plan(iline, self._line_to_text(iline))

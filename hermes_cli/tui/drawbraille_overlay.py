@@ -608,10 +608,15 @@ class DrawbrailleOverlay(Static):
             self._auto_hide_handle = None
 
     def on_resize(self, event: Resize) -> None:
-        if self._anim_params is not None:
-            self._anim_params.width = event.size.width * 2
-            self._anim_params.height = event.size.height * 4
-            self.refresh()
+        if self._anim_params is None:
+            return
+        new_w = event.size.width * 2
+        new_h = event.size.height * 4
+        if new_w == self._anim_params.width and new_h == self._anim_params.height:
+            return
+        self._anim_params.width = new_w
+        self._anim_params.height = new_h
+        self.refresh()
 
     # ── watchers ───────────────────────────────────────────────────────────
 

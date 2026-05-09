@@ -133,6 +133,7 @@ class InlineMediaWidget(Widget):
         self._ctrl:   "Any | None" = None
         self._poller: "Any | None" = None
         self._show_timeline = self._cfg.show_timeline
+        self._last_seekbar_w: int = 0
 
     def compose(self) -> ComposeResult:
         yield Static("", id="media-controls")
@@ -153,8 +154,13 @@ class InlineMediaWidget(Widget):
         self._prepare()
 
     def on_resize(self, event: Any) -> None:
-        if hasattr(self, "_seekbar"):
-            self._seekbar.refresh()
+        if not hasattr(self, "_seekbar"):
+            return
+        new_w = getattr(getattr(event, "size", None), "width", 0)
+        if new_w == self._last_seekbar_w:
+            return
+        self._last_seekbar_w = new_w
+        self._seekbar.refresh()
 
     @work(thread=True)
     def _prepare(self) -> None:

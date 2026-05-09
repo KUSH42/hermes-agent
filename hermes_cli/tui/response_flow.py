@@ -100,6 +100,7 @@ _INLINE_CODE_LABEL_RE = re.compile(
 # Same pattern as rich_output._MD_HR_RE — standalone HR line
 # Also matches Unicode box-drawing ─{3,} separators emitted by LLMs
 _HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,}|─{3,})$")
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")  # mirrors agent.rich_output._MD_HEADING_RE
 _ASSIGN_LIKE_RE = re.compile(r'^\s*\w+\s*=\s*\S')
 
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
@@ -708,6 +709,10 @@ class ResponseFlowEngine:
         self._log_texts: list["Text"] = []
         self._log_plains: list[str] = []
         self._tracked_prose_log: "object | None" = None  # identity tracker; reset state on switch
+        self._pending_heading: "tuple[Text, str] | None" = None
+        # (rich_text, plain) — stashed ATX heading awaiting possible rule merge
+        # String-quoted because response_flow.py has no `from __future__ import annotations`
+        # and Text is imported under TYPE_CHECKING.
 
     def _reset_fence_state(self) -> None:
         """Drop fence-timer + per-fence config. Idempotent. Safe from any state."""
@@ -855,6 +860,29 @@ class ResponseFlowEngine:
         self._tracked_prose_log = new_log
         self._prose_log = new_log
 
+    def _flush_pending_heading(self) -> None:
+        """Write any stashed heading when the next write is not a rule."""
+        if self._pending_heading is not None:
+            rt, plain = self._pending_heading
+            self._pending_heading = None
+            self._sync_prose_log()
+            self._write_prose(rt, plain)
+
+    def _stash_or_commit_prose(
+        self,
+        block_result: str,
+        inline_ansi: str,
+        rich_text: "Text",
+        plain: str,
+    ) -> None:
+        """Stash if block_result is an ATX heading; otherwise flush+commit."""
+        if _MD_HEADING_RE.match(block_result):
+            self._flush_pending_heading()
+            self._pending_heading = (rich_text, plain)
+        else:
+            self._flush_pending_heading()
+            self._commit_prose_line(inline_ansi, plain)
+
     def _get_prose_width(self) -> int:
         """Return current prose log column width for pre-wrap calculations."""
         try:
@@ -957,6 +985,7 @@ class ResponseFlowEngine:
     def _render_cite_dim(self, text: str) -> None:
         """Render an unparseable CITE block as dim prose so it doesn't vanish silently."""
         from rich.text import Text as RichText
+        self._flush_pending_heading()
         self._sync_prose_log()
         plain = text
         rt = RichText(text, style="dim")
@@ -1064,7 +1093,13 @@ class ResponseFlowEngine:
                     block_ansi = apply_block_line(block_result)
                     inline_ansi = apply_inline_markdown(block_ansi)
                     plain = _strip_ansi(inline_ansi)
-                    self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
+                    rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
+                    if _MD_HEADING_RE.match(block_result):
+                        self._flush_pending_heading()
+                        self._pending_heading = (rich_text, plain)
+                    else:
+                        self._flush_pending_heading()
+                        self._write_prose(rich_text, plain)
 
         # Block math — checked BEFORE fence detection ($$ would match _FENCE_OPEN_RE)
         if self._math_enabled:
@@ -1135,6 +1170,7 @@ class ResponseFlowEngine:
                 block_ansi = apply_block_line(label)
                 inline_ansi = apply_inline_markdown(block_ansi)
                 plain = _strip_ansi(inline_ansi)
+                self._flush_pending_heading()
                 self._write_prose(Text.from_ansi(_normalize_ansi_for_render(inline_ansi)), plain)
                 self._emit_complete_code_block([value])
                 return True
@@ -1286,7 +1322,7 @@ class ResponseFlowEngine:
         plain = _strip_ansi(inline_ansi)
         rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
         if not self._write_prose_inline_emojis(rich_text, plain):
-            self._commit_prose_line(inline_ansi, plain)
+            self._stash_or_commit_prose(block_result, inline_ansi, rich_text, plain)
         else:
             self._flush_code_fence_buffer()
         self._pending_code_intro = intro_candidate or _is_code_intro_label(plain)
@@ -1421,6 +1457,7 @@ class ResponseFlowEngine:
         if cursor < len(plain):
             spans.append(TextSpan(text=rich_text[cursor:]))
 
+        self._flush_pending_heading()
         prose_log.write_inline(spans)
         # R-B1: track this committed line for count invariant. Note: rewrite
         # fallback in _apply_write_to_log uses write_with_source and would lose
@@ -1543,6 +1580,7 @@ class ResponseFlowEngine:
             self._emit_prose_line(pending)
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
+        self._flush_pending_heading()  # drain heading stashed with no following rule
         self._flush_code_fence_buffer()
         self._drain_cite_partial()  # flush any incomplete buffered CITE block as dim text
         self._render_footnote_section()
@@ -1580,6 +1618,7 @@ class ResponseFlowEngine:
         from agent.rich_output import apply_inline_markdown, _to_superscript
         if not self._footnote_defs:
             return
+        self._flush_pending_heading()
         self._sync_prose_log()
         sep = Text("─" * 40, style="dim")
         self._dup_trace("prose_separator", "─" * 40)
@@ -1634,6 +1673,7 @@ class ResponseFlowEngine:
         if not use_image:
             # Synchronous unicode fallback — write as italic prose
             unicode_repr = _get_math_renderer().render_unicode(latex)
+            self._flush_pending_heading()
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
             self._dup_trace("math_sync_unicode", unicode_repr)
@@ -1645,6 +1685,7 @@ class ResponseFlowEngine:
         if _app is None or not hasattr(_app, "run_worker"):
             # Panel detached / app missing — fall back to synchronous unicode write.
             unicode_repr = _get_math_renderer().render_unicode(latex)
+            self._flush_pending_heading()
             self._sync_prose_log()
             t = Text(f"  {unicode_repr}  ", style="italic")
             self._dup_trace("math_sync_unicode", unicode_repr)
@@ -1746,6 +1787,7 @@ class ResponseFlowEngine:
         buf = self._code_fence_buffer
         if not buf:
             return
+        self._flush_pending_heading()
         _log.debug(
             "[STREAM-BUF] InlineCodeFence flushing %d lines → %s",
             len(buf),
@@ -1790,7 +1832,7 @@ class ResponseFlowEngine:
         plain = _strip_ansi(inline_ansi)
         rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
         if not self._write_prose_inline_emojis(rich_text, plain):
-            self._commit_prose_line(inline_ansi, plain)
+            self._stash_or_commit_prose(block_result, inline_ansi, rich_text, plain)
         else:
             self._flush_code_fence_buffer()
 
@@ -1803,11 +1845,23 @@ class ResponseFlowEngine:
         self._emit_prose_line(pending)
 
     def _emit_rule(self) -> None:
-        """Emit a width-bounded horizontal rule to the prose log."""
+        """Emit a width-bounded horizontal rule to the prose log.
+
+        If a heading was stashed in _pending_heading, combine heading + rule into
+        one _commit_to_log call so Textual cannot interleave them.
+        """
         self._sync_prose_log()
         rule = _make_rule(self._prose_log)
-        self._dup_trace("hr", "---")
-        self._commit_to_log(rule, "---")
+        if self._pending_heading is not None:
+            rt, plain = self._pending_heading
+            self._pending_heading = None
+            combined = rt.copy()
+            combined.append("\n")
+            combined.append_text(rule)
+            self._commit_to_log(combined, plain + "\n---")
+        else:
+            self._dup_trace("hr", "---")
+            self._commit_to_log(rule, "---")
 
     def _flush_block_buf(self) -> None:
         """Emit any pending StreamingBlockBuffer state to the prose log."""
@@ -1841,7 +1895,7 @@ class ResponseFlowEngine:
                 plain = _strip_ansi(inline_ansi)
                 rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
                 if not self._write_prose_inline_emojis(rich_text, plain):
-                    self._commit_prose_line(inline_ansi, plain)
+                    self._stash_or_commit_prose(line, inline_ansi, rich_text, plain)
                 else:
                     self._flush_code_fence_buffer()
 
@@ -1867,6 +1921,7 @@ class ResponseFlowEngine:
 
     def _emit_complete_code_block(self, lines: list[str], lang: str = "") -> None:
         """Mount a code block and finalize it after the next refresh."""
+        self._flush_pending_heading()
         block = self._open_code_block(lang)
         for line in lines:
             block.append_line(line)

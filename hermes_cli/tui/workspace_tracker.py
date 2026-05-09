@@ -218,13 +218,14 @@ class WorkspaceTracker:
             )
 
     def entries(self) -> list[FileEntry]:
-        """Return visible rows with Hermes-touched files promoted first."""
+        """Return visible rows: hermes-touched first, then modified/staged, then untracked."""
 
         return sorted(
             self._entries.values(),
             key=lambda e: (
                 0 if e.hermes_touched else 1,
                 -e.last_write if e.hermes_touched else 0.0,
+                2 if e.git_untracked else 1,
                 e.rel_path,
             ),
         )

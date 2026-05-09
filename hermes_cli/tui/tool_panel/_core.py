@@ -159,14 +159,13 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
     DEFAULT_CSS = """
     ToolPanel { height: auto; layout: vertical; }
     ToolPanel FooterPane.has-actions > .action-row { display: none; }
-    ToolPanel:focus FooterPane.has-actions > .action-row { display: block; }
-    ToolPanel.--browsed FooterPane.has-actions > .action-row { display: block; }
-    ToolPanel.--expanded FooterPane.has-actions > .action-row { display: block; }
     ToolPanel StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: none; }
     ToolPanel:focus StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
-    ToolPanel.--browsed StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
-    ToolPanel.--expanded StreamingToolBlock.--compact-success ToolBodyContainer.expanded { display: block; }
     """
+    # TBV-FF-H1: --browsed and --expanded CSS rules removed — those classes are never set
+    # in Python code (dead rules).
+    # TBV-FF-H2: ToolPanel:focus .action-row rule removed — subsumed by
+    # ToolPanel:focus-within in hermes.tcss:921 (which is the sole surviving gate).
     _content_type: str = "tool"
     can_focus = True
 
@@ -295,6 +294,12 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
     def toggle(self) -> None:
         """Delegate browse-mode toggle to action_toggle_collapse."""
         self.action_toggle_collapse()
+
+    def on_focus(self) -> None:
+        _log.debug("TBV-FF-H1: ToolPanel %s gained focus", id(self))
+
+    def on_blur(self) -> None:
+        _log.debug("TBV-FF-H1: ToolPanel %s lost focus", id(self))
 
     def on_mount(self) -> None:
         from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS

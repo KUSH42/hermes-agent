@@ -2024,3 +2024,91 @@ class TestIL13NoDeadYKey:
         assert all("/tests" not in r for r in roots)
         assert all("/services" not in r for r in roots)
         assert all("/cli" not in r for r in roots)
+
+
+# IL-FOOTER-1 (TBV-FF-M1): action-row display:block gate consolidation
+# -----------------------------------------------------------------
+# IL-FOOTER-1a: no .action-row display:block in tool_panel/ Python.
+# IL-FOOTER-1b: hermes.tcss has exactly one such rule and uses :focus-within.
+# IL-FOOTER-1c: no add_class(--browsed|--expanded) anywhere in tui/.
+
+_TOOL_PANEL_DIR = _TUI_ROOT / "tool_panel"
+_HERMES_TCSS = _TUI_ROOT / "hermes.tcss"
+
+
+class TestILFooter1ActionRowGate:
+    """IL-FOOTER-1 — .action-row display:block must live exclusively in hermes.tcss
+    as a single :focus-within rule; dead CSS class mutations must not exist.
+
+    Spec: /home/xush/.hermes/spec_tbv_footer_focus_gate.md §TBV-FF-M1
+    """
+
+    _ACTION_ROW_BLOCK = re.compile(
+        r'FooterPane\.has-actions\s*>\s*\.action-row\s*\{\s*display:\s*block'
+    )
+    _DEAD_CLASS_MUTATION = re.compile(r'add_class\(.*--(browsed|expanded)')
+
+    def test_il_footer_1a_no_action_row_rule_in_tool_panel_python(self):
+        """IL-FOOTER-1a: no .action-row display:block rule in Python files under tool_panel/."""
+        offenders = []
+        for py_file in _TOOL_PANEL_DIR.rglob("*.py"):
+            for n, line in enumerate(py_file.read_text(errors="replace").splitlines(), 1):
+                if self._ACTION_ROW_BLOCK.search(line):
+                    offenders.append(f"{py_file.relative_to(_REPO_ROOT)}:{n}")
+        assert offenders == [], (
+            "IL-FOOTER-1a: .action-row display:block must live only in hermes.tcss. "
+            f"Offenders: {offenders}"
+        )
+
+    def test_il_footer_1b_single_action_row_rule_in_hermes_tcss(self):
+        """IL-FOOTER-1b: hermes.tcss has exactly one .action-row display:block; it uses :focus-within."""
+        tcss_text = _HERMES_TCSS.read_text(errors="replace")
+        matching = [
+            line.strip()
+            for line in tcss_text.splitlines()
+            if self._ACTION_ROW_BLOCK.search(line)
+        ]
+        assert len(matching) == 1, (
+            f"IL-FOOTER-1b: expected exactly 1 .action-row display:block in hermes.tcss, "
+            f"found {len(matching)}: {matching}"
+        )
+        assert ":focus-within" in matching[0], (
+            f"IL-FOOTER-1b: the sole rule must use :focus-within; found: {matching[0]}"
+        )
+
+    def test_il_footer_1c_no_dead_class_mutations(self):
+        """IL-FOOTER-1c: no add_class(--browsed|--expanded) anywhere under tui/."""
+        offenders = []
+        for py_file in _TUI_ROOT.rglob("*.py"):
+            for n, line in enumerate(py_file.read_text(errors="replace").splitlines(), 1):
+                if self._DEAD_CLASS_MUTATION.search(line):
+                    offenders.append(f"{py_file.relative_to(_REPO_ROOT)}:{n}: {line.strip()}")
+        assert offenders == [], (
+            "IL-FOOTER-1c: dead --browsed/--expanded class mutations found:\n"
+            + "\n".join(offenders)
+        )
+
+
+class TestILChip1:
+    """IL-CHIP-1: No chip-build site outside chip_format.py may use bracket notation
+    f"[{identifier}] label" for key labelling."""
+
+    _PATTERN = re.compile(r'\[\{[A-Za-z_][A-Za-z0-9_.]*\}\]\s')
+    _EXEMPT = {"chip_format.py"}
+
+    def test_il_chip_1_no_bracket_hotkey_format(self):
+        violations = []
+        for p in _TUI_ROOT.rglob("*.py"):
+            if p.name in self._EXEMPT:
+                continue
+            text = p.read_text(encoding="utf-8")
+            for m in self._PATTERN.finditer(text):
+                line_no = text[: m.start()].count("\n") + 1
+                violations.append(f"{p.relative_to(_REPO_ROOT)}:{line_no}")
+        assert violations == [], (
+            f"IL-CHIP-1: bracket-notation chip build outside chip_format.py: {violations}"
+        )
+
+    def test_il_chip_1_self_test(self):
+        """Regex must catch the known anti-pattern."""
+        assert self._PATTERN.search("[{action.hotkey}] foo") is not None

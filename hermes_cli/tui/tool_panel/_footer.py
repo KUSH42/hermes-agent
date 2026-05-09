@@ -110,6 +110,8 @@ def _get_collapsed_actions(category: "object") -> "list[tuple[str, str]]":
 class _CollapsedActionStrip(Static):
     """One-line action strip shown below header when panel is collapsed+focused."""
 
+    can_focus = False  # TBV-FF-H1: must never receive keyboard focus — would trigger :focus-within on parent ToolPanel
+
     DEFAULT_CSS = """
     _CollapsedActionStrip {
         display: none;
@@ -635,7 +637,8 @@ class FooterPane(Widget):
             return
         buttons = []
         for action in filtered:
-            label = RichText(f"[{action.hotkey}] {action.label}", no_wrap=True)
+            from hermes_cli.tui.services.chip_format import format_chip as _fc
+            label = RichText(_fc(action.hotkey, action.label), no_wrap=True)
             cls = "--action-chip"
             if action.kind in _RECOVERY_KINDS:
                 cls += " --recovery-action"

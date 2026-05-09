@@ -2188,6 +2188,16 @@ class HermesApp(App):
         except NoMatches:
             pass
 
+    def on_completion_overlay__auto_dismiss_bubble(self, ev: "object") -> None:
+        """Route auto-dismiss from CompletionOverlay up to HermesInput.
+
+        CompletionOverlay is mounted at screen level (not inside HermesInput), so
+        _AutoDismissBubble cannot bubble through HermesInput directly. The App is
+        the first common ancestor that can receive and re-dispatch the dismiss.
+        """
+        ev.stop()  # type: ignore[attr-defined]
+        self._hide_completion_overlay_if_present()
+
     def action_open_history_search(self) -> None:
         """Open (or close) the history search overlay."""
         from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO

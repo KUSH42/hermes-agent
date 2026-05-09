@@ -25,6 +25,12 @@ class _InterruptApp(App):
     def compose(self) -> ComposeResult:
         yield InterruptOverlay(id="io")
 
+    def push_modal(self, overlay: object) -> None:  # arbiter stub — no-op in tests
+        pass
+
+    def pop_modal(self, overlay: object) -> None:  # arbiter stub — no-op in tests
+        pass
+
 
 # ── OVERLAY-1: No unwired option buttons ─────────────────────────────────────
 

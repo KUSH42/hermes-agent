@@ -239,6 +239,9 @@ class TestLayoutRouting:
         assert result is True
         svc.handle_layout_command.assert_called_once_with("")
 
-    def test_layout_in_known_slash_commands(self) -> None:
-        from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS
-        assert "/layout" in KNOWN_SLASH_COMMANDS
+    def test_layout_handled_by_commands_service(self) -> None:
+        # /layout is handled inline in CommandsService.handle_tui_command
+        # and is NOT registered in COMMAND_REGISTRY / KNOWN_SLASH_COMMANDS.
+        # Verify the handler method exists instead.
+        from hermes_cli.tui.services.commands import CommandsService
+        assert callable(getattr(CommandsService, "handle_layout_command", None))

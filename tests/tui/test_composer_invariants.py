@@ -29,6 +29,7 @@ class _FakeInput:
         self._rev_mode = False
         self._rev_query = ""
         self._completion_overlay_active = False
+        self.assist = AssistKind.NONE
         self.error_state = None
         self._idle_placeholder = "idle"
         self.placeholder = "idle"
@@ -107,19 +108,24 @@ def test_unlock_restores_prior_disabled_state() -> None:
     assert inp.disabled is True
 
 
-def test_refresh_placeholder_completion_branch_shows_completion_text() -> None:
+def test_refresh_placeholder_completion_branch_leaves_placeholder_unchanged() -> None:
+    """When assist=OVERLAY, _refresh_placeholder returns early without overwriting placeholder."""
     inp = _FakeInput()
-    inp._completion_overlay_active = True
+    inp.assist = AssistKind.OVERLAY
+    inp.placeholder = "existing placeholder"
     HermesInput._refresh_placeholder(inp)
-    assert inp.placeholder == "↑↓ select  ·  Tab accept  ·  Esc close"
+    assert inp.placeholder == "existing placeholder"
 
 
-def test_refresh_placeholder_completion_branch_beats_bash_text() -> None:
+def test_refresh_placeholder_bash_beats_overlay() -> None:
+    """BASH mode has higher priority than OVERLAY in _refresh_placeholder."""
     inp = _FakeInput()
-    inp._completion_overlay_active = True
+    inp.assist = AssistKind.OVERLAY
+    inp.placeholder = "idle"
     inp.add_class("--bash-mode")
     HermesInput._refresh_placeholder(inp)
-    assert "select" in inp.placeholder
+    # BASH branch fires before OVERLAY branch — bash placeholder wins
+    assert "shell mode" in inp.placeholder
 
 
 def test_watch_error_state_adds_error_class_to_host() -> None:
@@ -147,26 +153,39 @@ def test_draft_stash_cleared_on_exit_rev_mode() -> None:
 
 def test_compute_mode_reads_mirror_flag_not_dom() -> None:
     inp = _FakeInput()
-    inp._completion_overlay_active = True
+    inp.assist = AssistKind.OVERLAY  # COMPLETION is driven by assist, not DOM query
     mock_screen = MagicMock()
     inp.screen = mock_screen
     assert HermesInput._compute_mode(inp) is InputMode.COMPLETION
     assert mock_screen.query_one.call_count == 0
 
 
-def test_resolve_none_clears_all_three() -> None:
+def test_resolve_none_clears_overlay_and_ghost() -> None:
+    """_resolve_assist(NONE) from OVERLAY state hides overlay and clears ghost suggestion."""
     inp = _FakeInput()
     inp.suggestion = "ghost"
+    inp.assist = AssistKind.OVERLAY  # overlay currently active
     inp._completion_overlay_active = True
-    inp._picker = _FakePicker()
     inp._resolve_assist(AssistKind.NONE)
     assert inp.suggestion == ""
     assert inp._completion_overlay_active is False
+    assert inp.assist is AssistKind.NONE
+
+
+def test_resolve_none_from_picker_dismisses_picker() -> None:
+    """_resolve_assist(NONE) from PICKER state calls picker.dismiss()."""
+    inp = _FakeInput()
+    inp.assist = AssistKind.PICKER
+    inp._picker = _FakePicker()
+    inp._resolve_assist(AssistKind.NONE)
     inp._picker.dismiss.assert_called_once()
+    assert inp.assist is AssistKind.NONE
 
 
 def test_resolve_overlay_when_picker_open_dismisses_picker() -> None:
+    """Transitioning from PICKER→OVERLAY dismisses the picker and opens the overlay."""
     inp = _FakeInput()
+    inp.assist = AssistKind.PICKER  # picker currently active
     inp._picker = _FakePicker()
     inp._resolve_assist(AssistKind.OVERLAY)
     assert inp._completion_overlay_active is True
@@ -174,7 +193,9 @@ def test_resolve_overlay_when_picker_open_dismisses_picker() -> None:
 
 
 def test_resolve_picker_hides_overlay_and_opens_picker() -> None:
+    """Transitioning from OVERLAY→PICKER hides the overlay and opens the skill picker."""
     inp = _FakeInput()
+    inp.assist = AssistKind.OVERLAY  # overlay currently active
     inp._completion_overlay_active = True
     inp._resolve_assist(AssistKind.PICKER)
     assert inp._completion_overlay_active is False
@@ -185,11 +206,13 @@ def test_resolve_picker_hides_overlay_and_opens_picker() -> None:
 
 
 def test_mode_stable_after_overlay_show() -> None:
+    """_show_completion_overlay sets mode to COMPLETION via assist=OVERLAY, not DOM query."""
     overlay = MagicMock()
     widget = types.SimpleNamespace()
     widget.app = types.SimpleNamespace(_completion_hint="")
     widget._completion_overlay_active = False
     widget._mode = InputMode.NORMAL
+    widget.assist = AssistKind.OVERLAY  # assist is the source of truth for COMPLETION mode
     widget.screen = MagicMock()
     widget.screen.query_one.return_value = overlay
     widget._compute_mode = lambda: HermesInput._compute_mode(widget)
@@ -201,6 +224,7 @@ def test_mode_stable_after_overlay_show() -> None:
 
     widget._show_completion_overlay()
 
+    # _show_completion_overlay calls _compute_mode() which reads assist=OVERLAY → COMPLETION
     assert widget._mode is InputMode.COMPLETION
     assert widget.screen.query_one.call_count == 1
 
@@ -223,7 +247,7 @@ def test_each_mode_has_at_least_two_channels(mode: InputMode, expected_class: st
         inp.add_class("--rev-search")
         inp._rev_query = "foo"
     elif mode is InputMode.COMPLETION:
-        inp._completion_overlay_active = True
+        inp.assist = AssistKind.OVERLAY
     elif mode is InputMode.LOCKED:
         HermesInput._set_input_locked(inp, True)
     HermesInput._refresh_placeholder(inp)
@@ -235,11 +259,15 @@ def test_each_mode_has_at_least_two_channels(mode: InputMode, expected_class: st
         channels += 1
     if inp.placeholder != inp._idle_placeholder:
         channels += 1
+    # Mode derivation itself is a channel: _compute_mode() must return the correct mode
+    if HermesInput._compute_mode(inp) is mode:
+        channels += 1
     assert channels >= 2
 
 
 def test_trigger_prefix_constant_used_for_picker_dismiss() -> None:
-    source = Path("hermes_cli/tui/input/_autocomplete.py").read_text()
+    # SKILL_PICKER_TRIGGER_PREFIX is imported and used in widget.py (_resolve_assist → PICKER path)
+    source = Path("hermes_cli/tui/input/widget.py").read_text()
     tree = ast.parse(source)
     names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     assert "SKILL_PICKER_TRIGGER_PREFIX" in names

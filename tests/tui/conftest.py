@@ -16,6 +16,31 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _inject_missing_css_var_defaults():
+    """Inject CSS variable fallbacks that skins provide but COMPONENT_VAR_DEFAULTS omits.
+
+    ``$user-accent`` is defined in every bundled skin's DESIGN.md but is not
+    listed in COMPONENT_VAR_DEFAULTS, so test runs that never load a skin leave
+    it unresolved.  Textual raises UnresolvedVariableError when a DEFAULT_CSS
+    string references an undefined ``$`` variable, crashing any test that
+    mounts ``UserMessagePanel`` (which uses ``border-left: vkey $user-accent``).
+
+    This fixture patches the dict in-place before each test so the fallback is
+    visible to ``_defaults_as_strs()`` → ``HermesApp.get_css_variables()``.
+    """
+    try:
+        import hermes_cli.tui.theme_manager as _tm
+        _orig = _tm.COMPONENT_VAR_DEFAULTS
+        if "user-accent" not in _orig:
+            _tm.COMPONENT_VAR_DEFAULTS = {**_orig, "user-accent": "#888888"}
+        yield
+        _tm.COMPONENT_VAR_DEFAULTS = _orig
+    except Exception:
+        # Module not importable in this environment; no-op.
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _disable_tte_cache_for_tui_tests():
     """Disable TTE disk cache reads for all TUI tests.
 

@@ -187,6 +187,20 @@ def _hex_luminance(hex6: str) -> float:
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
+def _hero_gradient_direction() -> str:
+    """Return the active skin's TTE final_gradient_direction name, or 'RADIAL'."""
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        tte = get_active_skin().get_startup_tte() or {}
+        params = tte.get("params") or {}
+        d = params.get("final_gradient_direction")
+        if isinstance(d, str) and d.strip():
+            return d.strip().upper()
+    except Exception:
+        pass
+    return "RADIAL"
+
+
 def _hero_gradient_stops() -> list[str] | None:
     """Return active skin's TTE final_gradient_stops for hero coloring (mirror tail
     trimmed so the hero ramp stays monotonic), or None."""
@@ -274,24 +288,38 @@ def render_banner_hero_text(markup_hero: str) -> Text:
         else:
             row_extents.append((0, 0))
 
+    direction = _hero_gradient_direction() if stops is not None else "RADIAL"
+    # Pre-compute sequential index denominator for DIAGONAL/RADIAL (matches
+    # cli.py _hero_ansi_with_stops so the static banner gradient is identical
+    # to the TTE settle frame — eliminating the post-TTE color snap).
+    _seq_total = sum(len(ln.plain) for ln in lines) or 1
+    _seq_idx = 0
+
     out = Text()
     for i, line in enumerate(lines):
         if line.style or line.spans:
+            _seq_idx += len(line.plain)
             out.append_text(line)
         elif stops is not None:
             plain = line.plain
             col_lo, col_hi = row_extents[i]
             col_span = max(col_hi - col_lo, 1)
             for j, ch in enumerate(plain):
+                cur_idx = _seq_idx + j
+                if direction == "VERTICAL":
+                    t = (i - row_top) / row_span if row_span > 0 else 0.0
+                    t = max(0.0, min(1.0, t))
+                elif direction == "HORIZONTAL":
+                    tx = (j - col_lo) / col_span if col_span > 0 else 0.0
+                    t = max(0.0, min(1.0, tx))
+                else:
+                    # DIAGONAL / RADIAL — sequential char index matching cli.py
+                    t = cur_idx / (_seq_total - 1) if _seq_total > 1 else 0.0
                 if _is_blank_glyph(ch):
                     out.append(ch)
                     continue
-                ty = (i - row_top) / row_span if row_span > 0 else 0.0
-                tx = (j - col_lo) / col_span if col_span > 0 else 0.0
-                ty = max(0.0, min(1.0, ty))
-                tx = max(0.0, min(1.0, tx))
-                t = 0.5 * ty + 0.5 * tx
                 out.append(ch, style=_interp_stops(stops, t))
+            _seq_idx += len(plain)
         else:
             if n <= 1:
                 color = accent
@@ -339,16 +367,25 @@ def render_banner_logo_text(markup_logo: str) -> Text:
     width = max((len(l) for l in lines), default=1) or 1
 
     if stops is not None:
+        direction = _hero_gradient_direction()
+        _seq_total = sum(len(ln) for ln in lines) or 1
+        _seq_idx = 0
         out = Text()
         for i, line in enumerate(lines):
             for j, ch in enumerate(line):
+                cur_idx = _seq_idx + j
+                if direction == "VERTICAL":
+                    t = i / (n - 1) if n > 1 else 0.0
+                elif direction == "HORIZONTAL":
+                    t = j / (width - 1) if width > 1 else 0.0
+                else:
+                    # DIAGONAL / RADIAL — sequential char index
+                    t = cur_idx / (_seq_total - 1) if _seq_total > 1 else 0.0
                 if ch == " " or ch == "⠀":
                     out.append(ch)
                     continue
-                ty = i / (n - 1) if n > 1 else 0.0
-                tx = j / (width - 1) if width > 1 else 0.0
-                t = 0.5 * ty + 0.5 * tx
                 out.append(ch, style=f"bold {_interp_stops(stops, t)}")
+            _seq_idx += len(line)
             if i < n - 1:
                 out.append("\n")
         return out

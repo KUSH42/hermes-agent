@@ -88,6 +88,8 @@ class OutputPanel(ScrollableContainer):
         self._turn_raw_output: str = ""
         # RZ-OP-H2: cache last seen (w, h) to gate _resolve_layout on layout-relevant change.
         self._last_resize_geom: tuple[int, int] = (-1, -1)
+        # VFD-D1: geom-keyed gate so underfill warning fires at most once per resize key.
+        self._underfill_logged_for_geom: tuple[int, int] | None = None
 
     @property
     def _user_scrolled_up(self) -> bool:
@@ -543,6 +545,7 @@ class OutputPanel(ScrollableContainer):
         if new_w != last_w or new_h != last_h:
             self._resolve_layout()
             self._last_resize_geom = (new_w, new_h)
+            self._check_underfill()  # VFD-D1
         # Set startup banner width on first resize (size.width is 0 at on_mount in Textual 8.x).
         if not OUTPUT_PANEL_WIDTH_READY.is_set():
             try:
@@ -570,6 +573,54 @@ class OutputPanel(ScrollableContainer):
                 new_vh = getattr(getattr(panel, "virtual_size", None), "height", 0)
                 panel.scroll_y = int(f * new_vh)
             self.call_after_refresh(_restore_frac)
+
+
+    def _check_underfill(self) -> None:
+        """VFD-D1: emit a structured WARNING when the viewport is underfilled.
+
+        Underfill = visible message widgets occupy <50% of the viewport height
+        while there is at least one MessagePanel in the DOM and the scroll state
+        is not PINNED (ANCHORED or JUMPED means content should fill the visible
+        area or scroll naturally).
+
+        The gate fires at most once per (width, height) resize key to prevent
+        log spam during rapid window drags.
+        """
+        from hermes_cli.tui.widgets.message_panel import MessagePanel
+
+        if self.scroll_state == ScrollState.PINNED:
+            return
+
+        panels = list(self.query(MessagePanel))
+        if not panels:
+            return  # No turns yet; nothing to diagnose.
+
+        total_widget_height = sum(
+            getattr(getattr(w, "region", None), "height", 0) for w in panels
+        )
+        viewport_h = max(getattr(self.size, "height", 0), 1)
+        fill_ratio = total_widget_height / viewport_h
+
+        if fill_ratio >= 0.5:
+            return
+
+        geom_key = self._last_resize_geom
+        if geom_key == self._underfill_logged_for_geom:
+            return  # Already logged for this geometry; suppress duplicate.
+
+        _log.warning(
+            "viewport underfill: fill_ratio=%.2f viewport_h=%d total_widget_h=%d "
+            "message_panels=%d scroll_state=%s last_resize_geom=%r",
+            fill_ratio, viewport_h, total_widget_height, len(panels),
+            self.scroll_state, self._last_resize_geom,
+        )
+        for w in panels[-10:]:
+            _log.warning(
+                "  underfill widget: %s h=%d",
+                type(w).__name__,
+                getattr(getattr(w, "region", None), "height", 0),
+            )
+        self._underfill_logged_for_geom = geom_key
 
 
 def _clear_thinking_reserve(tw) -> None:

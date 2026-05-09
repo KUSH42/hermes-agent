@@ -892,7 +892,6 @@ class ResponseFlowEngine:
                     "[STREAM-BUF] orphan-CSI suppressed: len=%d → %d",
                     len(self._partial), len(clean),
                 )
-                self._partial = clean  # keep _partial in sync so flush() sees the cleaned version
             if clean:
                 self._route_partial(clean)
 

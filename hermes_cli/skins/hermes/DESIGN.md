@@ -35,6 +35,25 @@ x-hermes:
         - '#FFBF00'
         - '#CD7F32'
         - '#B8860B'
+      noise_colors:
+        - '#1e1e1f'
+        - '#3c3b3d'
+        - '#4a3200'
+        - '#8B6914'
+        - '#B8860B'
+        - '#CD7F32'
+      glitch_line_colors:
+        - '#FFD700'
+        - '#FFBF00'
+        - '#CD7F32'
+        - '#B8860B'
+        - '#FFD700'
+      glitch_wave_colors:
+        - '#FFD700'
+        - '#FFBF00'
+        - '#CD7F32'
+        - '#B8860B'
+        - '#FFD700'
   logo_startup_tte:
     effect: highlight
   schema: 1

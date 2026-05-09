@@ -110,6 +110,7 @@ class InlineProseLog(CopyableRichLog):
         shrink: bool = True,
         scroll_end: "bool | None" = None,
         animate: bool = False,
+        link: "str | None" = None,
         *,
         _deferred: bool = False,
     ) -> "InlineProseLog":
@@ -123,6 +124,7 @@ class InlineProseLog(CopyableRichLog):
             shrink=shrink,
             scroll_end=scroll_end,
             animate=animate,
+            link=link,
             _deferred=_deferred,
         )
         after = len(self.lines)

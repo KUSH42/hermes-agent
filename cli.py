@@ -4182,12 +4182,12 @@ class HermesCLI:
                     base_url, _source,
                 )
             else:
-                print("\n⚠️  Provider resolver returned an empty API key. "
-                      "Set OPENROUTER_API_KEY or run: hermes setup")
+                _cprint("\n⚠️  Provider resolver returned an empty API key. "
+                        "Set OPENROUTER_API_KEY or run: hermes setup")
                 return False
         if not isinstance(base_url, str) or not base_url:
-            print("\n⚠️  Provider resolver returned an empty base URL. "
-                  "Check your provider config or run: hermes setup")
+            _cprint("\n⚠️  Provider resolver returned an empty base URL. "
+                    "Check your provider config or run: hermes setup")
             return False
 
         credentials_changed = api_key != self.api_key or base_url != self.base_url
@@ -4902,18 +4902,29 @@ class HermesCLI:
         except Exception:
             skin_name = "default"
 
-        _geo_key = geo_cache_key(panel_w, skin_name, wide_layout, tall_layout)
+        # Resolve logo TTE state early — needed for cache key and template rendering.
+        _logo_tte_cfg = self._get_startup_logo_tte_config()
+        _use_logo_placeholder = isinstance(_logo_tte_cfg, _StartupTteConfig)
+
+        _geo_key = geo_cache_key(panel_w, skin_name, wide_layout, tall_layout,
+                                  logo_tte_active=_use_logo_placeholder)
         cached_geo = load_geo(_geo_key)
 
-        # Compute logo placeholder dimensions from the plain logo text.
+        # Compute logo placeholder dimensions — only used when logo TTE is active.
+        # When logo TTE is disabled, pass logo_text=None so the real logo renders
+        # in the template directly (placeholder chars would never be replaced).
         from hermes_cli.banner import resolve_banner_logo_assets
         _, plain_logo = resolve_banner_logo_assets()
         logo_lines_raw = plain_logo.splitlines() or [plain_logo]
         logo_width = max((_cell_len(ln) for ln in logo_lines_raw), default=1)
         logo_height = len(logo_lines_raw)
-        logo_placeholder_lines = [_STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER * logo_width
-                                   for _ in range(logo_height)]
-        logo_placeholder_text = "\n".join(logo_placeholder_lines)
+        if _use_logo_placeholder:
+            logo_placeholder_lines = [_STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER * logo_width
+                                       for _ in range(logo_height)]
+            logo_placeholder_text = "\n".join(logo_placeholder_lines)
+        else:
+            logo_placeholder_lines = []
+            logo_placeholder_text = None
 
         # Always render the template (needed for TTE background lines).
         placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in range(hero_height)]
@@ -13225,7 +13236,7 @@ class HermesCLI:
             return response
             
         except Exception as e:
-            print(f"Error: {e}")
+            _cprint(f"Error: {e}")
             return None
         finally:
             # Ensure streaming TTS resources are cleaned up even on error.
@@ -15460,8 +15471,8 @@ class HermesCLI:
                             pass  # Non-fatal — don't break the main loop
 
                 except Exception as e:
-                    print(f"Error: {e}")
-        
+                    _cprint(f"Error: {e}")
+
         # Start processing thread
         process_thread = threading.Thread(target=process_loop, daemon=True)
         process_thread.start()

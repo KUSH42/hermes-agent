@@ -57,8 +57,13 @@ class _FakeRichText:
         return [_FakeLine(line) for line in self._lines]
 
 
-def _make_template_stub(monkeypatch, tmp_path):
-    """Minimal HermesCLI stub for _build_startup_banner_template tests."""
+def _make_template_stub(monkeypatch, tmp_path, logo_tte_active: bool = True):
+    """Minimal HermesCLI stub for _build_startup_banner_template tests.
+
+    logo_tte_active: when True (default), _get_startup_logo_tte_config returns
+    a _StartupTteConfig so the logo placeholder is embedded in the template.
+    Pass False to test the disabled path (logo_row == None).
+    """
     monkeypatch.setattr(cli_mod, "_hermes_app", None)
     monkeypatch.setattr(cli_mod, "_STARTUP_BANNER_PLACEHOLDER_MARKER", _HERO_MARKER)
     monkeypatch.setattr(cli_mod, "_STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER", _LOGO_MARKER)
@@ -66,6 +71,12 @@ def _make_template_stub(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     monkeypatch.delenv("HERMES_NO_CACHE", raising=False)
     stub = object.__new__(cli_mod.HermesCLI)
+    if logo_tte_active:
+        _cfg = cli_mod._StartupTteConfig(effect_name="highlight", params={},
+                                          max_wall_s=5.0, max_frames=300, fps=60)
+        stub._get_startup_logo_tte_config = lambda: _cfg
+    else:
+        stub._get_startup_logo_tte_config = lambda: None
     return stub
 
 

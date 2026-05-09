@@ -9,7 +9,7 @@ import hashlib, json, logging, os
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
-_GEO_CACHE_FORMAT_VER = 3  # bumped: print_logo re-enabled; cached hero_row offsets now include logo rows
+_GEO_CACHE_FORMAT_VER = 4  # bumped: logo_tte_active included in cache key
 
 
 def is_cache_disabled() -> bool:
@@ -30,11 +30,13 @@ def geo_cache_key(
     skin_name: str,
     wide_layout: bool,
     tall_layout: bool,
+    logo_tte_active: bool = False,
 ) -> str:
     """Compute a 12-hex-char cache key from layout inputs.
 
     wide_layout: term_width >= 95 (logo/wordmark prints)
     tall_layout: term_rows >= 32  (full block-letter logo, not wordmark)
+    logo_tte_active: whether logo TTE placeholder is embedded in the template
     These must mirror the gate in hermes_cli/banner.py build_welcome_banner.
     """
     blob = "\x00".join([
@@ -43,6 +45,7 @@ def geo_cache_key(
         skin_name.strip().lower(),
         "1" if wide_layout else "0",
         "1" if tall_layout else "0",
+        "1" if logo_tte_active else "0",
     ])
     return hashlib.sha1(blob.encode()).hexdigest()[:12]
 

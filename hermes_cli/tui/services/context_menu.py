@@ -438,4 +438,78 @@ class ContextMenuService(AppService):
                             widget,
                             exc_info=True,
                         )
+                elif widget.has_class("--modal"):
+                    # Stale stack entry: widget is not visible but still registered.
+                    # Pop it from the stack and strip the CSS class so HermesInput
+                    # can receive focus again. This heals entries left by prior bugs
+                    # (e.g. dismiss_all_info_overlays using remove_class instead of
+                    # dismiss_overlay) without needing an app restart.
+                    _log.warning(
+                        "dismiss_all_info_overlays: stale --modal entry %r (not visible); "
+                        "healing modal stack",
+                        widget,
+                    )
+                    try:
+                        widget.dismiss_overlay()
+                    except Exception:
+                        # Fallback: at minimum strip the CSS and pop the stack directly
+                        _log.debug(
+                            "dismiss_all_info_overlays: dismiss_overlay() failed for stale %r",
+                            widget,
+                            exc_info=True,
+                        )
+                        try:
+                            widget.remove_class("--modal")
+                        except Exception:
+                            pass
+                        try:
+                            app.pop_modal(widget)
+                        except Exception:
+                            pass
         app._sync_workspace_polling_state()
+
+    def heal_stale_modal_entries(self) -> None:
+        """Pop non-visible overlays that are stuck in the modal stack.
+
+        Called after agent stop so HermesInput can receive focus even when a
+        prior overlay was dismissed via remove_class (not dismiss_overlay) and
+        left a stale entry in _modal_stack.
+        """
+        from hermes_cli.tui.overlays import (
+            CommandsOverlay, ConfigOverlay, HelpOverlay, SessionOverlay,
+            UsageOverlay, WorkspaceOverlay,
+            ToolPanelHelpOverlay as _TPHO,
+        )
+        from hermes_cli.tui.context_menu import ContextMenu as _CM
+        app = self.app
+        for cls in (
+            HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
+            SessionOverlay, ConfigOverlay, _TPHO, _CM,
+        ):
+            try:
+                for widget in app.query(cls):
+                    if widget.has_class("--modal") and not widget.has_class("--visible"):
+                        _log.warning(
+                            "heal_stale_modal_entries: stale %r in modal stack; healing",
+                            type(widget).__name__,
+                        )
+                        try:
+                            widget.dismiss_overlay()
+                        except Exception:
+                            _log.debug(
+                                "heal_stale_modal_entries: dismiss_overlay() failed for %r",
+                                widget,
+                                exc_info=True,
+                            )
+                            try:
+                                widget.remove_class("--modal")
+                            except Exception:
+                                pass
+                            try:
+                                app.pop_modal(widget)
+                            except Exception:
+                                pass
+            except Exception:
+                _log.debug(
+                    "heal_stale_modal_entries: query(%s) failed", cls.__name__, exc_info=True
+                )

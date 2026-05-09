@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,14 @@ class ContextMenu(ModalOverlayMixin, Widget):
         )
         # MOD-8: use _capture_focus_caller + push_modal, then add CSS classes
         self._capture_focus_caller()  # record focus caller before stealing focus
+        # Guard: if a prior show() already pushed us (re-entrant call while the async
+        # body was suspended across two rapid right-clicks), pop first so we don't
+        # accumulate duplicate stack entries that can never be fully dismissed.
+        if "--modal" in self.classes:
+            try:
+                self.app.pop_modal(self)
+            except AttributeError:
+                pass
         try:
             self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter
         except AttributeError:
@@ -310,4 +318,10 @@ class ContextMenu(ModalOverlayMixin, Widget):
     def on_blur(self) -> None:
         """Dismiss when focus leaves the menu."""
         self.dismiss()
+
+    def on_key(self, event: Any) -> None:
+        """Dismiss on Escape; consume so it doesn't propagate."""
+        if event.key == "escape":
+            event.stop()
+            self.dismiss()
 

@@ -477,3 +477,30 @@ async def test_paste_into_input_empty_clipboard_shows_hint_without_edit():
 
         assert inp.value == "unchanged"
         assert "clipboard empty" in app.query_one(HintBar).hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_context_menu_show_twice_single_modal_stack_entry():
+    """Two rapid show() calls must not double-push _modal_stack.
+
+    Regression: show() is async; a second call arriving while the first awaits
+    child.remove() would push a second entry, leaving a stale stack entry after
+    one dismiss that permanently blocks HermesInput focus.
+    """
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        menu = app.query_one(ContextMenu)
+        items = [MenuItem("Copy", "", lambda: None)]
+        # Simulate two rapid shows without awaiting the first
+        await menu.show(items, 5, 5)
+        await menu.show(items, 10, 10)
+        await pilot.pause()
+        assert menu.has_class("--modal")
+        assert app._modal_stack.count(menu) == 1, (
+            f"Expected 1 entry, got {app._modal_stack.count(menu)}: {app._modal_stack}"
+        )
+        menu.dismiss()
+        await pilot.pause()
+        assert not menu.has_class("--modal")
+        assert menu not in app._modal_stack

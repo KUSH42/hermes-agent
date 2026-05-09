@@ -153,6 +153,14 @@ class KeyDispatchService(AppService):
                 inp = self.app.query_one(_HI)
                 if inp.has_focus:
                     return  # let w type normally into input
+                _log.warning(
+                    "key 'w' intercepted: inp.has_focus=False focused=%r disabled=%r "
+                    "can_focus=%r modal_stack=%r",
+                    self.app.focused,
+                    inp.disabled,
+                    inp.can_focus,
+                    getattr(self.app, "_modal_stack", []),
+                )
             except NoMatches:
                 pass
             self.app.action_toggle_workspace()

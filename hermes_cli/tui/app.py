@@ -1753,6 +1753,10 @@ class HermesApp(App):
                 # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
                 # untouched and only calls restore() when no flash is active.
                 self.feedback.on_agent_idle()
+                # Heal stale modal stack entries so HermesInput can receive focus.
+                # Non-visible overlays with --modal class are stale; clean them so
+                # call_after_refresh(widget.focus) below actually lands.
+                self._svc_context.heal_stale_modal_entries()
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
         except NoMatches:

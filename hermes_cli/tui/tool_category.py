@@ -503,7 +503,7 @@ _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="patch",              category=_FILE,   primary_arg="path",        primary_result="diff",    streaming=False),
     ToolSpec(name="view",               category=_FILE,   primary_arg="path",        primary_result="lines",   streaming=False),
     ToolSpec(name="terminal",           category=_SHELL,  primary_arg="command",     primary_result="lines",   streaming=True,  render_header=False, terminal_inline=True),
-    ToolSpec(name="bash",               category=_SHELL,  primary_arg="command",     primary_result="lines",   streaming=True),
+    ToolSpec(name="bash",               category=_SHELL,  primary_arg="command",     primary_result="lines",   streaming=True,  render_header=True),
     ToolSpec(name="execute_code",       category=_CODE,   primary_arg="code",        primary_result="lines",   streaming=True),
     ToolSpec(name="web_search",         category=_SEARCH, primary_arg="query",       primary_result="results", streaming=False),
     ToolSpec(name="search_files",       category=_SEARCH, primary_arg="query",       primary_result="matches", streaming=True),

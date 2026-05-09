@@ -92,10 +92,13 @@ _ASSIGN_LIKE_RE = re.compile(r'^\s*\w+\s*=\s*\S')
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state
 _FOOTNOTE_DEF_RE = re.compile(r'^\s*\[\^(\d{1,4})\]:\s*(.*)')
 
-# Citation tag: [CITE:N Title \u2014 https://url] — suppress and collect
+# Citation tag: [CITE:N Title — https://url] — suppress and collect
+# Also accepts ': https://' (colon separator) for model variants that omit the em-dash.
 _CITE_RE = re.compile(
-    r'^\[CITE:(\d{1,4})\s+(.+?)\s+\u2014\s+(https?://\S+)\]$'
+    r'^\[CITE:(\d{1,4})\s+(.+?)(?:\s+\u2014\s+|:\s+)(https?://\S+)\]$'
 )
+# Detects the opening of a multi-line CITE block.
+_CITE_OPEN_RE = re.compile(r'^\[CITE:\d{1,4}\s+')
 
 # Block math delimiters — checked BEFORE fence detection to avoid $$ colliding with _FENCE_OPEN_RE
 _BLOCK_MATH_OPEN_RE = re.compile(
@@ -639,6 +642,7 @@ class ResponseFlowEngine:
         self._code_fence_buffer: list[str] = []
         self._clf: _LineClassifier = _LineClassifier()
         self._dropped_citation_count: int = 0
+        self._cite_partial_buf: "list[str] | None" = None  # buffer for multi-line [CITE:…] blocks
 
     def _reset_fence_state(self) -> None:
         """Drop fence-timer + per-fence config. Idempotent. Safe from any state."""
@@ -770,22 +774,74 @@ class ResponseFlowEngine:
         self._footnote_def_open = None
         return False
 
+    def _collect_cite(self, n: int, title: str, url: str) -> None:
+        """Add a parsed citation entry to the collection."""
+        if n not in self._cite_entries and len(self._cite_entries) >= _MAX_CITATIONS:
+            _log.warning(
+                "citation buffer cap (%d entries) reached; dropping citation %d",
+                _MAX_CITATIONS, n,
+            )
+            self._dropped_citation_count += 1
+            return
+        self._cite_entries[n] = (title, url)
+        if n not in self._cite_order:
+            self._cite_order.append(n)
+
+    def _render_cite_dim(self, text: str) -> None:
+        """Render an unparseable CITE block as dim prose so it doesn't vanish silently."""
+        from rich.text import Text as RichText
+        self._sync_prose_log()
+        plain = text
+        rt = RichText(text, style="dim")
+        self._write_prose(rt, plain)
+
+    def _drain_cite_partial(self) -> None:
+        """Flush any buffered partial CITE block (e.g. at turn end) as dim text."""
+        if self._cite_partial_buf is not None:
+            self._render_cite_dim(" ".join(self._cite_partial_buf))
+            self._cite_partial_buf = None
+
     def _handle_citation_line(self, raw: str) -> bool:
-        """Collect a citation tag line. Returns True if consumed."""
+        """Collect a citation tag line. Returns True if consumed.
+
+        Handles multi-line CITE blocks: when the model puts the URL on the next
+        line we buffer up to 3 lines before giving up and rendering dim.
+        """
+        stripped = raw.strip()
+
+        # --- continue a buffered multi-line CITE block ---
+        if self._cite_partial_buf is not None:
+            self._cite_partial_buf.append(stripped)
+            combined = " ".join(self._cite_partial_buf)
+            if stripped.endswith("]"):
+                self._cite_partial_buf = None
+                cite = self._clf.is_citation(combined)
+                if cite is not None:
+                    self._collect_cite(*cite)
+                else:
+                    self._render_cite_dim(combined)
+                return True
+            if len(self._cite_partial_buf) >= 3:
+                # Give up buffering; render what we have as dim
+                self._drain_cite_partial()
+            return True
+
+        # --- single-line fast path ---
         cite = self._clf.is_citation(raw)
         if cite is not None:
-            _n, title, url = cite
-            if _n not in self._cite_entries and len(self._cite_entries) >= _MAX_CITATIONS:
-                _log.warning(
-                    "citation buffer cap (%d entries) reached; dropping citation %d",
-                    _MAX_CITATIONS, _n,
-                )
-                self._dropped_citation_count += 1
-                return True
-            self._cite_entries[_n] = (title, url)
-            if _n not in self._cite_order:
-                self._cite_order.append(_n)
+            self._collect_cite(*cite)
             return True
+
+        # --- start of a multi-line CITE block ---
+        if _CITE_OPEN_RE.match(stripped) and not stripped.endswith("]"):
+            self._cite_partial_buf = [stripped]
+            return True
+
+        # --- complete but unparseable CITE line (e.g. missing URL) ---
+        if stripped.startswith("[CITE:") and stripped.endswith("]"):
+            self._render_cite_dim(stripped)
+            return True
+
         return False
 
     def _dispatch_normal_state(self, raw: str, intro_candidate: bool) -> bool:
@@ -1023,6 +1079,11 @@ class ResponseFlowEngine:
     def _dispatch_prose(self, raw: str, intro_candidate: bool) -> None:
         """Render raw as prose through StreamingBlockBuffer + markdown pipeline."""
         from agent.rich_output import apply_block_line, apply_inline_markdown
+        # CITE lines that slipped past _handle_citation_line (e.g. mid-buffer URL lines)
+        # are rendered dim so they don't appear as bright unstyled text.
+        if raw.strip().startswith("[CITE:"):
+            self._render_cite_dim(raw.strip())
+            return
         if self._math_enabled:
             raw = self._apply_inline_math(raw)
         block_result = self._block_buf.process_line(raw)
@@ -1300,6 +1361,7 @@ class ResponseFlowEngine:
         # Flush any prose pending in StreamingBlockBuffer (setext, tables)
         self._flush_block_buf()
         self._flush_code_fence_buffer()
+        self._drain_cite_partial()  # flush any incomplete buffered CITE block as dim text
         self._render_footnote_section()
         self._footnote_defs.clear()
         self._footnote_order.clear()
@@ -1310,6 +1372,7 @@ class ResponseFlowEngine:
         self._cite_entries.clear()
         self._cite_order.clear()
         self._dropped_citation_count = 0
+        self._cite_partial_buf = None
         self._emitted_media_urls.clear()
         self._emoji_mounts = 0
         self._last_prose_plain = None  # reset per-turn; avoids cross-turn DOUBLE-EMIT false-positives

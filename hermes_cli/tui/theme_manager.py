@@ -738,9 +738,9 @@ class ThemeManager:
         merged = {**self._css_vars, **self._component_vars}
         if __debug__:
             for k, v in merged.items():
-                if isinstance(v, (dict, list, set)):
+                if isinstance(v, (dict, list, set, VarSpec)):
                     raise AssertionError(
-                        f"ThemeManager.css_variables: nested value for {k!r} "
+                        f"ThemeManager.css_variables: non-string value for {k!r} "
                         f"({type(v).__name__}); values must be flat strings — see docstring"
                     )
         return merged

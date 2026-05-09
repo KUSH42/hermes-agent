@@ -811,6 +811,10 @@ class ResponseFlowEngine:
 
         # --- continue a buffered multi-line CITE block ---
         if self._cite_partial_buf is not None:
+            if not stripped:
+                # Blank line terminates the partial block — drain as dim, let blank flow through
+                self._drain_cite_partial()
+                return False
             self._cite_partial_buf.append(stripped)
             combined = " ".join(self._cite_partial_buf)
             if stripped.endswith("]"):
@@ -1082,6 +1086,7 @@ class ResponseFlowEngine:
         # CITE lines that slipped past _handle_citation_line (e.g. mid-buffer URL lines)
         # are rendered dim so they don't appear as bright unstyled text.
         if raw.strip().startswith("[CITE:"):
+            self._flush_block_buf()  # flush any pending blank so it appears before this dim line
             self._render_cite_dim(raw.strip())
             return
         if self._math_enabled:
@@ -1139,6 +1144,7 @@ class ResponseFlowEngine:
                 # _dispatch_normal_state's source-like lookahead, breaking
                 # IN_SOURCE_LIKE detection.
                 self._flush_code_fence_buffer()  # drain before footnote footer
+                self._flush_block_buf()  # flush any pending blank line so it appears before the citation
                 self._drain_pending_source()
                 return
             if self._dispatch_normal_state(raw, intro_candidate):

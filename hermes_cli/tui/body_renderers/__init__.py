@@ -4,7 +4,7 @@ pick_renderer() selects the most appropriate BodyRenderer subclass
 based on ClassificationResult, ToolPayload, phase, and density.
 
 Registry order (most to least specific):
-  Phase C:   BrowserNavigateRenderer, BrowserSnapshotRenderer, DiffRenderer, JsonRenderer, SearchRenderer,
+  Phase C:   BrowserNavigateRenderer, BrowserSnapshotRenderer, DiffRenderer, BrowserConsoleRenderer, JsonRenderer, SearchRenderer,
              TableRenderer, CodeRenderer, LogRenderer, ShellOutputRenderer,
              EmptyStateRenderer, FallbackRenderer
   Streaming: ShellRenderer, StreamingCodeRenderer, FileRenderer,
@@ -48,6 +48,7 @@ from hermes_cli.tui.body_renderers.empty import EmptyStateRenderer
 from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
 from hermes_cli.tui.body_renderers.browser_navigate import BrowserNavigateRenderer
 from hermes_cli.tui.body_renderers.browser_snapshot import BrowserSnapshotRenderer
+from hermes_cli.tui.body_renderers.browser_console import BrowserConsoleRenderer
 
 # Streaming-tier renderers — now BodyRenderer subclasses
 from hermes_cli.tui.body_renderers.streaming import (
@@ -76,6 +77,7 @@ REGISTRY: list[type[BodyRenderer]] = [
     BrowserNavigateRenderer,   # must come before JsonRenderer
     BrowserSnapshotRenderer,   # must come before JsonRenderer
     DiffRenderer,
+    BrowserConsoleRenderer,    # tool_name check; before JsonRenderer
     JsonRenderer,
     SearchRenderer,
     TableRenderer,
@@ -277,6 +279,7 @@ __all__ = [
     "BodyRenderer",
     "BrowserNavigateRenderer",
     "BrowserSnapshotRenderer",
+    "BrowserConsoleRenderer",
     "SearchRenderer",
     "DiffRenderer",
     "JsonRenderer",

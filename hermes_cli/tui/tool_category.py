@@ -527,6 +527,7 @@ _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="browser_back",       category=_WEB, primary_arg=None,   primary_result="status", streaming=False),
     ToolSpec(name="browser_snapshot",   category=_WEB, primary_arg=None,   primary_result="status", streaming=False),
     ToolSpec(name="browser_get_images", category=_WEB, primary_arg=None,   primary_result="status", streaming=False),
+    ToolSpec(name="browser_console",    category=_WEB, primary_arg=None,   primary_result="none",   streaming=False),
 ]
 
 

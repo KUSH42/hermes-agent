@@ -46,15 +46,38 @@ x-hermes:
     max_frames: 360
     params:
       final_gradient_stops:
-        - '#E8915A'
-        - '#D06B3A'
         - '#B8552E'
         - '#9A3520'
         - '#6B1717'
+      laser_gradient_stops:
+        - '#FFB070'
+        - '#DD4A3A'
+      spark_gradient_stops:
+        - '#FFB070'
+        - '#DD4A3A'
+        - '#6B1717'
+        - '#1E1E1E'
+      cool_gradient_stops:
+        - '#DD4A3A'
         - '#9A3520'
-        - '#B8552E'
   logo_startup_tte:
     effect: laseretch
+    params:
+      final_gradient_stops:
+        - '#B8552E'
+        - '#9A3520'
+        - '#6B1717'
+      laser_gradient_stops:
+        - '#FFB070'
+        - '#DD4A3A'
+      spark_gradient_stops:
+        - '#FFB070'
+        - '#DD4A3A'
+        - '#6B1717'
+        - '#1E1E1E'
+      cool_gradient_stops:
+        - '#DD4A3A'
+        - '#9A3520'
   schema: 1
   branding:
     agent_name: Ares Agent

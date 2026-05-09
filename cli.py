@@ -221,6 +221,18 @@ def _strip_ansi_bg(text: str) -> str:
         i = 0
         while i < len(params):
             p = params[i]
+            # 24-bit fg: 38;2;R;G;B — consume all 5 tokens verbatim so the
+            # RGB channel values (which can be 40-49 or 100-107) aren't
+            # mis-classified as bg codes by the rules below.
+            if p == "38" and i + 1 < len(params) and params[i + 1] == "2":
+                out.extend(params[i : i + 5])
+                i += 5
+                continue
+            # 256-color fg: 38;5;N — consume all 3 tokens verbatim.
+            if p == "38" and i + 1 < len(params) and params[i + 1] == "5":
+                out.extend(params[i : i + 3])
+                i += 3
+                continue
             # 24-bit bg: 48;2;R;G;B (consumes 5 tokens)
             if p == "48" and i + 1 < len(params) and params[i + 1] == "2":
                 i += 5
@@ -4657,6 +4669,23 @@ class HermesCLI:
                     params = dict(skin_tte["params"])
                 elif "params" not in skin_tte:
                     params = {}
+                # Inherit gradient stops from startup_tte (hero) when the logo
+                # block doesn't specify its own — keeps logo and hero on the
+                # same palette without per-skin duplication. Default direction
+                # to diagonal so the wordmark renders as a smooth diagonal
+                # ramp rather than horizontal stripes from TTE's vertical default.
+                try:
+                    hero_tte = dict(_skin.get_startup_tte() or {})
+                    hero_params = hero_tte.get("params") or {}
+                except Exception:
+                    hero_params = {}
+                if "final_gradient_stops" not in params and isinstance(
+                    hero_params.get("final_gradient_stops"), (list, tuple)
+                ):
+                    params["final_gradient_stops"] = list(
+                        hero_params["final_gradient_stops"]
+                    )
+                params.setdefault("final_gradient_direction", "diagonal")
             else:
                 pair = (_skin_name, skin_effect)
                 if pair not in _warned_unknown_skin_effects:

@@ -215,14 +215,7 @@ def _hero_gradient_stops() -> list[str] | None:
             if not decreasing and -delta > threshold:
                 cut = i
                 break
-        trimmed = stops[:cut]
-        # Drop the lightest stop too: sparse braille glyphs render the lightest
-        # color washed-out on dark backgrounds (e.g. ares #E8915A peach reads
-        # as cream). Always start from the second stop so the gradient lands
-        # in a more saturated band end-to-end.
-        if len(trimmed) >= 3:
-            trimmed = trimmed[1:]
-        return trimmed
+        return stops[:cut]
     except Exception:
         return None
 
@@ -240,10 +233,19 @@ def _interp_stops(stops: list[str], t: float) -> str:
     return lerp_color(stops[seg], stops[seg + 1], frac)
 
 
+def _is_blank_glyph(ch: str) -> bool:
+    return ch == " " or ch == "⠀"
+
+
 def render_banner_hero_text(markup_hero: str) -> Text:
     """Render banner hero markup; unstyled lines get a per-char diagonal gradient
     using the skin's startup_tte final_gradient_stops, falling back to a 3-stop
-    top→bottom fade across banner_accent → banner_text → banner_dim."""
+    top→bottom fade across banner_accent → banner_text → banner_dim.
+
+    The gradient is mapped across the *painted* shape — visible cells per row
+    and rows that contain visible cells — so the ramp lands on the actual
+    sigil instead of being stretched across surrounding empty cells.
+    """
     try:
         hero_text = Text.from_markup(markup_hero)
     except Exception:
@@ -254,28 +256,42 @@ def render_banner_hero_text(markup_hero: str) -> Text:
     stops = _hero_gradient_stops()
     lines = hero_text.split("\n", allow_blank=True)
     n = len(lines)
-    width = max((len(l.plain) for l in lines), default=1) or 1
+
+    # Compute visible-row range and per-row visible-col span so the gradient
+    # maps across the painted shape, not the bounding box.
+    row_has_paint = [
+        any(not _is_blank_glyph(c) for c in ln.plain) for ln in lines
+    ]
+    paint_rows = [i for i, h in enumerate(row_has_paint) if h]
+    row_top = paint_rows[0] if paint_rows else 0
+    row_bot = paint_rows[-1] if paint_rows else max(n - 1, 0)
+    row_span = max(row_bot - row_top, 1)
+    row_extents: list[tuple[int, int]] = []
+    for ln in lines:
+        cols = [j for j, c in enumerate(ln.plain) if not _is_blank_glyph(c)]
+        if cols:
+            row_extents.append((cols[0], cols[-1]))
+        else:
+            row_extents.append((0, 0))
+
     out = Text()
     for i, line in enumerate(lines):
         if line.style or line.spans:
             out.append_text(line)
         elif stops is not None:
             plain = line.plain
+            col_lo, col_hi = row_extents[i]
+            col_span = max(col_hi - col_lo, 1)
             for j, ch in enumerate(plain):
-                if ch == " " or ch == "⠀":
+                if _is_blank_glyph(ch):
                     out.append(ch)
                     continue
-                # diagonal: equal weight on row + col, biased into the
-                # deeper 80% of the ramp so the lightest stop (which would
-                # render as washed-out cream against the dark background on
-                # sparse braille glyphs) is skipped.
-                ty = i / (n - 1) if n > 1 else 0.0
-                tx = j / (width - 1) if width > 1 else 0.0
-                t_raw = 0.5 * ty + 0.5 * tx
-                t = t_raw  # full ramp; lightest stop already trimmed in _hero_gradient_stops
-                # bold so sparse braille glyphs render with visible saturation
-                # (otherwise tiny dots look washed even with rich colors)
-                out.append(ch, style=f"bold {_interp_stops(stops, t)}")
+                ty = (i - row_top) / row_span if row_span > 0 else 0.0
+                tx = (j - col_lo) / col_span if col_span > 0 else 0.0
+                ty = max(0.0, min(1.0, ty))
+                tx = max(0.0, min(1.0, tx))
+                t = 0.5 * ty + 0.5 * tx
+                out.append(ch, style=_interp_stops(stops, t))
         else:
             if n <= 1:
                 color = accent
@@ -303,23 +319,50 @@ def _count_visual_rows(renderables: list) -> int:
 
 
 def render_banner_logo_text(markup_logo: str) -> Text:
-    """Render banner logo markup, tinting plain ASCII with an accent→dim gradient."""
+    """Render banner logo with a per-character diagonal gradient.
+
+    When the active skin exposes `startup_tte.params.final_gradient_stops`,
+    the logo's plain text is rendered with the same per-cell diagonal ramp
+    as the hero — overriding any per-row hex markup that would otherwise
+    paint the logo as horizontal stripes. Falls back to a row-wise
+    accent→dim lerp when no stops are configured.
+    """
     try:
         logo_text = Text.from_markup(markup_logo)
     except Exception:
         logo_text = Text(markup_logo)
+
+    stops = _hero_gradient_stops()
+    plain = logo_text.plain
+    lines = plain.split("\n") if plain else [""]
+    n = len(lines)
+    width = max((len(l) for l in lines), default=1) or 1
+
+    if stops is not None:
+        out = Text()
+        for i, line in enumerate(lines):
+            for j, ch in enumerate(line):
+                if ch == " " or ch == "⠀":
+                    out.append(ch)
+                    continue
+                ty = i / (n - 1) if n > 1 else 0.0
+                tx = j / (width - 1) if width > 1 else 0.0
+                t = 0.5 * ty + 0.5 * tx
+                out.append(ch, style=f"bold {_interp_stops(stops, t)}")
+            if i < n - 1:
+                out.append("\n")
+        return out
+
     if logo_text.style or logo_text.spans:
         return logo_text
 
     accent = _skin_color("banner_accent", "#FFBF00")
     dim = _skin_color("banner_dim", "#B8860B")
-    lines = logo_text.plain.splitlines() or [logo_text.plain]
     out = Text()
-    total = len(lines)
     for idx, line in enumerate(lines):
-        t = 0.0 if total <= 1 else idx / (total - 1)
+        t = 0.0 if n <= 1 else idx / (n - 1)
         out.append(line, style=lerp_color(accent, dim, t))
-        if idx != total - 1:
+        if idx != n - 1:
             out.append("\n")
     return out
 

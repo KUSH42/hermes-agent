@@ -85,6 +85,7 @@ def test_render_banner_logo_text_applies_accent_to_dim_gradient_for_plain_ascii(
             "banner_accent": "#00cc33",
             "banner_dim": "#003b00",
         }.get(key, default)),
+        patch.object(banner, "_hero_gradient_stops", return_value=None),
     ):
         logo = banner.render_banner_logo_text("AAA\nBBB")
 

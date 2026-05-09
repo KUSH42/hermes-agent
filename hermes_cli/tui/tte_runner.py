@@ -225,6 +225,18 @@ def _coerce_effect_param(raw: object, current: object, color_cls: type | None) -
         raise ValueError("unsupported tuple item type")
     if color_cls is not None and isinstance(current, color_cls):
         return color_cls(str(raw))
+    # Enum coercion: e.g. final_gradient_direction = Direction.VERTICAL.
+    # Accept member names case-insensitively (e.g. "diagonal", "DIAGONAL").
+    import enum as _enum
+    if isinstance(current, _enum.Enum):
+        if isinstance(raw, type(current)):
+            return raw
+        if isinstance(raw, str):
+            try:
+                return type(current)[raw.strip().upper()]
+            except KeyError as exc:
+                raise ValueError(f"unknown enum member: {raw!r}") from exc
+        raise ValueError("expected enum member name (string)")
     raise ValueError("unsupported parameter type")
 
 

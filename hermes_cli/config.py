@@ -843,7 +843,7 @@ DEFAULT_CONFIG = {
             "params": {},
         },
         "startup_logo_text_effect": {
-            "enabled": False,
+            "enabled": True,
             "effect": "highlight",
             "max_wall_s": 5.0,
             "max_frames": 300,

@@ -48,7 +48,7 @@ class CommandDef:
     category: str                      # "Session", "Configuration", etc.
     aliases: tuple[str, ...] = ()      # alternative names: ("bg",)
     args_hint: str = ""                # argument placeholder: "<prompt>", "[name]"
-    subcommands: tuple[str, ...] = ()  # tab-completable subcommands
+    subcommands: tuple[str | tuple[str, str], ...] = ()  # tab-completable subcommands; each entry may be "name" or ("name", "description")
     cli_only: bool = False             # only available in CLI
     gateway_only: bool = False         # only available in gateway/messaging
     gateway_config_gate: str | None = None  # config dotpath; when truthy, overrides cli_only for gateway
@@ -137,9 +137,26 @@ COMMAND_REGISTRY: list[CommandDef] = [
     CommandDef("anim", "Control animation overlay — engines, speed, color, position", "Configuration",
                tui_only=True,
                args_hint="[on|off|toggle|config|list|speed|ambient|color|gradient|hue|size|preset|sdf]",
-               subcommands=("on", "off", "toggle", "config", "list", "preset",
-                            "minimal", "balanced", "immersive", "hacker", "zen", "sdf",
-                            "speed", "ambient", "color", "gradient", "hue", "size")),
+               subcommands=(
+                   ("on",        "Enable the animation overlay"),
+                   ("off",       "Disable the animation overlay"),
+                   ("toggle",    "Toggle the animation overlay"),
+                   ("config",    "Open the live tuning panel"),
+                   ("list",      "Show available engines and presets"),
+                   ("preset",    "Apply a named preset (minimal/balanced/immersive/hacker/zen)"),
+                   ("minimal",   "Apply the minimal preset"),
+                   ("balanced",  "Apply the balanced preset"),
+                   ("immersive", "Apply the immersive preset"),
+                   ("hacker",    "Apply the hacker preset"),
+                   ("zen",       "Apply the zen preset"),
+                   ("sdf",       "Switch to SDF rendering"),
+                   ("speed",     "Adjust animation speed"),
+                   ("ambient",   "Toggle ambient motion"),
+                   ("color",     "Set primary color"),
+                   ("gradient",  "Toggle gradient fill"),
+                   ("hue",       "Rotate hue"),
+                   ("size",      "Resize overlay"),
+               )),
     CommandDef("workspace", "Toggle the workspace overlay", "Configuration",
                cli_only=True, tui_only=True),
     CommandDef("density", "Toggle compact density layout", "Configuration",
@@ -150,10 +167,22 @@ COMMAND_REGISTRY: list[CommandDef] = [
                cli_only=True, aliases=("easteregg",),
                args_hint="[effect] [text] | list",
                subcommands=(
-                   "beams", "binarypath", "blackhole", "decrypt", "highlight",
-                   "laseretch", "matrix", "overflow", "print", "rain",
-                   "slide", "sweep", "synthgrid", "waves", "wipe",
-                   "list",
+                   ("beams",      "Sweeping beams"),
+                   ("binarypath", "Binary-stream path"),
+                   ("blackhole",  "Blackhole gravity collapse"),
+                   ("decrypt",    "Decryption sweep"),
+                   ("highlight",  "Highlight pulse"),
+                   ("laseretch",  "Laser etching"),
+                   ("matrix",     "Matrix rain"),
+                   ("overflow",   "Overflow cascade"),
+                   ("print",      "Typewriter print"),
+                   ("rain",       "Rainfall"),
+                   ("slide",      "Slide-in entrance"),
+                   ("sweep",      "Sweep transition"),
+                   ("synthgrid",  "Synthwave grid"),
+                   ("waves",      "Wave distortion"),
+                   ("wipe",       "Edge wipe"),
+                   ("list",       "Show all effects"),
                )),
     CommandDef("indicator", "Pick the TUI busy-indicator style", "Configuration",
                cli_only=True, args_hint="[kaomoji|emoji|unicode|ascii]",
@@ -171,21 +200,60 @@ COMMAND_REGISTRY: list[CommandDef] = [
                cli_only=True),
     CommandDef("skills", "Search, install, inspect, or manage skills",
                "Tools & Skills", cli_only=True,
-               subcommands=("search", "browse", "inspect", "install")),
+               subcommands=(
+                   ("search",  "Search the catalogue for installable skills"),
+                   ("browse",  "Open the catalogue browser overlay"),
+                   ("inspect", "Show full SKILL.md metadata for a skill"),
+                   ("install", "Install a skill from the catalogue"),
+               )),
     CommandDef("cron", "Manage scheduled tasks", "Tools & Skills",
                cli_only=True, args_hint="[subcommand]",
-               subcommands=("list", "add", "create", "edit", "pause", "resume", "run", "remove")),
+               subcommands=(
+                   ("list",   "Show all scheduled tasks"),
+                   ("add",    "Add a new scheduled task"),
+                   ("create", "Create a new schedule (alias of add)"),
+                   ("edit",   "Edit an existing schedule"),
+                   ("pause",  "Pause a schedule without removing it"),
+                   ("resume", "Resume a paused schedule"),
+                   ("run",    "Run a schedule immediately"),
+                   ("remove", "Delete a schedule"),
+               )),
     CommandDef("schedule", "Schedule a recurring task (handled by agent + cron tools)",
                "Tools & Skills",
                args_hint="<description>"),
     CommandDef("curator", "Background skill maintenance (status, run, pin, archive)",
                "Tools & Skills", args_hint="[subcommand]",
-               subcommands=("status", "run", "pause", "resume", "pin", "unpin", "restore")),
+               subcommands=(
+                   ("status",  "Show curator status"),
+                   ("run",     "Run curator pass now"),
+                   ("pause",   "Pause background curator runs"),
+                   ("resume",  "Resume background curator runs"),
+                   ("pin",     "Pin a skill so it is never archived"),
+                   ("unpin",   "Remove the pin from a skill"),
+                   ("restore", "Restore an archived skill"),
+               )),
     CommandDef("kanban", "Multi-profile collaboration board (tasks, links, comments)",
                "Tools & Skills", args_hint="[subcommand]",
-               subcommands=("list", "ls", "show", "create", "assign", "link", "unlink",
-                            "claim", "comment", "complete", "block", "unblock", "archive",
-                            "tail", "dispatch", "context", "init", "gc")),
+               subcommands=(
+                   ("list",     "List tasks on the active board"),
+                   ("ls",       "Alias of list"),
+                   ("show",     "Show full details for a task"),
+                   ("create",   "Create a new task"),
+                   ("assign",   "Assign a task to a profile"),
+                   ("link",     "Link two tasks together"),
+                   ("unlink",   "Remove a task link"),
+                   ("claim",    "Claim a task for yourself"),
+                   ("comment",  "Add a comment to a task"),
+                   ("complete", "Mark a task complete"),
+                   ("block",    "Block a task on another"),
+                   ("unblock",  "Remove a task block"),
+                   ("archive",  "Archive a completed task"),
+                   ("tail",     "Tail recent board activity"),
+                   ("dispatch", "Dispatch a task to an agent"),
+                   ("context",  "Show full task context"),
+                   ("init",     "Initialise a new kanban board"),
+                   ("gc",       "Garbage-collect archived tasks"),
+               )),
     CommandDef("reload", "Reload .env variables into the running session", "Tools & Skills",
                cli_only=True),
     CommandDef("reload-mcp", "Reload MCP servers from config", "Tools & Skills",
@@ -283,9 +351,15 @@ def rebuild_lookups() -> None:
                 cat[f"/{alias}"] = COMMANDS[f"/{alias}"]
 
     SUBCOMMANDS.clear()
+    SUBCOMMAND_DESCRIPTIONS.clear()
     for cmd in COMMAND_REGISTRY:
         if cmd.subcommands:
-            SUBCOMMANDS[f"/{cmd.name}"] = list(cmd.subcommands)
+            _norm = [_normalize_sub(s) for s in cmd.subcommands]
+            _k = f"/{cmd.name}"
+            SUBCOMMANDS[_k] = [n for n, _ in _norm]
+            _d = {n: d for n, d in _norm if d}
+            if _d:
+                SUBCOMMAND_DESCRIPTIONS[_k] = _d
     for cmd in COMMAND_REGISTRY:
         key = f"/{cmd.name}"
         if key in SUBCOMMANDS or not cmd.args_hint:
@@ -327,11 +401,25 @@ for _cmd in COMMAND_REGISTRY:
             _cat[f"/{_alias}"] = COMMANDS[f"/{_alias}"]
 
 
+def _normalize_sub(item: "str | tuple[str, str]") -> "tuple[str, str]":
+    """Return (name, description) — bare strings get an empty description."""
+    if isinstance(item, tuple):
+        return item
+    return (item, "")
+
+
 # Subcommands lookup: "/cmd" -> ["sub1", "sub2", ...]
 SUBCOMMANDS: dict[str, list[str]] = {}
+# Per-subcommand descriptions: "/cmd" -> {"sub": "description", ...} (only non-empty entries)
+SUBCOMMAND_DESCRIPTIONS: dict[str, dict[str, str]] = {}
 for _cmd in COMMAND_REGISTRY:
     if _cmd.subcommands:
-        SUBCOMMANDS[f"/{_cmd.name}"] = list(_cmd.subcommands)
+        _normalized = [_normalize_sub(s) for s in _cmd.subcommands]
+        _key = f"/{_cmd.name}"
+        SUBCOMMANDS[_key] = [n for n, _ in _normalized]
+        _descs = {n: d for n, d in _normalized if d}
+        if _descs:
+            SUBCOMMAND_DESCRIPTIONS[_key] = _descs
 
 # Also extract subcommands hinted in args_hint via pipe-separated patterns
 # e.g. args_hint="[on|off|tts|status]" for commands that don't have explicit subcommands.

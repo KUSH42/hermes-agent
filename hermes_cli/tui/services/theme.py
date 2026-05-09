@@ -236,7 +236,7 @@ class ThemeService(AppService):
         app = self.app
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI
-            from hermes_cli.commands import COMMAND_REGISTRY, SUBCOMMANDS
+            from hermes_cli.commands import COMMAND_REGISTRY, SUBCOMMANDS, SUBCOMMAND_DESCRIPTIONS
             names: list[str] = []
             for cmd in COMMAND_REGISTRY:
                 if cmd.gateway_only:
@@ -269,6 +269,7 @@ class ThemeService(AppService):
                 inp.set_slash_args_hints(args_hints)
                 inp.set_slash_keybind_hints(keybind_hints)
                 inp.set_slash_subcommands(dict(SUBCOMMANDS))
+                inp.set_slash_subcommand_descriptions(dict(SUBCOMMAND_DESCRIPTIONS))
             except NoMatches:  # il-ex-1-exempt: swallow
                 pass
         except Exception:

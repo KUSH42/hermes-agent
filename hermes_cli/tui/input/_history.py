@@ -166,6 +166,11 @@ class _HistoryMixin:
     def set_slash_subcommands(self, subcommands: dict[str, list[str]]) -> None:
         self._slash_subcommands: dict[str, list[str]] = subcommands
 
+    def set_slash_subcommand_descriptions(
+        self, descriptions: dict[str, dict[str, str]],
+    ) -> None:
+        self._slash_subcommand_descriptions: dict[str, dict[str, str]] = descriptions
+
     def action_rev_search(self) -> None:
         """Reverse-search history (Ctrl+R)."""
         current = getattr(self, "text", "")  # type: ignore[attr-defined]
@@ -341,6 +346,7 @@ class _HistoryMixin:
         """Show subcommand completion overlay for a slash command."""
         from hermes_cli.tui.path_search import SlashCandidate
         subcommands = getattr(self, "_slash_subcommands", {})
+        descs_by_cmd = getattr(self, "_slash_subcommand_descriptions", {})
         key = f"/{command}"
         options = subcommands.get(key, [])
         if not options:
@@ -348,8 +354,13 @@ class _HistoryMixin:
             return
         if fragment:
             options = [o for o in options if o.lower().startswith(fragment.lower())]
+        sub_descs = descs_by_cmd.get(key, {})
         candidates = [
-            SlashCandidate(display=o, command=f"/{command} {o}")
+            SlashCandidate(
+                display=o,
+                command=f"/{command} {o}",
+                description=sub_descs.get(o, ""),
+            )
             for o in options
         ]
         if not candidates:

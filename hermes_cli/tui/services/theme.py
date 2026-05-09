@@ -11,6 +11,7 @@ from textual.css.query import NoMatches
 from .base import AppService
 from hermes_cli.tui.io_boundary import safe_run
 from hermes_cli.tui import osc52 as _osc52
+from hermes_cli.tui.osc52 import CopyResult
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -320,33 +321,80 @@ class ThemeService(AppService):
             app.set_timer(auto_clear_s, lambda: setattr(app, "status_error", ""))
 
     def copy_text_with_hint(self, text: str) -> None:
-        """Copy *text* to clipboard via all available mechanisms, then flash hint."""
+        """Copy *text* to clipboard via all available channels and flash a truthful outcome hint."""
         app = self.app
         app._clipboard = text
+        sync_outcomes: list[CopyResult] = []
 
-        # 1. OSC 52 — primary path; works over SSH, in most modern terminals.
-        #    Fire-and-forget: no readback, no capability probe needed.
-        _osc52.write(text)
+        # --- Channel 1: OSC 52 (synchronous) ---
+        sync_outcomes.append(_osc52.write(text))
 
-        # 2. Belt-and-suspenders: also push to system clipboard via xclip/wl-copy
-        #    or Textual's pyperclip integration, so terminals without OSC 52 work.
+        # --- Channel 2: Textual copy_to_clipboard (synchronous, pyperclip) ---
         if app._clipboard_available:
-            app.copy_to_clipboard(text)
+            input_bytes = len(text.encode("utf-8"))
+            try:
+                app.copy_to_clipboard(text)
+                # copy_to_clipboard has no return value; success inferred from absence of exception.
+                sync_outcomes.append(CopyResult(True, input_bytes, input_bytes, False))
+            except Exception:
+                _log.debug("textual copy_to_clipboard failed", exc_info=True)
+                sync_outcomes.append(CopyResult(False, 0, input_bytes, False))
+
+        # --- Channel 3: xclip fallback (async subprocess) ---
         elif app._xclip_cmd:
+            char_count = len(text)
+            input_bytes = len(text.encode("utf-8"))
+
+            def _on_xclip_success(*_: object) -> None:
+                outcomes = sync_outcomes + [
+                    CopyResult(True, input_bytes, input_bytes, False)
+                ]
+                self._dispatch_copy_feedback(outcomes, char_count)
+
+            def _on_xclip_error(exc: object, _stderr: str) -> None:
+                _log.warning("xclip copy failed: %s", exc)
+                outcomes = sync_outcomes + [
+                    CopyResult(False, 0, input_bytes, False)
+                ]
+                self._dispatch_copy_feedback(outcomes, char_count)
+
             safe_run(
                 app,
                 app._xclip_cmd,
                 timeout=2,
                 input_bytes=text.encode(),
                 capture=False,
-                on_success=lambda *_: None,
-                on_error=lambda exc, e: (
-                    logger.warning("xclip copy failed", exc_info=exc),
-                    self.set_status_error(f"copy failed: {exc}", auto_clear_s=0),
-                ),
+                on_success=_on_xclip_success,
+                on_error=_on_xclip_error,
             )
+            return  # feedback dispatched in callbacks; do not fall through
+
         else:
             self.set_status_error("no clipboard — install xclip or xsel", auto_clear_s=0)
+            return
 
-        # Always flash hint — OSC 52 is assumed to have worked.
-        self.flash_hint(f"⎘  {len(text)} chars copied", 1.2)
+        self._dispatch_copy_feedback(sync_outcomes, len(text))
+
+    def _dispatch_copy_feedback(
+        self, outcomes: "list[CopyResult]", char_count: int
+    ) -> None:
+        """Flash a truthful hint based on the aggregated channel outcomes."""
+        if not any(o.success for o in outcomes):
+            self.set_status_error("copy failed — see log", auto_clear_s=2.5)
+            return
+        truncated = any(o.success and o.truncated for o in outcomes)
+        if truncated:
+            worst = min(o.truncation_ratio for o in outcomes if o.success and o.truncated)
+            self.app._flash_hint(
+                f"⎘  {int(char_count * worst)}/{char_count} chars copied (truncated to terminal cap)",
+                1.2,
+                key="copy-truncated",
+                priority=2,
+            )
+        else:
+            self.app._flash_hint(
+                f"⎘  {char_count} chars copied",
+                1.2,
+                key="copy-ok",
+                priority=1,
+            )

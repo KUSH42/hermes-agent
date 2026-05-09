@@ -56,6 +56,9 @@ HINT_KEY_DENSITY_TOGGLE  = "density-toggle"   # app.py compact-toggle toasts (HB
 HINT_KEY_HISTORY_WRITE_ERR = "history-write-err"
 HINT_KEY_TOOL_DISCOVERY  = "tool-discovery"
 HINT_KEY_SCROLL_CATCHUP  = "scroll-catchup"
+HINT_KEY_COPY_OK           = "copy-ok"
+HINT_KEY_COPY_TRUNCATED    = "copy-truncated"
+HINT_KEY_IMAGE_NOT_IN_VIEW = "image-not-in-view"
 
 
 # ---------------------------------------------------------------------------

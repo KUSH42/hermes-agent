@@ -13,6 +13,7 @@ import base64
 import logging
 import os
 import sys
+from dataclasses import dataclass
 
 _log = logging.getLogger(__name__)
 
@@ -21,25 +22,45 @@ _log = logging.getLogger(__name__)
 _MAX_RAW_BYTES = 50_000
 
 
-def write(text: str) -> bool:
+@dataclass(frozen=True)
+class CopyResult:
+    """Structured outcome of an OSC 52 or clipboard write attempt."""
+
+    success: bool
+    bytes_written: int
+    bytes_input: int
+    truncated: bool
+
+    @property
+    def truncation_ratio(self) -> float:
+        """Fraction of input bytes that were written.
+
+        Returns 1.0 when bytes_input == 0 (empty string; nothing to truncate).
+        """
+        return self.bytes_written / self.bytes_input if self.bytes_input else 1.0
+
+
+def write(text: str) -> CopyResult:
     """Emit OSC 52 clipboard-write sequence for *text*.
 
-    Returns True if the sequence was written to the terminal fd.  Returns False
-    (and logs at DEBUG) if the fd write fails for any reason.  Never raises.
+    Returns a CopyResult describing success, byte counts, and whether the
+    payload was truncated to _MAX_RAW_BYTES.  Never raises.
 
     Truncates to _MAX_RAW_BYTES and logs a WARNING if the payload is larger.
     """
-    raw = text.encode("utf-8", errors="replace")
-    if len(raw) > _MAX_RAW_BYTES:
+    input_bytes = text.encode("utf-8", errors="replace")
+    truncated = len(input_bytes) > _MAX_RAW_BYTES
+    raw = input_bytes
+    if truncated:
         _log.warning(
             "OSC 52 payload truncated: %d bytes → %d (terminal base64 cap)",
-            len(raw),
+            len(input_bytes),
             _MAX_RAW_BYTES,
         )
         # Decode with errors="ignore" to drop any incomplete tail codepoint
         # before re-encoding, so the result is valid UTF-8 rather than a
         # byte sequence that straddles a multi-byte character boundary.
-        raw = raw[:_MAX_RAW_BYTES].decode("utf-8", errors="ignore").encode("utf-8")
+        raw = input_bytes[:_MAX_RAW_BYTES].decode("utf-8", errors="ignore").encode("utf-8")
 
     b64 = base64.b64encode(raw).decode("ascii")
     seq = f"\033]52;c;{b64}\a"
@@ -50,7 +71,13 @@ def write(text: str) -> bool:
 
     try:
         os.write(sys.stdout.fileno(), seq.encode("ascii"))
-        return True
-    except Exception:  # fd closed, redirect, unsupported OS — silently skip
+        return CopyResult(
+            success=True,
+            bytes_written=len(raw),
+            bytes_input=len(input_bytes),
+            truncated=truncated,
+        )
+    except OSError:
+        # OSC 52 write failures are best-effort; log and report failure to caller.
         _log.debug("OSC 52 write failed", exc_info=True)
-        return False
+        return CopyResult(success=False, bytes_written=0, bytes_input=len(input_bytes), truncated=False)

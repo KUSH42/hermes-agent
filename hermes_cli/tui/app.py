@@ -338,6 +338,8 @@ class HermesApp(App):
 
     # Tok/s throughput (last turn) — display-only
     status_tok_s: reactive[float] = reactive(0.0)
+    # Wall-clock seconds since streaming reply started — display-only
+    status_streaming_elapsed_s: reactive[float] = reactive(0.0)
 
     # Browse mode — keyboard-driven navigation through ToolBlock widgets
     browse_mode: reactive[bool] = reactive(False)
@@ -2136,6 +2138,7 @@ class HermesApp(App):
             span = max(now - self._response_token_window[0][0], 0.2)
             live_tok_s = token_sum / span
         msg.set_response_metrics(tok_s=live_tok_s, elapsed_s=elapsed, streaming=True)
+        self.status_streaming_elapsed_s = elapsed
 
     def mark_response_stream_started(self) -> None:
         """Start live response timing for current assistant turn."""

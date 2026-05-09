@@ -372,5 +372,21 @@ def _format_elapsed_compact(seconds: float) -> str:
     return _format_duration_v4(ms) or f"{seconds:.1f}s"
 
 
+def format_elapsed_short(seconds: float) -> str:
+    """Format reply elapsed time in short human form.
+
+    < 60s   → '12.3s'
+    < 3600s → '2:08'    (mm:ss, zero-padded seconds)
+    ≥ 3600s → '1:02:08' (hh:mm:ss)
+    """
+    s = max(0.0, float(seconds))
+    if s < 60.0:
+        return f"{s:.1f}s"
+    total_s = int(s)
+    if total_s < 3600:
+        return f"{total_s // 60}:{total_s % 60:02d}"
+    return f"{total_s // 3600}:{(total_s % 3600) // 60:02d}:{total_s % 60:02d}"
+
+
 # Avoid NameError at annotation evaluation time
 from typing import Any  # noqa: E402

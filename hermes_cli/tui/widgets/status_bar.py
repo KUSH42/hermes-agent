@@ -34,6 +34,7 @@ from .utils import (
     _format_elapsed_compact,
     _nf_or_text,
     _pulse_enabled,
+    format_elapsed_short,
 )
 
 from hermes_cli.tui.tool_panel.density import DensityTier
@@ -987,7 +988,13 @@ class StatusBar(PulseMixin, Widget):
             if label == "streaming":
                 # Static dot \u2014 pulse competes with the token stream
                 state_t.append(" \u25cf ", style=f"bold {_run_theme}")
-                _append_status_segment(state_t, "streaming", f"dim {_run_dim}", streaming=streaming)
+                _streaming_elapsed = getattr(app, "status_streaming_elapsed_s", 0.0)
+                _streaming_label = (
+                    f"streaming \u00b7 {format_elapsed_short(_streaming_elapsed)}"
+                    if _streaming_elapsed >= 8.0
+                    else "streaming"
+                )
+                _append_status_segment(state_t, _streaming_label, f"dim {_run_dim}", streaming=streaming)
             elif label == "command":
                 # Plain command label \u2014 no shimmer for command execution
                 state_t.append(" \u25cf ", style=f"bold {_run_theme}")

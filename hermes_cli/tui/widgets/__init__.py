@@ -51,6 +51,7 @@ from .utils import (  # noqa: F401
     _cursor_blink_enabled,
     _format_compact_tokens,
     _format_elapsed_compact,
+    format_elapsed_short,
     _fps_hud_enabled,
     _prewrap_code_line,
     _pulse_enabled,

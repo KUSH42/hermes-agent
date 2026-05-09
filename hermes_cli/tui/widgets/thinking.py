@@ -27,6 +27,7 @@ from textual.widgets import Static
 
 from hermes_cli.tui.managed_timer_mixin import ManagedTimerMixin
 from hermes_cli.tui._color_utils import _hue_rotate, _lerp_hex
+from hermes_cli.tui.widgets.utils import format_elapsed_short
 
 if TYPE_CHECKING:
     from hermes_cli.tui.anim_engines import AnimEngine, AnimParams
@@ -910,7 +911,7 @@ _LabelLine   { height: 1;   width: 1fr; }
                 else 0.0
             )
             stall_str = _stall_markup(elapsed_since_token >= STALL_THRESHOLD_S)
-            return f"{prefix}… ({n}s){stall_str}"
+            return f"{prefix}… · {format_elapsed_short(elapsed)}{stall_str}"
         return self._base_label
 
     # ── Internal tick ──────────────────────────────────────────────────────────

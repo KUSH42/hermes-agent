@@ -30,6 +30,7 @@ GLYPH_GUTTER_CHILD_PLAIN = "    " # child / default 4-cell pad
 GLYPH_CHIP_OPEN          = "["    # chip key bracket open
 GLYPH_CHIP_CLOSE         = "]"    # chip key bracket close
 GLYPH_WARNING            = "⚠"    # SCT-1: stall/warning marker
+GLYPH_NO_DATA            = "—"    # U+2014 em-dash: no-data-yet placeholder (not truncation)
 
 GUTTER_LINE_NUM_WIDTH = 6
 GUTTER_SIGN_WIDTH     = 2

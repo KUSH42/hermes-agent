@@ -873,7 +873,8 @@ class TitledRule(PulseMixin, Widget):
         if self._response_tok_s is not None:
             parts.append(f"{self._response_tok_s:.0f} tok/s")
         elif self._response_streaming:
-            parts.append("… tok/s")
+            from hermes_cli.tui.body_renderers._grammar import GLYPH_NO_DATA  # avoid circular at module init
+            parts.append(f"{GLYPH_NO_DATA} tok/s")
         if self._response_elapsed_s is not None:
             parts.append(_format_elapsed_compact(self._response_elapsed_s))
         return " · ".join(parts)

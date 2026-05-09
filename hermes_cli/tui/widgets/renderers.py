@@ -59,6 +59,10 @@ if TYPE_CHECKING:
 import logging
 _log = logging.getLogger(__name__)
 
+# SS-PH-M1: no-data placeholder (U+2014 em dash). Matches GLYPH_NO_DATA in body_renderers/_grammar.py.
+# Inlined to avoid circular import: body_renderers/__init__ → streaming → services → widgets (partial).
+_GLYPH_NO_DATA = "—"
+
 
 @dataclass
 class _WriteOp:

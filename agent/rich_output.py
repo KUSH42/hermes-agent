@@ -1350,6 +1350,17 @@ _MD_BQ_LEVEL_RE = re.compile(r"^((?:>\s*)+)(.*)")
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
 _MD_OL_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)")
 _MD_TASK_RE = re.compile(r"^\[( |x|X)\]\s*(.*)", re.IGNORECASE)
+_MD_BULLET_BOLD_TITLE_DASH_RE = re.compile(
+    r"^\*\*(?P<title>.+?)\*\*\s+—\s+(?P<body>.+)$"
+)
+
+
+def _normalise_bullet_title_separator(content: str) -> str:
+    """Rewrite '**Title** — body' → '**Title**: body'. Title-only em-dash separator."""
+    m = _MD_BULLET_BOLD_TITLE_DASH_RE.match(content)
+    if m is None:
+        return content
+    return f"**{m.group('title')}**: {m.group('body')}"
 _MD_REF_LINK_RE = re.compile(r"^\[[^\]]+\]:\s+\S+")
 _REF_DEF_RE = re.compile(r'^\[([^\]]+)\]:\s*(\S+)(?:\s+(?:"[^"]*"|\'[^\']*\'|\([^)]*\)))?\s*$')
 _MD_REF_LINK_USE_RE = re.compile(r'\[([^\]]+)\]\[([^\]]*)\]')
@@ -1422,9 +1433,11 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
     m = _MD_UL_RE.match(line)
     if m:
         indent, _marker, content = m.group(1), m.group(2), m.group(3)
+        content = _normalise_bullet_title_separator(content)
         level = len(indent) // 2
         bullets = _md_val("bullets") or ["•", "◦", "▸", "·"]
         bullet = bullets[min(level, len(bullets) - 1)]
+        out_indent = "    " * level
         # Task list detection
         tm = _MD_TASK_RE.match(content)
         if tm:
@@ -1434,8 +1447,8 @@ def apply_block_line(line: str, reset_suffix: str = "") -> str:
             else:
                 checkbox_sym = f"{_md_ansi('task_unchecked')}○{_MD_RST_ANSI}{reset_suffix}"
             rest_rendered = apply_inline_markdown(rest, reset_suffix=reset_suffix)
-            return f"{indent}{bullet} {checkbox_sym} {rest_rendered}"
-        return f"{indent}{bullet} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
+            return f"{out_indent}{bullet} {checkbox_sym} {rest_rendered}"
+        return f"{out_indent}{bullet} {apply_inline_markdown(content, reset_suffix=reset_suffix)}"
 
     # Ordered list — dim numeral, then content
     m = _MD_OL_RE.match(line)

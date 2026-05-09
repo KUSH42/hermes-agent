@@ -622,6 +622,20 @@ def _count_distinct_files(artifacts: tuple[Artifact, ...]) -> int:
     return sum(1 for a in artifacts if a.kind == "file")
 
 
+_TRUNC_HINT_RE = re.compile(
+    r"\[Hint:\s*Results truncated\.\s*Use offset=(\d+)\s*to see more[^\]]*\]",
+)
+
+
+def _strip_truncation_hint(text: str) -> tuple[str, int | None]:
+    m = _TRUNC_HINT_RE.search(text)
+    if not m:
+        return text, None
+    offset = int(m.group(1))
+    cleaned = _TRUNC_HINT_RE.sub("", text).rstrip()
+    return cleaned, offset
+
+
 def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
     raw = _raw_str(ctx.complete.raw_result)
     is_error = ctx.complete.is_error
@@ -634,6 +648,7 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
 
+    raw, trunc_offset = _strip_truncation_hint(raw)
     lines = [l for l in raw.splitlines() if l.strip()]
     # Prefer structured counts when result is JSON (search_files, web_search)
     search_json = _parse_search_json(raw)
@@ -657,13 +672,16 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
 
     if has_urls:
         primary = f"✓ {match_count} results"
-        chips = (Chip(f"{match_count} results", "count", "neutral"),)
+        chips: list[Chip] = [Chip(f"{match_count} results", "count", "neutral")]
     elif file_count > 0:
         primary = f"✓ {match_count} matches · {file_count} files"
-        chips = (Chip(f"{match_count} matches", "count", "neutral"),)
+        chips = [Chip(f"{match_count} matches", "count", "neutral")]
     else:
         primary = f"✓ {match_count} matches"
-        chips = () if match_count == 0 else (Chip(f"{match_count} matches", "count", "neutral"),)
+        chips = [] if match_count == 0 else [Chip(f"{match_count} matches", "count", "neutral")]
+
+    if trunc_offset is not None:
+        chips.append(Chip(f"+{trunc_offset} more", "status", "warning"))
 
     query = str(ctx.start.args.get("query") or ctx.start.args.get("pattern") or "")
     file_paths = "\n".join(a.path_or_url for a in artifacts if a.kind == "file")
@@ -674,9 +692,11 @@ def search_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         actions.append(_make_action("copy paths", "p", "copy_paths", file_paths))
     if query:
         actions.append(_make_action("edit cmd", "E", "edit_cmd", query))
+    if trunc_offset is not None:
+        actions.append(_make_action(f"load +{trunc_offset}", "m", "retry", str(trunc_offset)))
 
     return ResultSummaryV4(
-        primary=primary, exit_code=None, chips=chips,
+        primary=primary, exit_code=None, chips=tuple(chips),
         stderr_tail="", actions=tuple(actions),
         artifacts=artifacts, is_error=False,
         artifacts_truncated=artifacts_truncated,
@@ -1021,6 +1041,7 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
             actions=(_make_copy_err("", raw),),
             artifacts=(), is_error=True, error_kind=ctx.complete.error_kind,
         )
+    raw, trunc_offset = _strip_truncation_hint(raw)
     n = _count_nonempty_lines(raw)
     if n == 0:
         primary = "✓ done"
@@ -1028,9 +1049,14 @@ def generic_result_v4(ctx: ParseContext) -> ResultSummaryV4:
         primary = "✓ 1 line"
     else:
         primary = f"✓ {n} lines"
+    chips: tuple[Chip, ...] = ()
+    actions: list[Action] = [_make_copy_body(raw)]
+    if trunc_offset is not None:
+        chips = (Chip(f"+{trunc_offset} more", "status", "warning"),)
+        actions.append(_make_action(f"load +{trunc_offset}", "m", "retry", str(trunc_offset)))
     return ResultSummaryV4(
-        primary=primary, exit_code=None, chips=(),
-        stderr_tail="", actions=(_make_copy_body(raw),),
+        primary=primary, exit_code=None, chips=chips,
+        stderr_tail="", actions=tuple(actions),
         artifacts=(), is_error=False,
     )
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hermes_cli.tui.body_renderers._frame import BodyFrame
-from hermes_cli.tui.body_renderers._grammar import BodyFooter, SkinColors, build_parse_failure
+from hermes_cli.tui.body_renderers._grammar import SkinColors, build_parse_failure
 from hermes_cli.tui.body_renderers.code import CodeRenderer
 from hermes_cli.tui.body_renderers.diff import DiffRenderer
 from hermes_cli.tui.body_renderers.json import JsonRenderer
@@ -58,21 +58,21 @@ def _plain(renderable) -> str:
 
 class TestRF1BodyFrame:
     def test_frame_renders_all_three_slots(self):
-        """compose yields header Static, body Static, footer BodyFooter; 3 children."""
+        """compose yields header Static, body Static, footer Widget; 3 children."""
         header = Text("hdr")
         body = Text("body")
-        footer = BodyFooter("x")
+        footer = Static("x")
         frame = BodyFrame(header=header, body=body, footer=footer)
         children = list(frame.compose())
         assert len(children) == 3
         assert isinstance(children[0], Static)
         assert isinstance(children[1], Static)
-        assert isinstance(children[2], BodyFooter)
+        assert isinstance(children[2], Static)
 
     def test_frame_omits_header_when_none(self):
         """header=None: compose yields body + footer only; no .body-frame--header."""
         body = Text("body")
-        footer = BodyFooter("x")
+        footer = Static("x")
         frame = BodyFrame(header=None, body=body, footer=footer)
         children = list(frame.compose())
         assert len(children) == 2
@@ -82,13 +82,12 @@ class TestRF1BodyFrame:
         )
 
     def test_frame_omits_footer_when_none(self):
-        """footer=None: compose yields header + body only; no BodyFooter child."""
+        """footer=None: compose yields header + body only; no footer child."""
         header = Text("hdr")
         body = Text("body")
         frame = BodyFrame(header=header, body=body, footer=None)
         children = list(frame.compose())
         assert len(children) == 2
-        assert not any(isinstance(c, BodyFooter) for c in children)
 
     def test_frame_body_widget_mounted_directly(self):
         """body is a pre-built Widget: compose yields it (not wrapped in Static)."""
@@ -350,20 +349,10 @@ class TestRF4LogLevels:
 
 
 # ---------------------------------------------------------------------------
-# TestRF5BodyFooter — 4 tests
+# TestRF5BodyFooter — 1 test (BodyFooter deleted; str-entry tests removed)
 # ---------------------------------------------------------------------------
 
 class TestRF5BodyFooter:
-    # TBV-H3: tuple entries are no longer accepted; BodyFooter is str-only.
-    def test_body_footer_plain_string_entry(self):
-        footer = BodyFooter("INFO 2", "WARN 1")
-        rendered = footer.render()
-        plain = _plain(rendered)
-        assert "INFO 2" in plain
-        assert "WARN 1" in plain
-        assert "·" in plain
-        assert "[INFO 2]" not in plain
-
     def test_renderer_no_footer_when_entries_empty(self):
         """Renderer that doesn't pass footer should produce BodyFrame with _footer=None."""
         from hermes_cli.tui.body_renderers.base import BodyRenderer

@@ -895,7 +895,8 @@ class ToolBodyContainer(Widget):
         max-height: 8;
         display: none;
         color: $error 80%;
-        padding: 0 2;
+        border-left: thick $error 60%;
+        padding: 0 1;
     }
     ToolBodyContainer .--stderr-tail.--active { display: block; }
     """

@@ -581,6 +581,19 @@ class FooterPane(Widget):
             self.remove_class("has-artifacts")
             return
 
+        # B3b: suppress artifact row when header already shows the single file path
+        block = getattr(getattr(self, "parent", None), "_block", None)
+        header = getattr(block, "_header", None)
+        header_path = getattr(header, "_full_path", None)
+        if (
+            header_path
+            and len(summary.artifacts) == 1
+            and summary.artifacts[0].kind == "file"
+            and summary.artifacts[0].path_or_url == header_path
+        ):
+            self.remove_class("has-artifacts")
+            return
+
         artifacts_to_show = (
             summary.artifacts
             if self._show_all_artifacts

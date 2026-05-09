@@ -174,7 +174,7 @@ CommandsOverlay > #commands-content {
 /* --- Message turns --- */
 
 MessagePanel {
-    margin: 1 0 0 0;
+    margin: 0;             /* trailing gap owned by margin-bottom: 1 rule (LP-RHYTHM-1) */
     transition: opacity 0.3s in_out_cubic;
 }
 
@@ -890,28 +890,20 @@ ToolPanel BodyPane {
     padding-left: 1;          /* + parent padding-left 1 = $body-indent (2) total */
 }
 
-/* SLR-1: multi-block rhythm contract.
-   Order is load-bearing — all rules share specificity (0,1,1).
-   Tier rules first; ChildPanel override second; error override LAST so it
-   wins for both ToolPanel and ChildPanel. */
-/* Base margin-bottom: 0 for ToolPanel. Intentional: compact/trace tiers inherit this
- * value; hero/default tiers override to 1 via the rules below (specificity 0,1,1
- * wins over this rule's 0,1,0). Do not delete — removing breaks compact/trace spacing. */
-ToolPanel { margin-bottom: 0; }
-ToolPanel.tool-panel--tier-hero,
-ToolPanel.tool-panel--tier-default { margin-bottom: 1; }
-ToolPanel.tool-panel--tier-compact,
-ToolPanel.tool-panel--tier-trace   { margin-bottom: 0; }
-/* Group children pack tight — group header is the rhythm landmark.
-   Explicit tier overrides needed because ChildPanel extends ToolPanel and the
-   ToolPanel.tool-panel--tier-* rules (specificity 0,1,1) would otherwise win. */
-ChildPanel.tool-panel--tier-hero,
-ChildPanel.tool-panel--tier-default,
-ChildPanel.tool-panel--tier-compact,
-ChildPanel.tool-panel--tier-trace { margin-bottom: 0; }
-/* ERR override — must appear LAST so it wins for both ToolPanel and ChildPanel. */
-ToolPanel.tool-panel--error,
-ChildPanel.tool-panel--error { margin-bottom: 1; }
+/* LP-RHYTHM-1: Uniform inter-block rhythm.
+   Top-level blocks own their trailing gap (margin-bottom: 1).
+   Density compression moves inside the panel (body height, line clamps,
+   footer toggle) — never to inter-block whitespace.
+   Tier classes (tool-panel--tier-*) still drive internal layout via body
+   renderers; they no longer control inter-block spacing. */
+ToolPanel,
+MessagePanel,
+UserMessagePanel {
+    margin-bottom: 1;
+}
+/* Group children pack tight — ChildPanel has no trailing gap.
+   Error tier accent stays via border/color, not extra margin. */
+ChildPanel { margin-bottom: 0; }
 
 /* QW-03: collapsed strip always visible when collapsed; dimmer when unfocused */
 _CollapsedActionStrip { color: $text-muted 50%; }
@@ -1278,7 +1270,7 @@ ToolPanel.--streaming BodyFooter { display: none; }
 /* W-11: scroll-state badge — anchored/jumped indicator docked to OutputPanel bottom */
 OutputPanelScrollBadge {
     dock: bottom;
-    background: $panel-lighten-1 80%;
+    background: $surface;          /* LP-RHYTHM-3: fully opaque — hides rather than blurs last row */
     color: $text-muted;
     padding: 0 1;
     height: 1;

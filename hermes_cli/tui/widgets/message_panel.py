@@ -806,7 +806,7 @@ class UserMessagePanel(Widget):
     DEFAULT_CSS = """
     UserMessagePanel {
         height: auto;
-        margin: 1 0 0 0;
+        margin: 0;            /* trailing gap owned by margin-bottom: 1 in hermes.tcss (LP-RHYTHM-2) */
         padding: 0 2;
     }
     """

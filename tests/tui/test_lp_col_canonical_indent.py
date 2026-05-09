@@ -227,18 +227,16 @@ class TestColCleanup:
         )
 
     def test_margin_bottom_base_rule_commented(self):
-        """'Do not delete' appears in comment block before ToolPanel { margin-bottom: 0; }."""
+        """LP-RHYTHM-1 replaced the old ToolPanel { margin-bottom: 0; } base rule.
+        Assert the new uniform rhythm rule (LP-RHYTHM-1) is present instead.
+        """
         text = _tcss_text()
-        assert "Do not delete" in text, (
-            "hermes.tcss must contain 'Do not delete' sentinel near ToolPanel margin-bottom: 0 (LP-COL-5 L1)"
+        # LP-RHYTHM-1 superseded the old per-tier margin rules; assert the new block exists.
+        assert "LP-RHYTHM-1" in text, (
+            "hermes.tcss must contain LP-RHYTHM-1 uniform inter-block rhythm block"
         )
-        # Verify it appears before the ToolPanel margin-bottom rule
-        sentinel_pos = text.index("Do not delete")
-        # Find margin-bottom: 0 that belongs to ToolPanel (base rule, not ChildPanel)
-        rule_marker = "ToolPanel { margin-bottom: 0; }"
-        rule_pos = text.index(rule_marker)
-        assert sentinel_pos < rule_pos, (
-            "'Do not delete' comment must appear before ToolPanel { margin-bottom: 0; }"
+        assert "ChildPanel { margin-bottom: 0; }" in text, (
+            "hermes.tcss must retain ChildPanel { margin-bottom: 0; } to keep group children tight"
         )
 
 

@@ -312,6 +312,7 @@ class HermesApp(App):
         Binding("alt+left_square_bracket", "collapse_left_pane", show=False),
         Binding("alt+right_square_bracket", "collapse_right_pane", show=False),
         Binding("ctrl+backslash", "toggle_center_split", show=False),
+        Binding("ctrl+p", "toggle_plan_panel", "Plan", show=True),
         Binding("end", "scroll_to_latest", "Latest", show=False),
         Binding("u", "dismiss_update_banner", "Dismiss update notice", show=False),
     ]
@@ -2555,6 +2556,10 @@ class HermesApp(App):
             return
         self._pane_manager.toggle_right_collapsed()
         self._pane_manager._apply_layout(self)
+
+    def action_toggle_plan_panel(self) -> None:
+        """Ctrl+P: toggle PlanPanel collapsed/expanded."""
+        self.plan_panel_collapsed = not self.plan_panel_collapsed
 
     def action_toggle_center_split(self) -> None:
         """Ctrl+\\: toggle center-pane split between output and stub."""

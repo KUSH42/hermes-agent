@@ -236,7 +236,6 @@ fall through to the `set_interval` branch automatically.
 - `get_css_variables()` is called during `super().__init__()`. Guard instance
   attrs with `getattr(...)`.
 - New `$vars` must be declared in `hermes.tcss` before use or startup fails.
-- Hot-reload / discovery tests that load a minimal `DESIGN.md` through `ThemeManager._load_path()` will emit `missing component_vars keys (using defaults)` warnings unless the fixture seeds `x-hermes.component-vars` with the full `_defaults_as_strs()` mapping. If the test is about path watching or mtime behavior rather than validator warnings, use a fully-seeded fixture so the run stays quiet.
 - `RichLog` subclasses inherit background defaults you may need to override.
 - Transparent widgets inherit from `Screen`, not just `HermesApp`.
 - In this theme, `$surface` can equal `$app-bg`; elevation sometimes requires
@@ -681,19 +680,6 @@ When a daemon thread needs to call `app.query_one(SomeWidget)` shortly after app
 - `import threading as _threading` must be in the **top-level imports** of the widget module, not inline near the class definition (linters flag out-of-order imports).
 - The module-level constant (`STARTUP_BANNER_READY = _threading.Event()`) should live immediately before the class definition.
 - Tests must include an `autouse` fixture that calls `event.clear()` before and after each test to prevent module-level state from leaking between tests.
-- If playback code gates on `event.wait(timeout=...)` and later checks `event.is_set()`
-  inside a timer tick, latch the same event with `event.set()` after a successful
-  wait. Some unit tests patch `wait()` only; without the latch, playback can abort
-  immediately even though the mount gate "succeeded."
-
-## _AnimSurface size mocks may expose width without height (2026-05-03)
-
-Bare-instance `ThinkingWidget` / `_AnimSurface` tests often patch `size` with a
-`SimpleNamespace(width=...)` and omit `height`. Render helpers must therefore
-read `getattr(self.size, "height", 1)` instead of assuming `self.size.height`
-exists. If `_render_gradient_line()` touches a missing `height`, the exception
-path collapses the whole row to a blank background strip and hides the real
-gradient behavior being tested.
 
 ## Textual default `Widget.render()` repr leak under real PTY (2026-04-28)
 
@@ -868,18 +854,6 @@ The renderer classifier uses `concurrent.futures.Future.result(timeout=...)` whi
 
 `services/tools.py` exposes `set_user_kind_override(tool_call_id, kind_value)` as the freeze-compliant way to override the KIND axis on a live tool call. Do NOT add new `AxisName` enum values (concept doc frozen). Use this helper for per-call kind overrides in tests and production code.
 
-## ToolPanel._apply_layout: call sibling helpers via ToolPanel in MagicMock tests (2026-05-03)
-
-`tests/tui/test_density_unification.py` exercises
-`ToolPanel._apply_layout(...)` as an unbound method with a `MagicMock` passed
-as `self`. In that shape, `self._publish_layout_axis(...)` or
-`self._replay_pending_layout(...)` resolves to mock attributes instead of the
-real helper methods, which silently skips the density axis-bus write and
-breaks the "axis first, reactive second" contract. When a `ToolPanel` helper
-must stay unit-testable with mocked `self`, call sibling helpers via the class
-(`ToolPanel._publish_layout_axis(self, ...)`,
-`ToolPanel._replay_pending_layout(self, ...)`) instead of `self.helper(...)`.
-
 ## TmuxDriver.wait_for() returns False on timeout, not exception (2026-04-28)
 
 `TmuxDriver.wait_for(pattern, timeout=5.0)` returns `False` if the pattern is not found within the timeout. It does NOT raise `TimeoutError`. Test assertions must check the return value: `assert driver.wait_for("ready", timeout=2.0), "Timed out waiting for ready"`.
@@ -920,8 +894,6 @@ After `anim_engines/` was split from `drawbraille_overlay.py`, engine classes li
 
 ThinkingWidget reads three CSS vars at render time: `--thinking-chroma-a` (start color), `--thinking-chroma-b` (end color), `--thinking-hue-shift-speed` (float, hue rotation degrees per second). All three must be present in `COMPONENT_VAR_DEFAULTS` in `theme_manager.py` and in the skin YAML under `x-hermes`. Missing vars cause silent fallback to defaults but log a WARNING.
 
-- **Non-hex component vars must stay in the generator skip allowlist too.** `thinking-hue-shift-speed` is a float-like string runtime knob, not a color. `theme_manager._NON_HEX_COMPONENT_VARS` is the source of truth for validation, and `build_skin_vars._SKIP_GENERATOR_KEYS` must derive from it rather than carrying a separate hard-coded subset. Otherwise `render_design_md_tcss_block()` starts emitting or rejecting non-hex defaults and breaks `test_design_md_skin.py` even though runtime skin validation still accepts the var.
-
 ## per-skin stream_effect in skin YAML — top-level key, not nested (2026-05-03)
 
 `stream_effect:` in a skin YAML file is a TOP-LEVEL key (same level as `name`, `palette`, `x-hermes`). It is NOT nested under `x-hermes`. If placed under `x-hermes`, it is silently ignored. Shape: `stream_effect: "cascade"` or `stream_effect: {enabled: true, cascade_ticks: 4}`.
@@ -941,3 +913,61 @@ ThinkingWidget reads three CSS vars at render time: `--thinking-chroma-a` (start
 ## LayoutInputs pressure/viewport_rows/is_offscreen fields (2026-05-03)
 
 `LayoutInputs` (in `tool_panel/density.py`) now has three additional fields: `pressure: float` (0.0–1.0 viewport pressure), `viewport_rows: int` (current terminal height), `is_offscreen: bool` (whether the panel is outside viewport). All three are required. Omitting them in test construction raises `TypeError`; use `dataclasses.replace(base_inputs, pressure=0.5)` for partial overrides.
+
+## Permanent-widget overlay testing without live Textual runtime (2026-05-03)
+
+Testing permanent overlays (never removed from DOM) without a live Textual app requires subclassing to neutralize property setters that call `refresh()`:
+
+```python
+class _Isolated(ToolPanelHelpOverlay):
+    @property
+    def border_title(self): return _bt_store["v"]
+    @border_title.setter
+    def border_title(self, v): _bt_store["v"] = v
+
+_Isolated.app = property(lambda self: mock_app)  # type: ignore[method-assign]
+overlay = _Isolated.__new__(_Isolated)
+```
+
+- `app` is a read-only property on `Widget` (walks `_parent` chain or reads `active_app` context var). Setting it on the *class* via `property(lambda self: mock_app)` works; `overlay.app = mock_app` raises `AttributeError: property has no setter`.
+- `border_title` setter calls `self.refresh()` on the base Widget, raising `AttributeError: 'X' object has no attribute '_is_mounted'`. Must shadow it in the subclass.
+- Stub `_capture_focus_caller` / `_restore_focus_to` directly on the instance (bypass the mixin's `self.app.focused` access).
+- `has_class`, `add_class`, `remove_class` all reference `self._classes` — set `overlay._classes: set[str] = set()` and replace with lambdas.
+
+## CD-H1/H4 autocomplete dispatch + picker desync (2026-05-03)
+
+- `types.SimpleNamespace()` raises `TypeError: got multiple values for keyword argument` if you provide a default for a key in the constructor AND pass it again via `**kwargs`. Use explicit named parameters with defaults (`def _make_fake(value="", **extra): SimpleNamespace(value=value, **extra)`).
+- `HermesApp.query_one` is inherited from Textual `App` and is not available on `SimpleNamespace`. For `_open_skill_picker` tests, add `app.query_one = MagicMock(side_effect=NoMatches(...))` explicitly.
+- When `_open_skill_picker` returns `False` (blocked by modal), `_resolve_assist` must return before writing `self.assist = PICKER`. The guard `if not opened: return` must appear *before* the single write site at the bottom of the method.
+- `_HistoryMixin._show_subcommand_completions` uses `_apply_assist(self, AssistKind.NONE)` (not `self._resolve_assist`) when no candidates are found. The `_apply_assist` shim checks for `_resolve_assist` first; if absent, sets `widget.suggestion = ""` and leaves `assist` unchanged. So a stub without `_resolve_assist` will leave `assist` as NONE — which is the expected result.
+- The `dismiss()` → `action_dismiss()` chain is a regression contract enforced by `test_overlay_dismiss_api.py`. Never break it — `dismiss()` must call `action_dismiss()`, not `dismiss_overlay()` directly.
+
+## LP-GUTTER split-file CSS — tcss comment contains old value (2026-05-09)
+
+- When adding a comment like `/* margin: 0 2 removed */` to hermes.tcss, that text appears in string-search tests asserting the old value is gone. Strip comment lines from the extracted block before checking: `non_comment_lines = [ln for ln in block.splitlines() if not ln.strip().startswith("/*") and not ln.strip().startswith("*")]`.
+- `SkinPayload.component_vars` vs `.colors`: `x-hermes: component-vars:` items (e.g., `user-accent`, `reasoning-accent`) land in `SkinPayload.component_vars`, not `.colors`. Only `colors:` (root) or `x-hermes: colors:` items go to `.colors`. Always assert `.component_vars["user-accent"]`, not `.colors["user-accent"]`.
+- When tcss declares both `DEFAULT_CSS` and `hermes.tcss` rules for the same widget, tcss wins on specificity. Mirror `padding: 0 1` in both locations so the value is consistent regardless of which layer the test queries. Do not rely on DEFAULT_CSS being the operative value for inherited properties.
+- Updating a sibling spec's CSS rule requires updating that spec's tests too. LP-GUTTER-3 changed `ReasoningPanel { margin: 0 2; }` → `margin: 0; padding: 0 1;`, which broke 4 LP-COL tests that asserted the old margin. Always grep for the old CSS value across all test files before committing a CSS change.
+
+## HintBar widget stub — content_size and app are read-only properties (2026-05-09)
+
+- `Widget.content_size` is a read-only property (no setter). Cannot be assigned via `bar.content_size = ...` or `bar.__dict__["content_size"] = ...` — the latter is silently shadowed by the descriptor.
+- `MessagePump.app` is backed by a `contextvars.ContextVar` (`active_app`). Cannot be set by any normal attribute assignment on the instance.
+- **Solution**: Create a local `_FakeHintBar(HintBar)` subclass with `@property content_size` and `@property app` returning the fake values. Use `_FakeHintBar.__new__(_FakeHintBar)` to bypass the real `__init__`.
+- This pattern must be a local class inside each factory function (not a module-level class) if `width` and `app` vary per test call — use closure capture.
+
+## Rich Text span styles are strings, not Style objects (2026-05-09)
+
+- `Text.from_markup("[bold]X[/]")._spans[0].style` returns the string `'bold'`, not a `rich.style.Style` instance.
+- Do NOT use `.style.bold` — it raises `AttributeError`.
+- Check: `isinstance(s.style, str) and "bold" in s.style` OR `hasattr(s.style, "bold") and s.style.bold` — cover both forms since resolved spans can be either.
+
+## _hint_cache FIFO eviction — key normalization (2026-05-09)
+
+- `_hints_for(phase, key_color)` normalizes to `key_color.lower()` before inserting. When testing FIFO eviction, ensure first_key uses the lowercased color: `("idle", color.lower())` — otherwise the membership check `first_key in _hint_cache` is always False and the test passes vacuously.
+
+## OutputPanel.size / Textual Widget.size is a read-only property (2026-05-09)
+
+- `Widget.size` (and `OutputPanel.size`) is a read-only property backed by Textual internals. Cannot be set via `panel.size = mock` on an `object.__new__` stub.
+- **Solution**: Create a local `_Stub(OutputPanel)` subclass that overrides `size` as a `@property` returning a `MagicMock`. Instantiate with `object.__new__(_Stub)` to bypass `__init__`. The fresh subclass per test-call ensures the override doesn't leak to the shared class.
+- Same pattern applies to any Textual `Widget` property that lacks a setter (`content_size`, `virtual_size`, `scroll_x`, `scroll_y`, etc.).

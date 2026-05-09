@@ -368,12 +368,13 @@ class ShimmerEffect(StreamEffectRenderer):
     """Bright wave sweeps across text — static label animation in the demo."""
 
     active = True
-    needs_clock = False
+    needs_clock = True
 
     def __init__(self, cfg: dict, lock: threading.Lock | None = None) -> None:
         super().__init__(cfg, lock)
         self._pos: float = -8.0
         self._window: int = 8
+        self._buf_len: int = 0  # tracks streaming text length for wrap reset
 
     def _register_terminal(self, token: str, raw_buf: str) -> None:
         self._pos += 1.5
@@ -395,6 +396,13 @@ class ShimmerEffect(StreamEffectRenderer):
                 parts.append(f"{text_ansi}{ch}\033[0m")
         return "".join(parts)
 
+    def register_token_tui(self, token: str) -> None:
+        self._buf_len += len(token)
+
+    def clear_tui(self) -> None:
+        self._pos = -float(self._window)
+        self._buf_len = 0
+
     def on_line_complete(self) -> None:
         self._pos = -float(self._window)
 
@@ -402,8 +410,9 @@ class ShimmerEffect(StreamEffectRenderer):
         self.on_line_complete()
 
     def tick_tui(self) -> bool:
-        # called directly by _LabelLine.tick_label(); needs_clock stays False intentionally
-        label_len = 20  # soft ceiling for wrap reset; ThinkingWidget labels are ~12–20 chars
+        # For ThinkingWidget labels (_buf_len==0): falls back to 20-char ceiling.
+        # For streaming text: covers full line width.
+        label_len = max(self._buf_len, 20)
         self._pos += _SHIMMER_ADVANCE_PER_TICK
         if self._pos > label_len + self._window:
             self._pos = -float(self._window)

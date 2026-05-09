@@ -599,6 +599,9 @@ class HermesApp(App):
         # Resize debounce — coalesces rapid resize events before app-level work
         self._pending_resize: "object | None" = None
         self._resize_timer: "object | None" = None  # textual Timer
+        # Last (w, h) that completed _flush_resize; (-1, -1) sentinel ensures first
+        # real flush always wins width_changed / geom_changed (RZ-APP-L6).
+        self._last_flushed_size: tuple[int, int] = (-1, -1)
         # Panel-ready gate: cli.py waits on this Event before starting chat() so
         # streaming only begins after the new MessagePanel and its engine are
         # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
@@ -1010,7 +1013,15 @@ class HermesApp(App):
         else:
             logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
 
-    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
+    # Resize debounce window — coalesces app-level work only:
+    #   _maybe_reload_emoji, _recompute_auto_compact,
+    #   _apply_min_size_overlay, _pane_manager.on_resize.
+    # Child widgets receive raw Resize cascades from Textual; child-level
+    # rate-limiting is each widget's responsibility (use crosses_threshold
+    # from resize_utils for dead-band gating).
+    # 60 ms ≈ one frame at typical drag burst rate; small enough that the
+    # user does not perceive latency, large enough to coalesce the burst.
+    _RESIZE_DEBOUNCE_S: float = 0.06
 
     def on_resize(self, event: "events.Resize") -> None:
         """Debounce rapid resize events; flush once idle for 60 ms."""
@@ -1048,18 +1059,32 @@ class HermesApp(App):
             w = size.width
             h = size.height
         except AttributeError:
+            logger.warning(
+                "_flush_resize: pending event lacked .size; skipping flush",
+                exc_info=True,
+            )
             return
-        self._apply_min_size_overlay(w, h)
-        # SVC-7: delegate auto-compact logic to single helper
-        self._recompute_auto_compact()
-        # Hard floor: w < 30 forces compact regardless of manual override
-        if w < 30 and not self.compact:
-            self.compact = True
-        # R2 pane layout — recalculate mode on every resize
-        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+
+        last_w, last_h = self._last_flushed_size  # init (-1, -1) in __init__
+        width_changed = w != last_w
+        geom_changed = width_changed or h != last_h
+
+        # _apply_min_size_overlay depends on (w, h) — skip if geometry unchanged
+        if geom_changed:
+            self._apply_min_size_overlay(w, h)
+        # SVC-7: delegate auto-compact logic to single helper — only when width changed
+        if width_changed:
+            self._recompute_auto_compact()
+            # Hard floor: w < 30 forces compact regardless of manual override
+            if w < 30 and not self.compact:
+                self.compact = True
+        # R2 pane layout — recalculate mode on geometry change
+        if geom_changed and getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
             changed = self._pane_manager.on_resize(w, h)
             if changed:
                 self._pane_manager._apply_layout(self)
+
+        self._last_flushed_size = (w, h)
 
     def _apply_min_size_overlay(self, w: int, h: int) -> None:
         """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""

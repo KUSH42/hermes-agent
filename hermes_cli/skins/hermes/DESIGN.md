@@ -8,7 +8,7 @@ colors:
   banner-title: '#FFD700'
   banner-accent: '#FFBF00'
   banner-dim: '#B8860B'
-  banner-text: '#FFF8DC'
+  banner-text: '#FFD580'
   banner-warning: '#FF8C00'
   banner-warning-dim: '#CD6500'
   banner-key: '#FFD700'

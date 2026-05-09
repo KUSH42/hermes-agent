@@ -33,6 +33,7 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.widget import Widget
 from textual.app import ComposeResult
@@ -386,6 +387,9 @@ def _is_code_intro_label(line: str) -> bool:
 
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")
 _MD_OL_RE = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)")
+# Matches a single short token (1-4 chars) followed by whitespace+content.
+# Used with cell_len() to detect wide-cell emoji bullets vs. ASCII prefixes.
+_MD_EMOJI_BULLET_RE = re.compile(r"^(\S{1,4})\s+(\S.*)$")
 
 # Approximate available width for pre-wrapping list items.
 # Accounts for CopyableBlock margin (0 2 = 4 chars) + scrollbar (1 char).
@@ -400,6 +404,15 @@ def _detect_list_cont_indent(line: str) -> str:
     m = _MD_OL_RE.match(line)
     if m:
         return " " * (len(m.group(1)) + len(m.group(2)) + 2)  # indent + num+dot+spc
+    # Wide-cell emoji bullet: cell_len > len() discriminates emoji from ASCII.
+    # ASCII chars have cell_len == len(); emoji have cell_len > len().
+    # This prevents short ASCII words like "hi" from false-positive matching.
+    m = _MD_EMOJI_BULLET_RE.match(line)
+    if m:
+        prefix = m.group(1)
+        prefix_cells = cell_len(prefix)
+        if 2 <= prefix_cells <= 4 and prefix_cells > len(prefix):
+            return " " * (prefix_cells + 1)
     return ""
 
 
@@ -407,7 +420,7 @@ def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) ->
     """Pre-wrap *line* with hanging *indent* so indent survives RichLog wrapping."""
     if not indent:
         return line
-    visual_line_len = len(_strip_ansi(line))
+    visual_line_len = cell_len(_strip_ansi(line))
     if visual_line_len <= width:
         return line
     # Pre-wrap: first line up to (width), rest at (width - len(indent))
@@ -419,13 +432,13 @@ def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) ->
     cur_vis = 0
     limit = first_width
     for word in words:
-        wlen = len(word)
+        wlen = cell_len(word)
         if cur:
             if cur_vis + 1 + wlen > limit:
                 out_lines.append(cur)
                 limit = rest_width
                 cur = indent + word
-                cur_vis = len(indent) + wlen
+                cur_vis = cell_len(indent) + wlen
             else:
                 cur += " " + word
                 cur_vis += 1 + wlen
@@ -446,7 +459,7 @@ def _apply_cont_indent_ansi(line: str, indent: str, width: int = _LIST_WRAP_WIDT
     """
     if not indent:
         return line
-    visual_line_len = len(_strip_ansi(line))
+    visual_line_len = cell_len(_strip_ansi(line))
     if visual_line_len <= width:
         return line
     first_width = width
@@ -457,13 +470,13 @@ def _apply_cont_indent_ansi(line: str, indent: str, width: int = _LIST_WRAP_WIDT
     cur_vis = 0
     limit = first_width
     for word in words:
-        wlen = len(_strip_ansi(word))  # ANSI-aware visual width
+        wlen = cell_len(_strip_ansi(word))  # ANSI- and wide-char-aware visual width
         if cur:
             if cur_vis + 1 + wlen > limit:
                 out_lines.append(cur)
                 limit = rest_width
                 cur = indent + word
-                cur_vis = len(indent) + wlen
+                cur_vis = cell_len(indent) + wlen
             else:
                 cur += " " + word
                 cur_vis += 1 + wlen

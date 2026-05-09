@@ -197,6 +197,8 @@ class TestLastReasoningInResult(unittest.TestCase):
         messages = self._build_messages(reasoning="Let me think...")
         last_reasoning = None
         for msg in reversed(messages):
+            if msg.get("role") == "user":
+                break
             if msg.get("role") == "assistant" and msg.get("reasoning"):
                 last_reasoning = msg["reasoning"]
                 break
@@ -206,6 +208,8 @@ class TestLastReasoningInResult(unittest.TestCase):
         messages = self._build_messages(reasoning=None)
         last_reasoning = None
         for msg in reversed(messages):
+            if msg.get("role") == "user":
+                break
             if msg.get("role") == "assistant" and msg.get("reasoning"):
                 last_reasoning = msg["reasoning"]
                 break
@@ -220,6 +224,8 @@ class TestLastReasoningInResult(unittest.TestCase):
         ]
         last_reasoning = None
         for msg in reversed(messages):
+            if msg.get("role") == "user":
+                break
             if msg.get("role") == "assistant" and msg.get("reasoning"):
                 last_reasoning = msg["reasoning"]
                 break
@@ -229,6 +235,8 @@ class TestLastReasoningInResult(unittest.TestCase):
         messages = self._build_messages(reasoning="")
         last_reasoning = None
         for msg in reversed(messages):
+            if msg.get("role") == "user":
+                break
             if msg.get("role") == "assistant" and msg.get("reasoning"):
                 last_reasoning = msg["reasoning"]
                 break
@@ -639,6 +647,8 @@ class TestEndToEndPipeline(unittest.TestCase):
 
         last_reasoning = None
         for msg in reversed(messages):
+            if msg.get("role") == "user":
+                break
             if msg.get("role") == "assistant" and msg.get("reasoning"):
                 last_reasoning = msg["reasoning"]
                 break

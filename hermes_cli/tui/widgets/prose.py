@@ -80,13 +80,14 @@ class InlineProseLog(CopyableRichLog):
         self._inline_lines[line_index] = line
         self._inline_paint[line_index] = self._build_paint_plan(line, text)
         # Record the "inline" op for reflow replay (REFLOW-H2).
-        # Guard: skip during _do_reflow replay — _replay_inline_op → write_inline
-        # would otherwise double-append on every reflow cycle.
-        if not self._replaying:
-            self._source_ops.append(_WriteOp(kind="inline", content=line))
-            if len(self._source_ops) > self._SOURCE_OPS_CAP:
-                drop = len(self._source_ops) - self._SOURCE_OPS_CAP
-                del self._source_ops[:drop]
+        # Note: NOT guarded by _replaying — _source_ops is cleared before _do_reflow's
+        # replay loop, so _replay_inline_op → write_inline re-populates it exactly once
+        # (no doubling). _inline_source_appending suppresses the duplicate "wws" op that
+        # write_with_source would otherwise record for the same write.
+        self._source_ops.append(_WriteOp(kind="inline", content=line))
+        if len(self._source_ops) > self._SOURCE_OPS_CAP:
+            drop = len(self._source_ops) - self._SOURCE_OPS_CAP
+            del self._source_ops[:drop]
         # Suppress write_with_source from also recording a "wws" op for this call
         # (the "inline" op above already covers it for reflow purposes).
         self._inline_source_appending = True

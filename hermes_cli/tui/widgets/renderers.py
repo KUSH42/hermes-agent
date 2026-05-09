@@ -227,10 +227,11 @@ class CopyableRichLog(RichLog, can_focus=False):
                     self._line_links.append(None)
         # Append to reflow buffer (REFLOW-H1). Done before deferred branch so each
         # logical write is recorded exactly once regardless of layout deferral.
-        # _replaying: skip — ops are already in the buffer (we are replaying them)
         # _wws_active: skip — write_with_source handles "wws" op storage itself
         # _deferred: skip — the non-deferred call already recorded it
-        if not _deferred and not self._replaying and not self._wws_active:
+        # Note: NOT guarded by _replaying — during _do_reflow, _source_ops is cleared
+        # before the replay loop, so replay writes re-populate it exactly once (no doubling).
+        if not _deferred and not self._wws_active:
             if isinstance(content, (Text, str)):
                 self._source_ops.append(_WriteOp(kind="text", content=content, link=link))
                 # Cap enforcement (REFLOW-M2)
@@ -287,10 +288,11 @@ class CopyableRichLog(RichLog, can_focus=False):
         self._plain_lines.append(plain)
         self._line_links.append(link)
         # Append to reflow buffer (REFLOW-H1).
-        # Guard: skip during _replaying (already replaying from buffer),
-        # and skip when _inline_source_appending (InlineProseLog stores an "inline"
+        # Guard: skip when _inline_source_appending (InlineProseLog stores an "inline"
         # op instead; the "wws" duplicate would break reflow for inline lines).
-        if not self._replaying and not getattr(self, "_inline_source_appending", False):
+        # Note: NOT guarded by _replaying — _source_ops is cleared before replay loop,
+        # so replay writes re-populate it exactly once (no doubling).
+        if not getattr(self, "_inline_source_appending", False):
             self._source_ops.append(_WriteOp(kind="wws", content=styled, plain=plain, link=link))
             self._rendered_max_width = max(
                 self._rendered_max_width,

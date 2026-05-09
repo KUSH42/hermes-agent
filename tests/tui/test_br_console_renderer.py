@@ -56,15 +56,21 @@ class TestBrowserConsoleRenderer:
         assert "uh oh" in text
         assert "boom" in text
 
-    def test_info_level_uses_cyan(self):
+    def test_info_level_uses_info_color(self):
         raw = _raw(console_messages=[{"type": "info", "text": "info message"}])
         renderer = _make_renderer("browser_console", raw)
         result = renderer.build()
         from rich.text import Text
+        from rich.style import Style
         # build() returns a Group; check the first element's spans
         segments = list(result.renderables)
         line: Text = segments[0]
-        assert any("cyan" in str(s.style) for s in line._spans), "info level should use cyan style"
+        info_hex = renderer.colors.info
+        styles = [s.style for s in line._spans]
+        assert any(
+            isinstance(st, Style) and st.color is not None and info_hex.lower() in str(st.color).lower()
+            for st in styles
+        ), f"info level should use SkinColors.info ({info_hex})"
 
     def test_js_errors_section_shows_badge(self):
         raw = _raw(

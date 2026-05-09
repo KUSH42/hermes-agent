@@ -24,12 +24,15 @@ _ACTION_TOOLS = frozenset({
     "browser_press",
 })
 
-_STATUS_COLORS: dict = {
-    range(200, 300): "green",
-    range(300, 400): "yellow",
-    range(400, 500): "red",
-    range(500, 600): "bright_red",
-}
+def _status_color(status: int, c) -> str:
+    """Return a skin hex for the HTTP status range using SkinColors fields."""
+    if 200 <= status < 300:
+        return c.success
+    if 300 <= status < 400:
+        return c.warning
+    if 400 <= status < 600:
+        return c.error
+    return c.muted
 
 
 class BrowserNavigateRenderer(BodyRenderer):
@@ -47,6 +50,7 @@ class BrowserNavigateRenderer(BodyRenderer):
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
+            # malformed/non-JSON tool output: best-effort fall back to raw text
             from rich.text import Text
             return Text(raw)
 
@@ -59,22 +63,21 @@ class BrowserNavigateRenderer(BodyRenderer):
 
     def _build_nav(self, data: dict, success: bool):
         from rich.text import Text
+        from rich.style import Style
+        c = self.colors
         url = data.get("final_url") or data.get("url") or ""
         title = data.get("title") or data.get("page_title") or ""
         raw_status = data.get("status_code") or data.get("status") or (200 if success else 0)
         try:
             status = int(raw_status)
         except (TypeError, ValueError):
+            # malformed status field: fall back to a default based on success
             status = 200 if success else 0
 
-        status_color = "red"
-        for r, color in _STATUS_COLORS.items():
-            if status in r:
-                status_color = color
-                break
+        status_hex = _status_color(status, c)
 
         result = Text()
-        result.append(f" {status} ", style=f"bold {status_color} on default")
+        result.append(f" {status} ", style=Style(color=status_hex, bold=True))
         result.append("  ")
         result.append(url, style="link")
 
@@ -82,12 +85,14 @@ class BrowserNavigateRenderer(BodyRenderer):
             result.append(f"\n  {title}", style="bold")
 
         if not success and data.get("error"):
-            result.append(f"\n  {data['error']}", style="red")
+            result.append(f"\n  {data['error']}", style=Style(color=c.error))
 
         return result
 
     def _build_action(self, data: dict, success: bool, tool_name: str):
         from rich.text import Text
+        from rich.style import Style
+        c = self.colors
         verb_map = {
             "browser_click":  "Clicked",
             "browser_type":   "Typed",
@@ -103,13 +108,13 @@ class BrowserNavigateRenderer(BodyRenderer):
             or ""
         )
         icon = "✓" if success else "✗"
-        color = "green" if success else "red"
+        color_hex = c.success if success else c.error
         line = Text()
-        line.append(f"{icon} {verb}", style=f"bold {color}")
+        line.append(f"{icon} {verb}", style=Style(color=color_hex, bold=True))
         if target:
             line.append(f"  {target}", style="default")
         if not success and data.get("error"):
-            line.append(f"\n  {data['error']}", style="red")
+            line.append(f"\n  {data['error']}", style=Style(color=c.error))
         return line
 
     def summary_line(self, *, density=None, cls_result=None) -> str:

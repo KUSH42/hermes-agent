@@ -84,6 +84,7 @@ class BrowserSnapshotRenderer(BodyRenderer):
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
+            # malformed/non-JSON tool output: best-effort fall back to raw text
             return Text(raw)
 
         success = bool(data.get("success", True))
@@ -103,8 +104,9 @@ class BrowserSnapshotRenderer(BodyRenderer):
             group.append(Rule(style="dim"))
 
         if not success:
+            from rich.style import Style
             err = data.get("error") or "(snapshot failed)"
-            group.append(Text(f"✗ {err}", style="red"))
+            group.append(Text(f"✗ {err}", style=Style(color=self.colors.error)))
             return Group(*group)
 
         if snapshot:

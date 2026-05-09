@@ -14,15 +14,20 @@ if TYPE_CHECKING:
 
 _CONSOLE_TOOLS = frozenset({"browser_console"})
 
-_LEVEL_STYLES = {
-    "log":     "dim",
-    "debug":   "dim",
-    "info":    "cyan",
-    "warning": "yellow",
-    "warn":    "yellow",
-    "error":   "bold red",
-    "assert":  "bold red",
-}
+def _level_styles(c):
+    """Build per-level Rich Style objects from skin colors."""
+    from rich.style import Style
+    return {
+        "log":     Style(dim=True),
+        "debug":   Style(dim=True),
+        "info":    Style(color=c.info),
+        "warning": Style(color=c.warning),
+        "warn":    Style(color=c.warning),
+        "error":   Style(color=c.error, bold=True),
+        "assert":  Style(color=c.error, bold=True),
+    }
+
+
 _DEFAULT_LEVEL_STYLE = "default"
 
 
@@ -39,11 +44,13 @@ class BrowserConsoleRenderer(BodyRenderer):
     def build(self):
         from rich.console import Group
         from rich.text import Text
+        from rich.style import Style
 
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError):
+            # malformed/non-JSON tool output: best-effort fall back to raw text
             return Text(raw)
 
         messages = data.get("console_messages") or []
@@ -52,11 +59,16 @@ class BrowserConsoleRenderer(BodyRenderer):
         if not messages and not js_errors:
             return Text("(no console output)", style="dim")
 
+        c = self.colors
+        styles = _level_styles(c)
+        err_style = Style(color=c.error)
+        err_dim_style = Style(color=c.error_dim, dim=True)
+
         group = []
 
         for msg in messages:
             level = (msg.get("type") or msg.get("level") or "log").lower()
-            style = _LEVEL_STYLES.get(level, _DEFAULT_LEVEL_STYLE)
+            style = styles.get(level, _DEFAULT_LEVEL_STYLE)
             text = msg.get("text") or msg.get("message") or ""
             line = Text(no_wrap=False)
             line.append(f"{level:7} ", style=style)
@@ -64,18 +76,21 @@ class BrowserConsoleRenderer(BodyRenderer):
             group.append(line)
 
         if js_errors:
-            group.append(Text("──", style="dim red"))
+            group.append(Text("──", style=err_dim_style))
             badge = Text()
-            badge.append(f" {len(js_errors)} JS error(s) ", style="bold white on red")
+            badge.append(
+                f" {len(js_errors)} JS error(s) ",
+                style=Style(color="white", bgcolor=c.error, bold=True),
+            )
             group.append(badge)
             for err in js_errors:
                 msg = err.get("message") or err.get("text") or str(err)
                 line = Text(no_wrap=False)
-                line.append("  " + msg, style="red")
+                line.append("  " + msg, style=err_style)
                 stack = err.get("stack") or ""
                 if stack:
                     for frame in stack.splitlines()[:4]:
-                        line.append("\n    " + frame.strip(), style="dim red")
+                        line.append("\n    " + frame.strip(), style=err_dim_style)
                 group.append(line)
 
         return Group(*group)
@@ -84,7 +99,9 @@ class BrowserConsoleRenderer(BodyRenderer):
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
-        except Exception:  # json.JSONDecodeError and others: render gracefully in summary_line
+        except Exception:
+            # malformed payload: best-effort fallback for the summary line; nothing to log
+            _log.debug("browser_console summary_line: malformed JSON payload", exc_info=True)
             return "(console)"
         messages = data.get("console_messages") or []
         js_errors = data.get("js_errors") or []

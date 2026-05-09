@@ -259,9 +259,12 @@ class TestSkinDeclarations:
                 f"{name} effect not in EFFECT_MAP"
             )
 
-    def test_matrix_skin_caps_at_3s(self):
+    def test_matrix_skin_max_wall_s(self):
+        # Tuned to 10.0s alongside the matrix-effect restoration (commits
+        # a30bda9a, b344b756) — long enough for the "matrix" effect to reach
+        # its full resolve phase.
         p = _bundled_payload("matrix")
-        assert p.startup_tte["max_wall_s"] == 3.0
+        assert p.startup_tte["max_wall_s"] == 10.0
 
     def test_hermes_skin_uses_vhstape(self):
         p = _bundled_payload("hermes")

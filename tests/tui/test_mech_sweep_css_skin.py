@@ -32,9 +32,14 @@ class TestCSS1MCPAccent:
         assert "$tool-mcp-accent" in text, "$tool-mcp-accent var reference missing from hermes.tcss"
         # The raw hardcoded hex must be gone from any rule (not just the declaration)
         # Strip declaration lines so we only check rule bodies
+        # Both `$tool-mcp-accent` (legacy) and `$tool-tier-mcp-accent` (tier
+        # accent catalogue) declare the canonical MCP purple as their default
+        # value. Both lines are declarations, not rule bodies.
+        _DECL_PREFIXES = ("$tool-mcp-accent", "$tool-tier-mcp-accent")
         rule_lines = [
             ln for ln in text.splitlines()
-            if "#9b59b6" in ln and not ln.strip().startswith("$tool-mcp-accent")
+            if "#9b59b6" in ln
+            and not any(ln.strip().startswith(p) for p in _DECL_PREFIXES)
         ]
         assert rule_lines == [], (
             f"Hardcoded #9b59b6 still present in TCSS rule bodies: {rule_lines}"

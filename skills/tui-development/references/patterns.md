@@ -969,3 +969,439 @@ if anchor is not None and anchor.parent is self:
 
 **Pitfall:** always call `_schedule_group_widget(panel)` after adjacent mount so
 ToolGroup grouping sees the panel. Without it, the panel is silently skipped.
+
+---
+
+## Testing patterns
+
+> Widget, overlay, theming, and output flow patterns: [references/patterns.md](references/patterns.md)
+> Deep live e2e audit (Pilot harness + DEBUG logs + keystroke JSONL → replay seed): [references/live-audit.md](references/live-audit.md)
+> Real-PTY tmux audit pass (complement to Pilot — catches kitty/sixel/SIGWINCH/OSC bugs Pilot can't see): [references/tmux-audit.md](references/tmux-audit.md)
+
+### Running tests
+
+**NEVER run `python -m pytest tests/tui/`** — full suite has 3700+ tests and takes ~16 minutes. Run only targeted files:
+
+```bash
+# Module-specific:
+python -m pytest tests/tui/test_tool_blocks.py tests/tui/test_tool_panel.py -x -q --override-ini="addopts="
+
+# Import check only for app.py:
+python3 -c "from hermes_cli.tui.app import HermesApp; print('OK')"
+```
+
+Use `--override-ini="addopts="` to suppress rtk output suppression.
+
+**After splits, run only files for the touched modules.** Do not run suites for unrelated modules.
+
+### Basic async test structure
+
+```python
+@pytest.mark.asyncio
+async def test_my_widget() -> None:
+    from unittest.mock import MagicMock
+    app = HermesApp(cli=MagicMock())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        widget = app.query_one(MyWidget)
+        widget.some_attr = "value"
+        await pilot.pause()
+        assert widget.rendered_text == "expected"
+```
+
+- `await pilot.pause()` — let event loop tick (needed after reactive changes)
+- `await pilot.pause(delay=0.3)` — wait for workers (file preview, etc.)
+- `pilot.press("key")` may be consumed by the focused widget — call `app.on_key(mock_event)` directly to test app-level handlers
+- Use `asyncio.get_running_loop()` not `asyncio.get_event_loop()` in sync pytest fixtures (Python 3.10+ deprecation)
+
+### MagicMock gotchas
+
+**`isinstance(MagicMock(spec=Cls), Cls)` is always False** — even with `spec=`. Use duck-typing:
+```python
+# WRONG — always False for MagicMock
+if not isinstance(block, StreamingToolBlock):
+    return
+
+# CORRECT
+if not hasattr(block, '_follow_tail'):
+    return
+```
+
+**`getattr(mock, "_attr", False)` is truthy** — unset attrs on `MagicMock(spec=...)` return a `MagicMock()` object (truthy). Use identity check:
+```python
+# WRONG — fires for any unset attr (MagicMock() is truthy)
+if getattr(block, "_completed", False):
+    return
+
+# CORRECT
+if getattr(block, "_completed", False) is True:
+    return
+```
+
+### `__new__`-created objects
+
+Tests sometimes use `Cls.__new__(Cls)` to bypass Textual's Widget constructor. Every `self._attr` set in `__init__` is absent on such objects.
+
+**In production code**, any method exercised by `__new__`-based tests MUST use `getattr(self, '_attr', default)`:
+```python
+# WRONG — AttributeError on __new__-constructed object
+if self._detected_cwd:
+    ...
+
+# CORRECT
+if getattr(self, '_detected_cwd', None):
+    ...
+```
+
+**Prefer `Widget.__init__` over `__new__`**: `Widget.__init__` doesn't mount or compose — it's safe to call without a running app. `__new__` forces the test to maintain a parallel list of all instance attrs and breaks silently when `__init__` adds a new one. Only use `__new__` when `__init__` has custom logic that genuinely requires a running app.
+
+### Patch targets after module splits
+
+Patch at the module where the name is **defined**, not where it is used:
+
+```python
+# WRONG after split — spec_for now lives in tool_category.py
+patch("hermes_cli.tui.tool_blocks.spec_for")
+
+# CORRECT
+patch("hermes_cli.tui.tool_category.spec_for")
+```
+
+After `input/` subpackage split, `input_widget.py` is a shim — it re-exports but doesn't re-import into its own namespace. Tests patching `hermes_cli.tui.input_widget.some_fn` must update to `hermes_cli.tui.input.widget.some_fn`.
+
+### Overlay test fixtures
+
+Tests using a minimal `_App` class must yield overlay widgets in `compose()`. Without them, actions that use `query_one(SomeOverlay)` silently no-op (caught `NoMatches`) and visibility assertions never fire:
+
+```python
+class _App(App):
+    def compose(self):
+        yield ToolPanelHelpOverlay()  # required
+        yield MyWidget()
+
+# Assert visibility state, not DOM presence:
+assert not overlay.has_class("--visible")  # CORRECT
+assert len(pilot.app.query(MyOverlay)) == 0  # WRONG — pre-mounted, always present
+```
+
+### Contradictory test pairs after refactors
+
+A test written for old behavior (e.g. `assert "scroll_relative" in src`) conflicts with a new test (e.g. `assert mock.scroll_down.call_count >= 5`). When both exist and the old one passes while the new one fails, the old test codifies superseded design. Update the old test to match the new implementation.
+
+### Unstaged modifications cause mysterious failures
+
+Pre-session `M` files in `git status` may contain broken/reverted code that conflicts with the committed state. Run `git diff HEAD -- <file>` before assuming a test failure is in your changes.
+
+### Ghost method calls
+
+Always `grep -rn "def method_name"` before calling a method that was added in a recent refactor. Ghost calls (`_notify_group_header()` called but defined nowhere) silently no-op on real objects and crash on `__new__`-constructed ones.
+
+### Animation engine performance patterns
+
+**try/except vs bounds check:** Drawille raises on out-of-bounds coords. Replacing `try: canvas.set(x,y) except Exception: pass` with `if 0 <= x < w and 0 <= y < h: canvas.set(x,y)` is 5–15% faster per engine. Exception machinery is ~10× slower when it fires.
+
+**Sin/cos LUT:** `_SIN_LUT`/`_COS_LUT` (1024 entries) + `_lut_sin(angle)`/`_lut_cos(angle)` live in `anim_engines.py`. Max error ~0.006 vs `math.sin` — fine for visual rendering, NOT for physics integration (RK4 etc.). Swap into hot per-pixel loops only.
+
+**Divisor hoisting:** `max(w, 1)` / `max(h, 1)` inside inner loops should be hoisted to `w_inv = 1.0 / max(w, 1)` before the loop. Same for `max(row_len - 1, 1)` in `_render_multi_color`.
+
+**Spatial grid for boid simulations:** `FlockSwarmEngine` uses `_BOID_CELL_SIZE = 20` (= largest steering radius). Grid built O(n) per frame with `self._grid.clear()` + rebuild. 3×3 cell search replaces O(n²) all-pairs loop. Gain: 15–55% depending on canvas size. Key: use empty tuple `()` as `.get()` default to avoid list allocation on empty cells.
+
+**TrailCanvas canvas pooling:** Store `self._canvas = drawille.Canvas()` at `__init__`; detect `self._canvas_has_clear = hasattr(self._canvas, 'clear')` once. `to_canvas()` reuses the stored canvas instead of allocating each frame.
+
+**`_layer_frames` buffers:** Module-level `_LAYER_ROW_BUF`/`_LAYER_RESULT_BUF` lists with `.clear()` + append replace per-call allocations. Non-reentrant — only valid from the Textual event loop (single-threaded). Add a comment noting this.
+
+**`_render_multi_color` buffer:** `self._multi_color_row_buf: list[str]` on `DrawilleOverlay`, initialised in `on_mount()` (no `__init__` on this widget). Reuse per row; reallocate only on width change.
+
+**`_braille_density_set` / `_depth_to_density` signatures:** Both accept `w, h` parameters (added in perf pass). Call sites: `HyperspaceEngine`, `AuroraRibbonEngine` (direct), `RopeBraidEngine` (via `_depth_to_density`).
+
+### Rich `Syntax.__repr__` does not include the theme name
+
+The spec comment "Rich's `Syntax.__repr__` includes the theme name" is **wrong** for Rich ≥15. `repr(Syntax(..., theme="dracula"))` returns `<rich.syntax.Syntax object at 0x...>` — no theme name. `Syntax._theme` is a `PygmentsSyntaxTheme` object, not a string. Two ways to assert the theme:
+
+**Preferred — patch `rich.syntax.Syntax` and capture the kwarg:**
+```python
+import rich.syntax as _rich_syntax
+_real = _rich_syntax.Syntax
+themes = []
+with patch.object(_rich_syntax, "Syntax", side_effect=lambda *a, **kw: (themes.append(kw.get("theme")), _real(*a, **kw))[1]):
+    widget._render_body()
+assert themes[0] == "nord"
+```
+
+**Alternative — read the resolved style class name:**
+```python
+theme_name = syntax._theme._pygments_style_class.__name__.lower()
+assert "dracula" in theme_name  # "DraculaStyle" → "draculastyle"
+```
+
+### MagicMock `app.config` makes collapse-threshold read return 1
+
+When an app is `MagicMock()`, `app.config` auto-returns a MagicMock. Dict-chain lookups on MagicMock (`cfg.get("tui")` etc.) stay truthy and chain further MagicMocks. `int(MagicMock())` calls `__int__` which MagicMock implements — returns **1** by default. If a renderer reads a threshold via `app.config`, tests with a bare MagicMock app will trigger that threshold unexpectedly. Always set `app.config = {}` when the test doesn't care about config:
+
+```python
+app = MagicMock()
+app.get_css_variables.return_value = {"syntax-theme": "dracula"}
+app.config = {}  # prevents threshold = 1 via MagicMock.__int__
+```
+
+### `_JsonCollapseWidget` child widgets in `__init__` for pure-unit toggle tests
+
+When a widget has a `_toggle_expand()` or similar method that flips `child.display`, and tests call it without `run_test`, child widgets **must** be assigned in `__init__` (not `compose()`). `compose()` only runs after mounting; calling `_toggle_expand()` on an unmounted widget would raise `AttributeError` on missing children.
+
+```python
+class _JsonCollapseWidget(Widget):
+    def __init__(self, summary_text, syntax, full_json):
+        from textual.widgets import Static
+        super().__init__()
+        self._summary = Static(summary_text)       # in __init__
+        self._syntax_view = Static(syntax)         # in __init__
+        self._syntax_view.display = False
+        self._full_json = full_json
+
+    def compose(self):
+        yield self._summary        # yielded in compose too for mounting
+        yield self._syntax_view
+
+    def _toggle_expand(self):
+        self._syntax_view.display = not self._syntax_view.display
+```
+
+Test: `widget._toggle_expand(); assert widget._syntax_view.display is True` — no `run_test` needed.
+
+### Rich `Color.__str__` returns full repr, not hex; comparison is case-sensitive
+
+`str(span.style.color)` returns `"Color('#ff3333', ColorType.TRUECOLOR, ...)"` — NOT bare hex. Rich normalises hex to **lowercase** internally (e.g. `"#E06C75"` → stored as `"#e06c75"`). Test assertions must use `in` AND lower-case:
+
+```python
+# WRONG — fails (wrong form) or flaky (case mismatch)
+assert str(span.style.color) == "#E06C75"
+assert "#E06C75" in str(span.style.color)
+
+# CORRECT
+assert "#e06c75" in str(span.style.color).lower()
+# or case-insensitive:
+assert SkinColors.default().error.lower() in str(span.style.color).lower()
+```
+
+This affects any test that checks span colours from Rich `Text._spans`.
+
+### `rich.console.Group` doesn't stringify to content — use `._renderables`
+
+`str(Group(...))` returns the Python object repr, not rendered text. To extract content from a `Group` in tests:
+
+```python
+from rich.console import Group
+from rich.text import Text
+
+def _group_text(g):
+    if isinstance(g, Group):
+        return " ".join(
+            r.plain if isinstance(r, Text) else str(r)
+            for r in g._renderables
+        )
+    return g.plain if isinstance(g, Text) else str(g)
+```
+
+### `Rich.Text.append()` has no `end=` kwarg
+
+`text.append("x", style=s, end="")` raises `TypeError: Text.append() got an unexpected keyword argument 'end'`. `end` is not an arg. Just omit it; append always concatenates without separator.
+
+### Float field truthiness: `0.0` is falsy — use `is not None`
+
+```python
+# WRONG — skips elapsed when started_at == 0.0
+if finished_at and started_at:
+    elapsed = finished_at - started_at
+
+# CORRECT
+if finished_at is not None and started_at is not None:
+    elapsed = finished_at - started_at
+```
+
+Any numeric field that can legitimately be `0` or `0.0` (timestamps, counts, thresholds) must be checked with `is not None`, not truthiness.
+
+### Rich bracket eating in Button labels
+
+`Button("[show all]", ...)` renders as empty — Rich parses `[show all]` as a markup tag. Always wrap bracket-containing labels:
+```python
+from rich.text import Text
+Button(Text("[show all]"), ...)  # correct
+Button("[show all]", ...)        # empty label
+```
+
+### `_pending_children` internal name conflict
+
+Textual's `Widget` base class uses `_pending_children` as an internal list attribute. Naming your own widget dict attribute `_pending_children` causes `'list' object has no attribute 'setdefault'` errors. Use `_child_buffer` or similar instead.
+
+### Static content access
+
+`Static` has no `.renderable` attribute in Textual 8.x. Use `.content`:
+
+```python
+# WRONG — AttributeError
+str(widget.query_one("#foo", Static).renderable)
+
+# CORRECT
+str(widget.query_one("#foo", Static).content)
+```
+
+### Pure-function widget method tests (_ChartHelper pattern)
+
+For Widget methods that only use a small set of `self.*` attrs (no `query_one`, no reactives), avoid running a full app by creating a plain helper class:
+
+```python
+class _ChartHelper:
+    _BAR_WIDTH = 30
+    _build_chart = UsageOverlay._build_chart
+    _build_sparkline = UsageOverlay._build_sparkline
+
+def _h() -> _ChartHelper:
+    return _ChartHelper()
+
+def test_zero_total():
+    assert "no token data yet" in _h()._build_chart(0, 0, 0, 0).lower()
+```
+
+No `Widget.__new__`, no running app, no async overhead. Only works when the method's `self` access is limited to plain attributes declared on the helper.
+
+### Patching function-local imports
+
+If a method does `from some.module import fn` inside the function body, patch at the **source module**:
+
+```python
+# Method body: from agent.usage_pricing import estimate_usage_cost
+# WRONG — name never bound in overlays namespace
+patch("hermes_cli.tui.overlays.estimate_usage_cost")
+
+# CORRECT — patches sys.modules["agent.usage_pricing"].estimate_usage_cost
+patch("agent.usage_pricing.estimate_usage_cost")
+```
+
+### App-level key handler testing
+
+Non-focused widgets can't receive key events via `pilot.press()`. Test app-level `on_key` dispatch directly:
+
+```python
+with patch.object(app, "_copy_text_with_hint") as mock_copy:
+    event = MagicMock()
+    event.key = "c"
+    app.on_key(event)
+    await pilot.pause()
+    mock_copy.assert_called_once_with("expected text")
+    event.prevent_default.assert_called()
+```
+
+### `__init__.py` re-exports after subpackage splits
+
+After splitting `renderers.py` into `code_blocks.py`, `inline_media.py`, `prose.py`, the `widgets/__init__.py` re-export block still imported from `.renderers`. A single `ImportError` in `__init__.py` blocks ALL test files that import `hermes_cli.tui.app` from collecting (~100+ tests). Fix: import each class from its actual home module:
+
+```python
+# BROKEN after split
+from .renderers import (CodeBlockFooter, StreamingCodeBlock, InlineImage, ...)
+
+# CORRECT after split
+from .renderers import (CopyableBlock, CopyableRichLog, LiveLineWidget, ...)
+from .code_blocks import (CodeBlockFooter, StreamingCodeBlock)
+from .inline_media import (InlineImage, InlineImageBar, InlineThumbnail)
+from .prose import (InlineProseLog, MathBlockWidget)
+```
+
+---
+
+
+---
+
+## Lifecycle Hooks — cleanup outside watchers (RX4)
+
+`AgentLifecycleHooks` (`hermes_cli/tui/services/lifecycle_hooks.py`) is a priority-ordered, error-isolated registry for cleanup that used to live inline in `watch_agent_running`. Accessed as `self.hooks` on `HermesApp`.
+
+### Why
+
+Every audit pass finds "forgot to reset X when Y happened". Cleanup was open-coded in whichever watcher observed the transition. 175-line `watch_agent_running` had 17+ side effects in source-line order with no enforced checklist. RX4 extracts cleanup into named callbacks registered against the transition they care about.
+
+Division of labour:
+- **Reactive watcher** → updates rendering state (CSS classes, `.display`, widget properties), then calls `hooks.fire(transition)` at the end.
+- **Hook callback** → performs cleanup (clear attrs, reset timers, emit OSC, notify external subsystems). Never touches rendering.
+
+### Transition names
+
+| Transition | When |
+|---|---|
+| `on_turn_start` | `agent_running` False → True |
+| `on_turn_end_any` | `agent_running` True → False (always) |
+| `on_turn_end_success` | turn end, `status_error` empty |
+| `on_turn_end_error` | turn end, `status_error` set |
+| `on_interrupt` | turn end via ESC/resubmit — set `app._interrupt_source` before dispatching |
+| `on_compact_complete` | `status_compaction_progress` → 0.0 |
+| `on_error_set` | `status_error` "" → non-empty |
+| `on_error_clear` | `status_error` non-empty → "" |
+| `on_session_switch` | session label changes |
+| `on_session_resume` | session loads on startup |
+| `on_streaming_start` | first token of assistant response |
+| `on_streaming_end` | last token of assistant message |
+
+### Priority ranges
+
+| Priority | Used for |
+|---|---|
+| 10 | Terminal state: OSC progress, desktop notify scheduling |
+| 50 | Buffer flush: `flush_live`, `evict_old_turns` |
+| 100 | Default / generic cleanups |
+| 500 | Visual chrome: chevron pulses, hint phase |
+| 900 | Input refocus / placeholder restore (runs last) |
+
+### Registration pattern
+
+Register in `on_mount`, not `__init__`, so `on_unmount` reliably deregisters:
+
+```python
+class MyService:
+    def on_mount(self):
+        self._handles = [
+            self.app.hooks.register("on_turn_end_any", self._cleanup, owner=self, priority=100, name="my_cleanup"),
+        ]
+
+    def on_unmount(self):
+        self.app.hooks.unregister_owner(self)
+```
+
+`owner=self` enables bulk cleanup via `unregister_owner(self)`. For bound methods, the registry uses `WeakMethod` — owner GC → registration silently pruned on next `fire`.
+
+### Key gotchas
+
+> Dense pitfall list: [references/gotchas.md](references/gotchas.md) — check before editing tricky TUI code.
+
+- **Do not set the reactive that owns the transition.** A callback on `on_turn_end_any` that sets `agent_running = True` re-enters immediately. Policy: callbacks must not set the reactive whose transition they're responding to.
+- **Nested fires are allowed.** `fire("on_turn_end_any")` can call `fire("on_interrupt")` inside a callback. Each `fire` snapshots its registration list at entry — mid-fire register/unregister is safe.
+- **`call_later` has no delay param.** For timed cleanup inside a callback (e.g. chevron 400 ms pulse), use `app.set_timer(delay, callback)` from inside the hook callback.
+- **Pre-mount guard.** `fire` before `app.is_running` defers to `_deferred` queue; `drain_deferred()` is called from `on_mount`.
+- **`**_` pattern.** Callbacks registered on transitions that carry `**ctx` (e.g. `on_interrupt` carries `source=`) must accept `**_` if they don't use the kwargs. Callbacks on both ctx-less and ctx-carrying transitions need `**_`.
+- **`_interrupt_source` flag.** Set `app._interrupt_source = "esc"` (or `"resubmit"` / `"ctrl+shift+c"`) in `services/keys.py` (`KeyDispatchService`) before dispatching the interrupt. `watch_agent_running(False)` reads and clears it; fires `on_interrupt` if set.
+- **Firing points.** `watch_agent_running` fires `on_turn_start/end_*`; `WatchersService.on_status_compaction_progress` fires `on_compact_complete`; `WatchersService.on_status_error` fires `on_error_set/clear`; `IOService.consume_output` fires `on_streaming_start/end`.
+
+### Debug introspection
+
+```python
+snap = app.hooks.snapshot()  # dict[transition, list[name]]
+# Returns {"on_turn_start": ["reset_turn_state", "osc_progress_start"], ...}
+```
+
+### Phase d — enforcement patterns
+
+**AST snapshot test** — `TestPhaseD.test_registered_transitions_documented` in `tests/tui/services/test_lifecycle_hooks_phase_c.py` uses `ast.parse(textwrap.dedent(inspect.getsource(HermesApp._register_lifecycle_hooks)))` to extract every `h.register(...)` call and compares it against the `EXPECTED_SNAPSHOT` module-level constant (§9 table). When you add a new hook registration, you MUST:
+1. Add the `h.register(...)` call in `_register_lifecycle_hooks`
+2. Update `EXPECTED_SNAPSHOT` in the test file
+3. Update `## 9. Registered callbacks` in the RX4 spec at `/home/xush/.hermes/2026-04-22-tui-v2-RX4-lifecycle-hooks-spec.md`
+
+**Banned inline patterns** — `test_watch_agent_running_no_inline_reactive_cleanups` enforces that these patterns do NOT appear inline in `watch_agent_running`:
+- `status_output_dropped = False`
+- `spinner_label = `
+- `status_active_file = `
+- `_active_streaming_blocks.clear()`
+- `_maybe_notify()`
+- `_try_auto_title()`
+
+**Watcher line budget** — `test_watchers_service_no_deep_inline_cleanup` enforces that `WatchersService` compaction-related methods have ≤ 3 inline cleanup statements.
+
+---
+

@@ -971,3 +971,304 @@ overlay = _Isolated.__new__(_Isolated)
 - `Widget.size` (and `OutputPanel.size`) is a read-only property backed by Textual internals. Cannot be set via `panel.size = mock` on an `object.__new__` stub.
 - **Solution**: Create a local `_Stub(OutputPanel)` subclass that overrides `size` as a `@property` returning a `MagicMock`. Instantiate with `object.__new__(_Stub)` to bypass `__init__`. The fresh subclass per test-call ensures the override doesn't leak to the shared class.
 - Same pattern applies to any Textual `Widget` property that lacks a setter (`content_size`, `virtual_size`, `scroll_x`, `scroll_y`, etc.).
+
+---
+
+## Framework: Textual 8.2.3 (from SKILL.md)
+
+
+### Import paths
+
+```python
+from textual.app import App, ComposeResult
+from textual.widgets import Static, Button, Input, RichLog, Label
+from textual.containers import ScrollableContainer, Vertical, Horizontal
+from textual import events, work
+from textual.worker import get_current_worker
+from textual.reactive import reactive
+from textual.binding import Binding
+from textual.geometry import Size
+from textual.message import Message  # needed for inner Message subclasses
+```
+
+### Reactive state
+
+```python
+class MyApp(App):
+    my_value: reactive[str] = reactive("")
+
+    def watch_my_value(self, old: str, new: str) -> None:
+        ...
+```
+
+Watchers run synchronously on the event loop. Never do blocking I/O in a watcher.
+
+**`Widget.watch(obj, attr, cb)` returns `None` — never store or stop the handle.** The signature is `-> None`. Storing `self._h = self.watch(...)` then calling `self._h.stop()` in `on_unmount` raises `AttributeError: 'NoneType'.stop()` on every shutdown. Textual auto-unregisters cross-widget watchers when the observing widget unmounts. `on_unmount` should only stop timers/animations the widget owns (e.g. pulse/shimmer timers):
+
+```python
+def on_mount(self) -> None:
+    self.watch(self.app, "status_streaming", self._on_change)  # no handle
+
+def on_unmount(self) -> None:
+    self._pulse_stop()  # own timer — stop it; watcher — Textual cleans it up
+```
+
+**Manually calling `watch_*` does NOT update the reactive value**: `widget.watch_has_focus(False)` invokes the callback but `widget.has_focus` stays unchanged. Track display state in a plain bool attribute the watcher writes to; read that, not the reactive, in other methods:
+
+```python
+def __init__(self):
+    self._hint_visible: bool = False
+
+def watch_has_focus(self, value: bool) -> None:
+    self._hint_visible = value
+    ...
+
+def on_resize(self, event) -> None:
+    if self._hint_visible:  # NOT self.has_focus
+        self._set_hint(...)
+```
+
+**`int()` casts in watchers**: Tests that call `widget.watch_collapsed(False)` with a mock `_block` will trigger `len(mock._all_plain)` → MagicMock → TypeError. Wrap restore/expand blocks in `try/except` and cast explicitly:
+
+```python
+try:
+    saved = int(self._saved_visible_start)
+    total = int(len(self._block._all_plain))
+except Exception:
+    pass
+```
+
+### Worker pattern
+
+**`call_from_thread` is only on `App`, not on `Widget`** (Textual 8.x). Inside a `@work(thread=True)` method on a widget, use `self.app.call_from_thread(fn)` — NOT `self.call_from_thread(fn)`. The latter raises `AttributeError` at runtime.
+
+```python
+@work(thread=True)   # CPU or blocking I/O
+def _load_file(self) -> None:
+    data = open(...).read()
+    self.app.call_from_thread(self._display, data)  # NOT self.call_from_thread
+
+@work            # async — runs in event loop
+async def _do_search(self, query: str) -> None: ...
+
+# Cancel previous before starting new:
+def _search(self, query: str) -> None:
+    self._search_worker = self.run_worker(self._do_search(query), exclusive=True)
+```
+
+### Thread safety
+
+- `self.app.call_from_thread(fn, *args)` — schedule callback from worker thread. **Widget-level `self.call_from_thread` does not exist** in Textual 8.x.
+- Never call `self.query_one()` or widget setters from a `@work(thread=True)` worker
+- `get_current_worker().is_cancelled` — check cancellation in long loops
+
+### MRO rules (mixins + Textual)
+
+**Always list mixins BEFORE the Textual base class.** Textual bases (TextArea, Widget, App) define many methods — placing them first causes them to shadow your mixin's overrides:
+
+```python
+# WRONG — TextArea.update_suggestion shadows _HistoryMixin.update_suggestion
+class HermesInput(TextArea, _HistoryMixin, can_focus=True): ...
+
+# CORRECT — mixin found first in MRO
+class HermesInput(_HistoryMixin, TextArea, can_focus=True): ...
+```
+
+This applies to `App` subclasses with multiple mixins too — see HermesApp declaration above.
+
+**`PulseMixin`**: `PulseMixin.__init_subclass__` warns at class-definition time if `Widget` appears before `PulseMixin` in MRO. Use `class Foo(PulseMixin, Widget): ...`.
+
+**Mixin self-references**: Mixins access attributes defined on the host class. Use `# type: ignore[attr-defined]` on all such accesses — at runtime `self` is always the concrete class:
+```python
+class _WatchersMixin:
+    def watch_size(self, size: Any) -> None:
+        self.query_one(HintBar)  # type: ignore[attr-defined]
+        self._flash_hint("...", 2.0)  # type: ignore[attr-defined]
+```
+
+### BINDINGS
+
+```python
+BINDINGS = [
+    Binding("ctrl+shift+a", "select_all", "Select all", show=False),
+    Binding("f2", "show_usage", "Usage", show=True),
+    Binding("escape", "dismiss", "Close", show=False),
+]
+```
+
+**`ctrl+a` conflicts** with terminal select-all in many terminals — use `ctrl+shift+a`.
+
+### compose() vs __init__ for widget attributes
+
+Attributes assigned in `compose()` (e.g. `self._foo = Static(...)`) are only set after mounting. `hasattr(widget, "_foo")` fails on a freshly constructed (unmounted) widget. Declare in `__init__` as `self._foo: Static | None = None`; assign in `compose()`.
+
+**Widgets dropped from `compose()` leave broken state references**: If a widget is no longer yielded in `compose()`, any `self._widget` reference becomes `None` and `self._widget.state = ...` silently fails or crashes. After a refactor, grep every `self._attr =` in `__init__`/`compose()` and confirm the widget is still yielded.
+
+**Default placeholder must reach `TextArea.__init__`**: Assigning `self._idle_placeholder` after `super().__init__()` does NOT update the displayed placeholder:
+```python
+def __init__(self, *, placeholder: str = "", ...) -> None:
+    _default = "Type a message  @file  /  commands"
+    _effective = placeholder if placeholder else _default
+    super().__init__(..., placeholder=_effective, ...)
+    self._idle_placeholder: str = _effective  # keep in sync
+```
+
+### Overlay show/hide pattern
+
+All overlays in this codebase use **pre-mount + `--visible` toggle**. Dynamically mounting/removing overlays breaks `_hide_all_overlays()` and requires `try/except NoMatches` everywhere.
+
+```python
+# In App.compose():
+yield MyOverlay(id="my-overlay")  # always in DOM, display:none by default
+
+# Show:
+def show_overlay(self) -> None:
+    self.add_class("--visible")
+    try:
+        self.query_one("#search-input", Input).value = ""  # reset stale state
+    except NoMatches:
+        pass
+    self.call_after_refresh(self._focus_default)
+
+# Hide:
+def hide_overlay(self) -> None:
+    self.remove_class("--visible")  # NOT self.remove()
+```
+
+Tests check `overlay.has_class("--visible")`, not DOM presence. `_hide_all_overlays()` iterates overlay classes and calls `remove_class("--visible")` — works because they're always in DOM.
+
+**`query_one()` vs `query()` when the same class is pre-mounted**: If `App.compose()` mounts `ToolPanelHelpOverlay(id="tool-panel-help-overlay")` and a test mounts another instance, `query_one(ToolPanelHelpOverlay)` returns the pre-mounted one. Use `query()` whenever multiple instances can exist:
+
+```python
+# WRONG — finds pre-mounted widget, ignores test's instance
+self.query_one(ToolPanelHelpOverlay).remove_class("--visible")
+
+# CORRECT
+for w in self.query(ToolPanelHelpOverlay):
+    w.remove_class("--visible")
+```
+
+### CSS / TCSS
+
+```css
+/* Custom CSS variables MUST be declared in .tcss, not just get_css_variables() */
+$spinner-shimmer-dim: #555555;
+$spinner-shimmer-peak: #d8d8d8;
+
+HelpOverlay > #help-content {
+    scrollbar-size-vertical: 1;
+    scrollbar-color: $text-muted 30%;
+}
+```
+
+New `$var-name` refs must be declared in the `.tcss` file at parse time — `get_css_variables()` alone is insufficient.
+
+**Custom CSS variable values must be literal hex — never variable references.** `$my-var: $warning;` silently drops `my-var` from `get_css_variables()` entirely (confirmed in Textual 8.2.3). This applies to ALL rhs references — both built-in theme vars (`$warning`, `$primary`, `$text-muted`) and other custom vars. Always use hex: `$my-var: #FEA62B;`. Built-in theme var hex equivalents: `$warning=#FEA62B`, `$primary=#0178D4`.
+
+**No CSS `+` or `~` sibling combinators** — Textual 8.x does not support them. Use Python class toggles on a parent instead:
+```python
+# WRONG — invalid in Textual TCSS
+InterruptOverlay.--diff-visible + #diff-hint { display: block; }
+
+# CORRECT — toggle class on parent
+self.add_class("--diff-hint-visible")
+```
+
+**New component var always requires 2 edits**: (1) `COMPONENT_VAR_DEFAULTS` in `theme_manager.py`, (2) `$name: value;` declaration in `hermes.tcss` when the var is `$`-referenced at parse time. Bundled skin YAML updates are required only when the key is *not* marked `optional_in_skin=True` via `VarSpec`. T1/T2/T3 in `test_css_var_single_source.py` catch omissions.
+
+**CSS class operations require `_classes`** (set by `DOMNode.__init__`): Calling `add_class`/`remove_class` on `object.__new__(SomeWidget)` raises `AttributeError`. In production methods exercised by unit tests, wrap CSS mutations:
+```python
+try:
+    self.remove_class(f"-l{old}")
+    self.add_class(f"-l{new}")
+except AttributeError:
+    pass
+```
+
+### HintBar / flash system
+
+```python
+# Timed flash (expires after duration seconds):
+self._flash_hint("Message", 2.0)
+
+# Respect timed flash before clearing — don't overwrite an active flash:
+if _time.monotonic() >= self._flash_hint_expires:
+    self.query_one(HintBar).hint = ""
+```
+
+Widget-level flash variants:
+- `CodeBlockFooter.flash_copy()` — flashes "✓ Copied" for 1.5 s, CSS class `--flash-copy`
+- `ToolHeader.flash_rerun()` — pulses glyph to "streaming" for 600 ms then restores `_last_state`
+
+### CompletionOverlay
+
+`THRESHOLD_COMP_NARROW = 80` — overlay gets `--narrow` CSS class when terminal width < 80. First-call guard: always apply narrow class when `_last_applied_w == 0`.
+
+Add `--no-preview` class to hide `PreviewPanel` and expand `VirtualCompletionList`:
+```css
+CompletionOverlay.--no-preview PreviewPanel { display: none; }
+CompletionOverlay.--no-preview VirtualCompletionList { width: 1fr; }
+```
+
+`watch_highlighted_candidate()` adds `--no-preview` to `CompletionOverlay` when candidate is `None`.
+
+### AnimationClock
+
+`AnimationClock.subscribe(divisor, cb)` clamps `divisor = max(1, int(divisor))` and logs a warning if clamped. Always pass integer divisors.
+
+### Desktop notify gate
+
+```python
+# In __init__:
+self._last_keypress_time: float = 0.0
+
+# In on_key:
+self._last_keypress_time = _time.monotonic()
+
+# In _maybe_notify:
+since_key = _time.monotonic() - self._last_keypress_time
+if since_key < 5.0:
+    return  # user is watching, skip notify
+```
+
+### Scroll
+
+```python
+# scroll_y setter — fine for reactive watchers, avoids double-repaint:
+self.scroll_y = new_y
+# Imperative scroll:
+scroll_widget.scroll_to_widget(target_widget, animate=False)
+```
+
+### Local import shadowing module-level alias
+
+```python
+import time as _time  # module level
+
+def watch_agent_running(self, value: bool) -> None:
+    if value:
+        import time as _time  # BUG: treats _time as local throughout the function
+        self._turn_start_time = _time.monotonic()
+    # Later in same function, value=False branch:
+    if _time.monotonic() >= self._flash_hint_expires:  # UnboundLocalError!
+```
+
+Python sees any `import X as Y` assignment anywhere in a function scope and treats `Y` as local throughout. Never re-import inside a conditional branch.
+
+### accessibility_mode()
+
+```python
+from hermes_cli.tui.constants import accessibility_mode
+if accessibility_mode():
+    # Use ASCII fallbacks instead of Unicode box-drawing chars
+    ...
+```
+
+Reads `HERMES_NO_UNICODE` and `HERMES_ACCESSIBLE` env vars at call time — not cached at import.
+
+### browse_mode watcher self-reset guard
+
+`watch_browse_mode` immediately resets `self.browse_mode = False` if no ToolHeaders exist in DOM. Tests that set `app.browse_mode = True` directly will see it reset to False. Mount real ToolHeaders first, or test the render logic structurally via `inspect.getsource`.
+
+---
+

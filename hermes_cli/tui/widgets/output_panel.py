@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
+from textual import events
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
@@ -534,7 +535,7 @@ class OutputPanel(ScrollableContainer):
             return
         self._resolve_pass(pressure2, viewport_rows2)
 
-    def on_resize(self, event: Any) -> None:
+    def on_resize(self, event: "events.Resize") -> None:
         """Anchor scroll position on resize; Textual cascades resize to children automatically."""
         new_w = getattr(getattr(event, "size", None), "width", 0)
         new_h = getattr(getattr(event, "size", None), "height", 0)

@@ -15,7 +15,7 @@ _log = logging.getLogger(__name__)
 
 from rich.segment import Segment
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
@@ -230,16 +230,13 @@ class InlineImage(Widget):
             self._emit_raw(_get_renderer().delete_sequence(self._image_id))
             self._image_id = None
 
-    def on_resize(self, event: object) -> None:
+    def on_resize(self, event: "events.Resize") -> None:
         # Use _reactive_image (internal backing attr) to avoid ReactiveError
         # when on_resize fires before the widget is fully mounted.
         img = self._reactive_image  # type: ignore[attr-defined]
         if img is None:
             return
-        new_size = (
-            getattr(getattr(event, "size", None), "width", 0),
-            getattr(getattr(event, "size", None), "height", 0),
-        )
+        new_size = (event.size.width, event.size.height)
         if new_size == self._last_resize_size:
             return
         self._last_resize_size = new_size

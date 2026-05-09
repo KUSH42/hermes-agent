@@ -14,7 +14,7 @@ _log = logging.getLogger(__name__)
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult
 from textual.selection import Selection
 from textual.strip import Strip
@@ -129,7 +129,7 @@ class InlineProseLog(CopyableRichLog):
     # Lifecycle
     # ------------------------------------------------------------------ #
 
-    def on_resize(self, event: Any) -> None:
+    def on_resize(self, _event: "events.Resize") -> None:
         """Invalidate image cache + render mode cache; rebuild paint plans when cell_px changes."""
         from hermes_cli.tui.kitty_graphics import _cell_px, _reset_cell_px_cache
         # Reset the public-wrapper cache so cell_width_px()/cell_height_px()

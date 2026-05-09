@@ -32,6 +32,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
@@ -678,8 +679,8 @@ class ToolGroup(Widget):
             if hasattr(event, "stop"):
                 event.stop()
 
-    def on_resize(self, event: object) -> None:
-        width = getattr(getattr(event, "size", None), "width", 80)
+    def on_resize(self, event: "events.Resize") -> None:
+        width = event.size.width
         if crosses_threshold(self._last_resize_w, width, THRESHOLD_TOOL_NARROW):
             self.set_class(width < THRESHOLD_TOOL_NARROW, "--narrow")
         self._last_resize_w = width

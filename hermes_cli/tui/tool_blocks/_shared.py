@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from rich.text import Text
+from textual import events
 from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
@@ -586,7 +587,7 @@ class OmissionBar(TooltipMixin, Widget):
         except NoMatches:
             pass
 
-    def on_resize(self, event: Any) -> None:
+    def on_resize(self, event: "events.Resize") -> None:
         w = self.size.width
         now_narrow = w < THRESHOLD_NARROW
         if now_narrow != self._narrow:

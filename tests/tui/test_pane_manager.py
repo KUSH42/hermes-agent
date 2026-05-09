@@ -150,13 +150,13 @@ class TestOnResize:
     def test_on_resize_returns_false_when_no_change(self) -> None:
         pm = _make_pm()
         # Start in SINGLE (mode defaults to SINGLE), resize to still-SINGLE
-        result = pm.on_resize(100, 40)
+        result = pm.update_for_size(100, 40)
         assert result is False
 
     def test_on_resize_returns_true_when_mode_changes(self) -> None:
         pm = _make_pm()
         # Start in SINGLE; resize to width clearly in THREE range
-        result = pm.on_resize(140, 40)
+        result = pm.update_for_size(140, 40)
         assert result is True
         assert pm._mode == LayoutMode.THREE
 
@@ -164,12 +164,12 @@ class TestOnResize:
         """Resize to just below threshold+HYSTERESIS from THREE: no mode change."""
         pm = _make_pm()
         # Get into THREE mode first (cleanly)
-        pm.on_resize(140, 40)
+        pm.update_for_size(140, 40)
         assert pm._mode == LayoutMode.THREE
 
         # Now resize to threshold_off - HYSTERESIS + 1 = 120 - 2 + 1 = 119
         # That's below threshold_off but within hysteresis band
-        result = pm.on_resize(119, 40)
+        result = pm.update_for_size(119, 40)
         # Should NOT flip back to SINGLE (within hysteresis band)
         assert result is False
         assert pm._mode == LayoutMode.THREE
@@ -177,17 +177,17 @@ class TestOnResize:
     def test_hysteresis_allows_clear_transition(self) -> None:
         """Resize well below threshold → mode changes."""
         pm = _make_pm()
-        pm.on_resize(140, 40)
+        pm.update_for_size(140, 40)
         assert pm._mode == LayoutMode.THREE
 
         # Resize well below off threshold (100 < 120 - 2 = 118)
-        result = pm.on_resize(100, 40)
+        result = pm.update_for_size(100, 40)
         assert result is True
         assert pm._mode == LayoutMode.SINGLE
 
     def test_on_resize_disabled_always_false(self) -> None:
         pm = _make_pm_disabled()
-        assert pm.on_resize(200, 40) is False
+        assert pm.update_for_size(200, 40) is False
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 _log = logging.getLogger(__name__)
 
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -153,10 +153,10 @@ class InlineMediaWidget(Widget):
         ctrl_label.update(f"◉ {_short_url(self._url)}  [loading…]")
         self._prepare()
 
-    def on_resize(self, event: Any) -> None:
+    def on_resize(self, event: "events.Resize") -> None:
         if not hasattr(self, "_seekbar"):
             return
-        new_w = getattr(getattr(event, "size", None), "width", 0)
+        new_w = event.size.width
         if new_w == self._last_seekbar_w:
             return
         self._last_seekbar_w = new_w

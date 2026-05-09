@@ -189,11 +189,8 @@ class PaneManager:
     # Hysteresis-aware resize
     # ------------------------------------------------------------------
 
-    def on_resize(self, term_w: int, term_h: int) -> bool:
-        """
-        Called from _flush_resize. Returns True if mode changed.
-        Applies hysteresis: only transition if delta > HYSTERESIS.
-        """
+    def update_for_size(self, term_w: int, term_h: int) -> bool:
+        """Recompute pane mode for a new terminal size; return True if mode changed."""
         if not self.enabled:
             return False
         new_mode, *_ = self.compute_layout(term_w, term_h)

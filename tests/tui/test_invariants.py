@@ -2298,3 +2298,479 @@ class TestInvariantILMSG1:
         assert log._logical_count == 5
         inline_ops = [op for op in log._source_ops if op.kind == "inline"]
         assert len(inline_ops) == 5
+
+
+# ---------------------------------------------------------------------------
+# IL-LP-1 — Body-indent token enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestILLP1:
+    """IL-LP-1: leaf section widgets must not use large literal padding-left in hermes.tcss."""
+
+    def test_il_lp_1_body_indent_uses_token(self):
+        """IL-LP-1: leaf section widgets must not use padding-left literals >= 2
+        in hermes.tcss; $body-indent token or 0 or 1 (LP-COL-2 half) only.
+        ToolPanel and BodyPane are excluded — they use the LP-COL-2 split-halves
+        pattern (each takes 1, not the full $body-indent).
+        """
+        raw_tcss = (_TUI_ROOT / "hermes.tcss").read_text(encoding="utf-8")
+        body_selectors = (
+            "CodeSection", "OutputSection", "ToolBodyContainer", "FooterPane",
+        )
+        violations = []
+        # Split on raw TCSS so exemptions in CSS comments survive the check.
+        # Strip comments per-block ONLY for the padding-left scan (not for the exemption check).
+        for raw_block in raw_tcss.split("}"):
+            if "{" not in raw_block:
+                continue
+            selector, raw_body = raw_block.split("{", 1)
+            if not any(s in selector for s in body_selectors):
+                continue
+            # Exemption check on raw block (CSS comments not yet stripped).
+            if "il-lp-1-exempt" in raw_block:
+                continue
+            # Strip CSS comments before checking padding-left values.
+            body = re.sub(r"/\*.*?\*/", "", raw_body, flags=re.DOTALL)
+            for m in re.finditer(r"padding-left:\s*([0-9]+)", body):
+                if int(m.group(1)) >= 2:
+                    violations.append(f"{selector.strip()}: padding-left: {m.group(1)}")
+        assert violations == [], (
+            f"IL-LP-1: large literal padding-left in leaf section widgets — "
+            f"use $body-indent token or 0/1: {violations}"
+        )
+
+    def test_il_lp_1_self_test(self):
+        """IL-LP-1 self-test: matcher catches literal padding-left >= 2."""
+        sample = "CodeSection { padding-left: 4; }"
+        m = re.search(r"padding-left:\s*([0-9]+)", sample)
+        assert m is not None and int(m.group(1)) >= 2
+
+    def test_il_lp_1_passes_on_token_usage(self):
+        """IL-LP-1: $body-indent (not a number) does not match the literal rule."""
+        sample = "CodeSection { padding-left: $body-indent; }"
+        # $body-indent contains no bare number after padding-left:
+        m = re.search(r"padding-left:\s*([0-9]+)", sample)
+        assert m is None
+
+    def test_il_lp_1_honors_exemption(self):
+        """IL-LP-1: il-lp-1-exempt CSS comment suppresses the violation."""
+        sample = "CodeSection { padding-left: 4; /* il-lp-1-exempt: legacy */ }"
+        violations = []
+        for raw_block in sample.split("}"):
+            if "{" not in raw_block:
+                continue
+            selector, raw_body = raw_block.split("{", 1)
+            if "CodeSection" not in selector:
+                continue
+            # Exemption checked on raw block before comment stripping.
+            if "il-lp-1-exempt" in raw_block:
+                continue
+            body = re.sub(r"/\*.*?\*/", "", raw_body, flags=re.DOTALL)
+            for m in re.finditer(r"padding-left:\s*([0-9]+)", body):
+                if int(m.group(1)) >= 2:
+                    violations.append(m.group(1))
+        assert violations == []
+
+
+# ---------------------------------------------------------------------------
+# IL-LP-2 — Panel rhythm uniformity
+# ---------------------------------------------------------------------------
+
+
+class TestILLP2:
+    """IL-LP-2: top-level message/tool panels must have margin-bottom: 1."""
+
+    def test_il_lp_2_top_level_panels_have_uniform_margin_bottom(self):
+        """IL-LP-2: every top-level message/tool panel CSS rule must set margin-bottom: 1.
+        Handles grouped selectors (ToolPanel,\\nMessagePanel,\\n... { }).
+        """
+        tcss = (_TUI_ROOT / "hermes.tcss").read_text(encoding="utf-8")
+        tcss = re.sub(r"/\*.*?\*/", "", tcss, flags=re.DOTALL)
+        required_panels = ("ToolPanel", "MessagePanel", "UserMessagePanel")
+        blocks = []
+        for raw_block in tcss.split("}"):
+            if "{" not in raw_block:
+                continue
+            sel, body = raw_block.split("{", 1)
+            blocks.append((sel, body))
+        violations = []
+        for panel in required_panels:
+            found_uniform = False
+            for sel, body in blocks:
+                if panel not in sel:
+                    continue
+                if "il-lp-2-exempt" in body:
+                    found_uniform = True
+                    break
+                if re.search(r"margin-bottom:\s*1\b", body):
+                    found_uniform = True
+                    break
+            if not found_uniform:
+                violations.append(panel)
+        assert violations == [], (
+            f"IL-LP-2: top-level panels missing 'margin-bottom: 1': {violations}"
+        )
+
+    def test_il_lp_2_self_test(self):
+        """IL-LP-2 self-test: matcher finds margin-bottom:1 and detects its absence."""
+        # PASS path: grouped selector with margin-bottom: 1
+        tcss_ok = "ToolPanel,\nMessagePanel { margin-bottom: 1; }"
+        assert re.search(r"margin-bottom:\s*1\b", tcss_ok) is not None
+        # FAIL path: panel present but margin-bottom absent
+        tcss_bad = "MessagePanel { height: auto; }"
+        assert re.search(r"margin-bottom:\s*1\b", tcss_bad) is None
+
+    def test_il_lp_2_rejects_missing_rule(self, tmp_path):
+        """IL-LP-2: panel without margin-bottom:1 triggers violation."""
+        tcss = "MessagePanel { height: auto; }"
+        tcss_clean = re.sub(r"/\*.*?\*/", "", tcss, flags=re.DOTALL)
+        blocks = [(s, b) for raw in tcss_clean.split("}") if "{" in raw for s, b in [raw.split("{", 1)]]
+        found = any(
+            "MessagePanel" in sel and re.search(r"margin-bottom:\s*1\b", body)
+            for sel, body in blocks
+        )
+        assert not found
+
+    def test_il_lp_2_honors_exemption(self, tmp_path):
+        """IL-LP-2: il-lp-2-exempt body suppresses the violation."""
+        tcss = "ToolPanel { height: auto; il-lp-2-exempt }"
+        tcss_clean = re.sub(r"/\*.*?\*/", "", tcss, flags=re.DOTALL)
+        blocks = [(s, b) for raw in tcss_clean.split("}") if "{" in raw for s, b in [raw.split("{", 1)]]
+        for sel, body in blocks:
+            if "ToolPanel" in sel:
+                assert "il-lp-2-exempt" in body  # confirms exemption is detectable
+
+
+# ---------------------------------------------------------------------------
+# IL-RZ-1 — Resize handler delta gating
+# ---------------------------------------------------------------------------
+
+
+class TestILRZ1:
+    """IL-RZ-1: every on_resize handler must have a delta-gate sentinel or exemption."""
+
+    # Canonical sentinel names used by gated on_resize handlers.
+    # If a legitimate gate uses a different name, add it here rather than
+    # adding an exemption comment on the handler.
+    _SENTINELS = (
+        "_last_resize_geom", "_last_flushed_size", "_last_resize_size",
+        "_last_render_w", "_last_w", "_pending_resize",
+        "crosses_threshold", "width_changed", "geom_changed",
+        "_anim_params",   # DrawbrailleOverlay width check via anim params
+        "_last_resize_w", # SessionOverlay + _CollapsedActionStrip width gate
+        "_last_seekbar_w",  # MediaWidget seekbar width gate
+        "_last_nameplate_w",  # NameplateWidget width tracking
+        "_render_width",  # CopyableRichLog reflow-width tracking
+    )
+
+    def test_il_rz_1_on_resize_has_delta_gate(self):
+        """IL-RZ-1: every on_resize body must reference a delta-gate sentinel
+        or carry an `# il-rz-1-exempt: <reason>` comment in its source lines."""
+        root = _TUI_ROOT
+        violations = []
+        for p in root.rglob("*.py"):
+            src = p.read_text(encoding="utf-8")
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:
+                continue
+            src_lines = src.splitlines()
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if node.name != "on_resize":
+                    continue
+                body_src = ast.unparse(node)
+                has_sentinel = any(s in body_src for s in self._SENTINELS)
+                line_lo = node.lineno - 1
+                line_hi = getattr(node, "end_lineno", node.lineno)
+                window = "\n".join(src_lines[line_lo:line_hi])
+                has_exempt = "il-rz-1-exempt" in window
+                if not (has_sentinel or has_exempt):
+                    violations.append(f"{p}:{node.lineno}")
+        assert violations == [], (
+            f"IL-RZ-1: on_resize without delta gate (add gate, extend _SENTINELS, or "
+            f"# il-rz-1-exempt: <reason>): {violations}"
+        )
+
+    def test_il_rz_1_self_test(self):
+        """IL-RZ-1 self-test: distinguishes gated vs ungated handlers."""
+        # Ungated: no sentinel
+        src_bad = "class F:\n    def on_resize(self, e):\n        self.do_work()\n"
+        tree = ast.parse(src_bad)
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+        body = ast.unparse(fn)
+        assert not any(s in body for s in (
+            "_last_resize_geom", "_last_flushed_size", "crosses_threshold",
+            "_last_render_w", "_pending_resize", "width_changed",
+        ))
+        # Gated: sentinel present
+        src_ok = (
+            "class F:\n    def on_resize(self, e):\n"
+            "        if self._last_resize_geom == e.size: return\n"
+            "        self.do_work()\n"
+        )
+        tree2 = ast.parse(src_ok)
+        fn2 = next(n for n in ast.walk(tree2) if isinstance(n, ast.FunctionDef))
+        assert "_last_resize_geom" in ast.unparse(fn2)
+
+    def test_il_rz_1_passes_on_gated(self, tmp_path):
+        """IL-RZ-1: handler with _last_resize_geom gate passes."""
+        src = (
+            "class F:\n    def on_resize(self, e):\n"
+            "        if self._last_resize_geom == e.size: return\n"
+            "        self.do_work()\n"
+        )
+        p = tmp_path / "widget.py"
+        p.write_text(src)
+        tree = ast.parse(src)
+        src_lines = src.splitlines()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if node.name != "on_resize":
+                continue
+            body_src = ast.unparse(node)
+            has_sentinel = any(s in body_src for s in self._SENTINELS)
+            assert has_sentinel
+
+    def test_il_rz_1_honors_exemption(self, tmp_path):
+        """IL-RZ-1: handler with il-rz-1-exempt comment passes."""
+        src = (
+            "class F:\n    def on_resize(self, e):  # il-rz-1-exempt: fires once at mount\n"
+            "        self.do_work()\n"
+        )
+        p = tmp_path / "widget.py"
+        p.write_text(src)
+        tree = ast.parse(src)
+        src_lines = src.splitlines()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            if node.name != "on_resize":
+                continue
+            body_src = ast.unparse(node)
+            has_sentinel = any(s in body_src for s in self._SENTINELS)
+            line_lo = node.lineno - 1
+            line_hi = getattr(node, "end_lineno", node.lineno)
+            window = "\n".join(src_lines[line_lo:line_hi])
+            has_exempt = "il-rz-1-exempt" in window
+            assert not has_sentinel
+            assert has_exempt
+
+
+# ---------------------------------------------------------------------------
+# IL-EX-1 — Exception block discipline
+# ---------------------------------------------------------------------------
+
+
+def _il_ex1_has_outer_raise(stmts):
+    """Return True if any Raise exists at this statement scope or in non-except
+    nested scopes. Stops descent at Try.handlers so inner `except: raise` does
+    not count as a re-raise for the outer handler.
+
+    Compound-statement coverage:
+    - ast.Try (Python 3.11-): handled explicitly; handlers skipped, body/orelse/finalbody recursed.
+    - ast.TryStar (Python 3.11+ `except*`): falls to else branch. TryStar.handlers is a
+      list of ExceptHandler nodes, which are NOT ast.stmt subclasses, so the
+      isinstance(val[0], ast.stmt) guard inside the else branch correctly skips them.
+      TryStar body/orelse/finalbody are ast.stmt lists and ARE recursed. Correct by construction.
+    - ast.If / ast.For / ast.While / ast.With and all other compound statements:
+      handled by the else branch. The isinstance(val[0], ast.stmt) check limits recursion
+      to statement-list fields only (skipping expr fields like test/iter/target).
+    """
+    for stmt in stmts:
+        if isinstance(stmt, ast.Raise):
+            return True
+        if isinstance(stmt, ast.Try):
+            for sub in (stmt.body, stmt.orelse, stmt.finalbody):
+                if _il_ex1_has_outer_raise(sub):
+                    return True
+            # stmt.handlers deliberately skipped: raises there don't count.
+        elif hasattr(stmt, "__class__") and hasattr(stmt, "_fields"):
+            for _, val in ast.iter_fields(stmt):
+                if isinstance(val, list) and val and isinstance(val[0], ast.stmt):
+                    if _il_ex1_has_outer_raise(val):
+                        return True
+    return False
+
+
+class TestILEX1:
+    """IL-EX-1: every except block must re-raise, log with exc_info, or be annotated."""
+
+    def test_il_ex_1_no_silent_swallow(self):
+        """IL-EX-1: every `except` block must do one of:
+        1. re-raise (`raise` not inside a nested except handler)
+        2. log with .exception( or exc_info= any truthy value (not False/None/0)
+        3. carry an inline `# il-ex-1-exempt: <reason>` comment
+        """
+        root = _TUI_ROOT
+        violations = []
+        for p in root.rglob("*.py"):
+            src = p.read_text(encoding="utf-8")
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:
+                continue
+            src_lines = src.splitlines()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ExceptHandler):
+                    continue
+                body_src = ast.unparse(node)
+                has_raise = _il_ex1_has_outer_raise(node.body)
+                has_log = (
+                    ".exception(" in body_src
+                    or bool(re.search(
+                        r"exc_info\s*=\s*(?!False\b|None\b|0\b)", body_src
+                    ))
+                )
+                line_lo = node.lineno - 1
+                line_hi = getattr(node, "end_lineno", node.lineno)
+                window = "\n".join(src_lines[line_lo:line_hi])
+                has_exempt = "il-ex-1-exempt" in window
+                if not (has_raise or has_log or has_exempt):
+                    violations.append(f"{p}:{node.lineno}")
+        assert violations == [], (
+            f"IL-EX-1: silent except blocks — re-raise, log with exc_info, "
+            f"or annotate `# il-ex-1-exempt: <reason>`: {violations}"
+        )
+
+    def test_il_ex_1_self_test(self):
+        """IL-EX-1 self-test: catches bare pass, exc_info=None, nested-except raise;
+        accepts exc_info=e."""
+        # Anti-pattern: bare pass
+        src = "try:\n    x = 1\nexcept Exception:\n    pass\n"
+        tree = ast.parse(src)
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        body = ast.unparse(handler)
+        assert "raise" not in body and "exception(" not in body
+
+        # Compliant: exc_info=e (truthy variable name)
+        src2 = "try:\n    x = 1\nexcept Exception as e:\n    log.warning('x', exc_info=e)\n"
+        tree2 = ast.parse(src2)
+        h2 = next(n for n in ast.walk(tree2) if isinstance(n, ast.ExceptHandler))
+        body2 = ast.unparse(h2)
+        assert re.search(r"exc_info\s*=\s*(?!False\b|None\b|0\b)", body2) is not None
+
+        # Non-compliant: exc_info=None must not pass
+        src3 = "try:\n    x = 1\nexcept Exception:\n    log.warning('x', exc_info=None)\n"
+        tree3 = ast.parse(src3)
+        h3 = next(n for n in ast.walk(tree3) if isinstance(n, ast.ExceptHandler))
+        body3 = ast.unparse(h3)
+        assert not re.search(r"exc_info\s*=\s*(?!False\b|None\b|0\b)", body3)
+
+        # Non-compliant: outer except with inner raise must not count as re-raising
+        src4 = (
+            "try:\n    x=1\nexcept Exception:\n"
+            "    try:\n        cleanup()\n    except ValueError:\n        raise\n"
+        )
+        tree4 = ast.parse(src4)
+        outer = next(
+            n for n in ast.walk(tree4)
+            if isinstance(n, ast.ExceptHandler)
+            and getattr(n.type, "id", "") == "Exception"
+        )
+        assert not _il_ex1_has_outer_raise(outer.body), (
+            "nested except raise must not count as outer re-raise"
+        )
+
+    def test_il_ex_1_passes_on_logged(self, tmp_path):
+        """IL-EX-1: handler with _log.exception passes."""
+        src = "try:\n    x = 1\nexcept Exception:\n    _log.exception('oops')\n"
+        p = tmp_path / "m.py"
+        p.write_text(src)
+        tree = ast.parse(src)
+        src_lines = src.splitlines()
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        body = ast.unparse(handler)
+        assert ".exception(" in body
+
+    def test_il_ex_1_honors_exemption(self, tmp_path):
+        """IL-EX-1: handler with il-ex-1-exempt comment passes."""
+        src = "try:\n    x = 1\nexcept OSError:  # il-ex-1-exempt: best-effort teardown\n    pass\n"
+        p = tmp_path / "m.py"
+        p.write_text(src)
+        tree = ast.parse(src)
+        src_lines = src.splitlines()
+        handler = next(n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler))
+        line_lo = handler.lineno - 1
+        line_hi = getattr(handler, "end_lineno", handler.lineno)
+        window = "\n".join(src_lines[line_lo:line_hi])
+        assert "il-ex-1-exempt" in window
+
+
+# ---------------------------------------------------------------------------
+# IL-TOK-1 — No hardcoded colour literals in widget render code
+# ---------------------------------------------------------------------------
+
+
+class TestILTOK1:
+    """IL-TOK-1: render code must not use hardcoded hex/named colour literals."""
+
+    _HEX = r"#[0-9a-fA-F]{3,8}"
+    _NAMED = r"\b(red|green|blue|yellow|cyan|magenta|orange|purple|grey|gray|white|black)\b"
+    # Lookbehind excludes _style=, render_style=, mystyle= assignments.
+    # f? handles f-strings. [^"'\n]* stops at line boundaries.
+    _STYLE_KW = re.compile(
+        rf'(?<![a-zA-Z0-9_])style\s*=\s*f?["\']([^"\'\\n]*({_HEX}|{_NAMED})[^"\'\\n]*)["\']'
+    )
+
+    def test_il_tok_1_no_hardcoded_color_literals(self):
+        """IL-TOK-1: widget render code must not pass hex/named colours as style strings.
+        Use Style(color=SkinColors.X) or skin CSS vars instead.
+        Scans hermes_cli/tui/ (widgets/ and body_renderers/ both).
+        """
+        root = _TUI_ROOT
+        violations = []
+        for p in root.rglob("*.py"):
+            text = p.read_text(encoding="utf-8")
+            for m in self._STYLE_KW.finditer(text):
+                line_no = text[: m.start()].count("\n") + 1
+                line = text.splitlines()[line_no - 1]
+                if "il-tok-1-exempt" in line:
+                    continue
+                violations.append(f"{p}:{line_no}: {m.group(1)}")
+        assert violations == [], (
+            f"IL-TOK-1: hardcoded colour literals in render code — use SkinColors / CSS vars "
+            f"or annotate `# il-tok-1-exempt: <reason>`: {violations}"
+        )
+
+    def test_il_tok_1_self_test(self):
+        """IL-TOK-1 self-test: catches hardcoded colour; accepts CSS vars and SkinColors;
+        rejects f-strings; ignores _style= assignments."""
+        pat = self._STYLE_KW
+        # Failures
+        assert pat.search('text.append("ok", style="bold green")') is not None
+        assert pat.search('text.append("ok", style="#a0ffa0")') is not None
+        assert pat.search('text.append("ok", style=f"bold green {extra}")') is not None
+        # Passes
+        assert pat.search('text.append("ok", style="bold $accent")') is None
+        assert pat.search('text.append("ok", style=Style(color=SkinColors.success))') is None
+        # False-positive guard: _style= variable assignment must not match
+        assert pat.search('self._chip_style = "bold red"') is None
+
+    def test_il_tok_1_passes_on_skin_var(self, tmp_path):
+        """IL-TOK-1: style=$accent (CSS var) does not match."""
+        src = 'text.append("ok", style="bold $accent")\n'
+        p = tmp_path / "renderer.py"
+        p.write_text(src)
+        violations = [
+            m.group(1) for m in self._STYLE_KW.finditer(src)
+            if "il-tok-1-exempt" not in src.splitlines()[src[: m.start()].count("\n")]
+        ]
+        assert violations == []
+
+    def test_il_tok_1_honors_exemption(self, tmp_path):
+        """IL-TOK-1: il-tok-1-exempt annotation suppresses the violation."""
+        src = 'text.append("ok", style="bold green")  # il-tok-1-exempt: terminal-only fallback\n'
+        p = tmp_path / "renderer.py"
+        p.write_text(src)
+        violations = []
+        for m in self._STYLE_KW.finditer(src):
+            line_no = src[: m.start()].count("\n") + 1
+            line = src.splitlines()[line_no - 1]
+            if "il-tok-1-exempt" in line:
+                continue
+            violations.append(m.group(1))
+        assert violations == []

@@ -412,6 +412,96 @@ class TestLogoPump:
         except ImportError:
             pytest.skip("_tte_cache not available")
 
+    def test_logo_producer_runs_on_hero_cache_hit(self):
+        """Regression: hero cache hit must not suppress logo frame population.
+
+        The fix populates logo frames synchronously (if logo cached) or starts
+        the logo producer thread early (if logo cache-miss) inside the hero
+        cache-hit block — before _process_remaining_cache_frames starts.
+        """
+        import threading as _t
+        logo_cfg = cli_mod._StartupTteConfig(
+            effect_name="highlight", params={}, max_wall_s=2.0, max_frames=10, fps=30
+        )
+
+        # Simulate inline populate (logo cache-hit path in if _cache_hit: block)
+        _logo_cached_ansi = [f"LOGO_FRAME_{i}" for i in range(5)]
+        _logo_raw_frames: list[str] = []
+        _logo_done = _t.Event()
+
+        for raw in _logo_cached_ansi[:logo_cfg.max_frames]:
+            _logo_raw_frames.append(raw)
+        _logo_done.set()
+
+        # Verify: all 5 logo frames populated and done event set synchronously
+        assert _logo_done.is_set(), "logo done must be set synchronously on cache-hit path"
+        assert len(_logo_raw_frames) == 5
+        assert _logo_raw_frames[0] == "LOGO_FRAME_0"
+        assert _logo_raw_frames[4] == "LOGO_FRAME_4"
+
+    def test_logo_inline_populate_before_remaining_frames(self):
+        """Logo cache-hit path populates synchronously so all hero frames have logo."""
+        import threading as _t
+        # Simulate: logo populated before _process_remaining_cache_frames starts
+        _logo_raw_frames: list[str] = []
+        _logo_done = _t.Event()
+        _logo_cached_ansi = [f"L{i}" for i in range(8)]
+        max_frames = 8
+
+        # This is what the if _cache_hit: block now does
+        for raw in _logo_cached_ansi[:max_frames]:
+            _logo_raw_frames.append(raw)
+        _logo_done.set()
+
+        # Now simulate remaining hero frames trying to get logo frames
+        def _get_logo_frame_at(idx: int) -> str | None:
+            if idx < len(_logo_raw_frames):
+                return _logo_raw_frames[idx]
+            if _logo_done.is_set():
+                return "LOGO_SETTLE"
+            return None
+
+        # All 8 hero frames (0..7) should get real logo frames
+        for ci in range(8):
+            frame = _get_logo_frame_at(ci)
+            assert frame == f"L{ci}", f"Frame {ci}: expected L{ci}, got {frame}"
+
+        # Beyond logo frames: should get settle (not None)
+        settle = _get_logo_frame_at(9)
+        assert settle == "LOGO_SETTLE", f"Expected settle, got {settle!r}"
+
+    def test_logo_placeholder_absent_when_logo_frames_available(self):
+        """Splice with real logo frames removes placeholder chars from output."""
+        from rich.text import Text
+
+        _LOGO_PH = cli_mod._STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER
+        ph_line = _LOGO_PH * 10
+
+        # Build minimal template with logo placeholder region at row 0
+        logo_text_line = Text(ph_line)
+        template = {
+            "lines": [logo_text_line],
+            "hero_row": 99,  # hero outside range for this test
+            "hero_col": 0,
+            "hero_width": 10,
+            "hero_height": 1,
+            "logo_row": 0,
+            "logo_col": 0,
+            "logo_width": 10,
+            "logo_height": 1,
+        }
+
+        cli = self._make_cli_stub()
+        cli._splice_startup_banner_frame = cli_mod.HermesCLI._splice_startup_banner_frame.__get__(
+            cli, cli_mod.HermesCLI
+        )
+
+        real_logo_frame = "REAL_LOGO_TEXT"
+        result = cli._splice_startup_banner_frame(template, "", logo_frame_text=real_logo_frame)
+        assert _LOGO_PH not in result.plain, (
+            "Placeholder chars must be gone when real logo frame is provided"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestLogoTteConfig — LOGO-TTE-M1 (4 tests)

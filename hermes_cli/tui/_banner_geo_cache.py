@@ -9,7 +9,7 @@ import hashlib, json, logging, os
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
-_GEO_CACHE_FORMAT_VER = 4  # bumped: logo_tte_active included in cache key
+_GEO_CACHE_FORMAT_VER = 5  # bumped: logo_row/logo_col persisted in cache
 
 
 def is_cache_disabled() -> bool:
@@ -60,18 +60,23 @@ def load_geo(key: str) -> dict[str, int] | None:
         data = json.loads(p.read_text())
         if data.get("_v") != _GEO_CACHE_FORMAT_VER:
             return None
-        return {k: int(data[k]) for k in ("hero_row", "hero_col")}
+        out: dict[str, int] = {k: int(data[k]) for k in ("hero_row", "hero_col")}
+        if data.get("logo_row") is not None:
+            out["logo_row"] = int(data["logo_row"])
+            out["logo_col"] = int(data.get("logo_col") or 0)
+        return out
     except Exception:
         _log.debug("banner geo cache load failed", exc_info=True)
         return None
 
 
-def save_geo(key: str, geo: dict[str, int]) -> None:
+def save_geo(key: str, geo: dict[str, int | None]) -> None:
     if is_cache_disabled():
         return
     try:
         p = geo_cache_dir() / f"{key}.json"
-        p.write_text(json.dumps({**geo, "_v": _GEO_CACHE_FORMAT_VER}))
+        payload = {k: v for k, v in geo.items() if v is not None}
+        p.write_text(json.dumps({**payload, "_v": _GEO_CACHE_FORMAT_VER}))
     except Exception:
         _log.debug("banner geo cache save failed", exc_info=True)
 

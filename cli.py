@@ -5476,6 +5476,13 @@ class HermesCLI:
                         logo_cfg.params,
                     )
                     _logo_cached_ansi = _load_logo(_logo_cache_key)
+                    if _logo_cached_ansi is not None:
+                        logger.info(
+                            "Logo TTE: cache hit key=%s frames=%d",
+                            _logo_cache_key, len(_logo_cached_ansi),
+                        )
+                    else:
+                        logger.debug("Logo TTE: cache miss key=%s", _logo_cache_key)
                 except Exception:
                     logger.debug("Logo TTE cache lookup failed", exc_info=True)
             except Exception:
@@ -5721,16 +5728,41 @@ class HermesCLI:
                 return None
             if idx < len(_logo_raw_frames):
                 return _logo_raw_frames[idx]
-            if _logo_done.is_set():
-                if _logo_cell[0] is None:
-                    _logo_cell[0] = self._logo_ansi_settle("")
-                return _logo_cell[0]
-            return None
+            # Fallback to settled wordmark whenever no raw frame is available,
+            # not only after _logo_done is set. Without this, slow-start logo
+            # producers leave LOGO_PLACEHOLDER_MARKER chars (rendered as ●) in
+            # composited frames during the prefetch / ramp window, and any
+            # missed _logo_done.set call leaves placeholders permanently.
+            if _logo_cell[0] is None:
+                _logo_cell[0] = self._logo_ansi_settle("")
+            return _logo_cell[0]
 
         if _cache_hit:
             _cache_t0 = time.monotonic()
             _cap = min(MAX_FRAMES, len(_cached_ansi))
             _prefetch_n = min(_PREFETCH_FRAMES, _cap)
+
+            # Populate logo frames before hero prefetch so _get_logo_frame_at()
+            # returns real frames for frames 0-3.
+            # Cache-hit: populate synchronously (pure list append, ~1ms for 360 frames).
+            # Cache-miss: start producer thread early so it has a head start before
+            # _process_remaining_cache_frames begins; both run concurrently.
+            if logo_cfg is not None:
+                if _logo_cached_ansi is not None:
+                    for _lraw in _logo_cached_ansi[:logo_cfg.max_frames]:
+                        if STARTUP_TTE_SKIP.is_set():
+                            break
+                        _logo_raw_frames.append(_lraw)
+                    _logo_done.set()
+                    logger.debug(
+                        "PLAY-TTE: logo cache inline done frames=%d", len(_logo_raw_frames)
+                    )
+                else:
+                    _threading.Thread(
+                        target=_produce_logo, daemon=True, name="hermes-logo-tte"
+                    ).start()
+                    logger.debug("PLAY-TTE: logo producer started (cache-hit hero, cache-miss logo)")
+
             for _ci, raw_frame in enumerate(_cached_ansi[:_prefetch_n]):
                 anim_frames.append(_process_raw_frame(raw_frame, _get_logo_frame_at(_ci)))
             if anim_frames:
@@ -5876,6 +5908,9 @@ class HermesCLI:
 
         # Step C — start producer thread.  Uses the prelaunch generator if
         # available so iteration continues from frame N rather than restarting.
+        # On cache-hit, hero frames come from cache (no producer needed).
+        # Logo producer on cache-hit is handled in the Step C-cache block above
+        # (synchronously if logo cached, thread if logo cache-miss).
         if not _cache_hit:
             producer_thread = _threading.Thread(
                 target=_produce, daemon=True, name="hermes-tte-producer"

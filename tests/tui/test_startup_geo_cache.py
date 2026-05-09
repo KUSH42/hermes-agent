@@ -244,23 +244,25 @@ class TestGeoCacheIntegration:
         import cli as cli_mod
         stub, _, plain_hero = _make_stub_class(monkeypatch, tmp_path)
 
-        # Pre-populate cache with specific values.
-        with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
-            from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
-            key = geo_cache_key(100, "hermes", True, True)
-            save_geo(key, {"hero_row": 7, "hero_col": 3})
+        # Pin logo TTE to inactive so geo key is deterministic (logo_tte_active=False).
+        with patch.object(stub, "_get_startup_logo_tte_config", return_value=None):
+            # Pre-populate cache with specific values.
+            with patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
+                 patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
+                from hermes_cli.tui._banner_geo_cache import geo_cache_key, save_geo
+                key = geo_cache_key(100, "hermes", True, True)
+                save_geo(key, {"hero_row": 7, "hero_col": 3})
 
-        # Render returns text that would give row=99 if scanned.
-        hero_width = len(plain_hero)
-        placeholder_row = _PLACEHOLDER * hero_width
-        scan_would_give_99 = ["x"] * 99 + [placeholder_row]
-        scan_text = _FakeRichText(scan_would_give_99)
+            # Render returns text that would give row=99 if scanned.
+            hero_width = len(plain_hero)
+            placeholder_row = _PLACEHOLDER * hero_width
+            scan_would_give_99 = ["x"] * 99 + [placeholder_row]
+            scan_text = _FakeRichText(scan_would_give_99)
 
-        with patch.object(stub, "_render_startup_banner_text", return_value=scan_text), \
-             patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
-             patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
-            result = stub._build_startup_banner_template(plain_hero)
+            with patch.object(stub, "_render_startup_banner_text", return_value=scan_text), \
+                 patch("hermes_cli.skin_engine.get_active_skin_name", return_value="hermes"), \
+                 patch("shutil.get_terminal_size", return_value=SimpleNamespace(columns=100, lines=40)):
+                result = stub._build_startup_banner_template(plain_hero)
 
         assert result is not None
         assert result["hero_row"] == 7

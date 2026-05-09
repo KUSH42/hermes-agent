@@ -73,6 +73,11 @@ _WHITELIST_EFFECT: frozenset[str] = frozenset({
 _DEFAULT_ENGINE = "dna"
 _DEFAULT_EFFECT = "breathe"
 
+# Full pools used when the user hasn't narrowed the config.
+# _normalize_engine_pool() will filter against the mode whitelist at activate time.
+_DEFAULT_ENGINE_POOL: list[str] = sorted(_WHITELIST_DEEP_INTENSE)
+_DEFAULT_EFFECT_POOL: list[str] = sorted(_WHITELIST_EFFECT - {"flash"})  # flash reserved for STARTED phase
+
 # ── Hex-color validation ───────────────────────────────────────────────────────
 
 # 3- or 6-digit hex, optional leading "#". Anchored.
@@ -410,15 +415,15 @@ _LabelLine   { height: 1;   width: 1fr; }
     # Config cache (loaded once at first activate)
     _cfg_loaded: bool = False
     _cfg_mode: str = "default"
-    _cfg_engine: str | list[str] = "dna"
-    _cfg_effect: str | list[str] = "breathe"
+    _cfg_engine: str | list[str] = _DEFAULT_ENGINE_POOL
+    _cfg_effect: str | list[str] = _DEFAULT_EFFECT_POOL
     _cfg_tick_hz: float = 12.0
     _cfg_long_wait_after_s: float = 8.0
-    _cfg_deep_after_s: float = 120.0  # A4: DEEP only after extended wait
+    _cfg_deep_after_s: float = 120.0
     _cfg_show_elapsed: bool = True
     _cfg_allow_intense: bool = False  # D-5: gate for intense engines
-    _cfg_long_wait_engine: str | list[str] = "wave_function"
-    _cfg_long_wait_effect: str | list[str] = "shimmer"
+    _cfg_long_wait_engine: str | list[str] = _DEFAULT_ENGINE_POOL
+    _cfg_long_wait_effect: str | list[str] = _DEFAULT_EFFECT_POOL
     _cfg_progressive_reveal: bool = True
     _actual_tick_interval: float = 1.0 / 12.0
 
@@ -490,15 +495,15 @@ _LabelLine   { height: 1;   width: 1fr; }
             raw = read_raw_config()
             thinking = raw.get("tui", {}).get("thinking", {})
             self._cfg_mode = str(thinking.get("mode", "default"))
-            self._cfg_engine = thinking.get("engine", "dna")
-            self._cfg_effect = thinking.get("effect", "breathe")
+            self._cfg_engine = thinking.get("engine", _DEFAULT_ENGINE_POOL)
+            self._cfg_effect = thinking.get("effect", _DEFAULT_EFFECT_POOL)
             self._cfg_tick_hz = float(thinking.get("tick_hz", 12.0))
             self._cfg_long_wait_after_s = float(thinking.get("long_wait_after_s", 8.0))
             self._cfg_deep_after_s = float(thinking.get("deep_after_s", 120.0))
             self._cfg_show_elapsed = bool(thinking.get("show_elapsed", True))
             self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
-            self._cfg_long_wait_engine = thinking.get("long_wait_engine", "wave_function")
-            self._cfg_long_wait_effect = thinking.get("long_wait_effect", "shimmer")
+            self._cfg_long_wait_engine = thinking.get("long_wait_engine", _DEFAULT_ENGINE_POOL)
+            self._cfg_long_wait_effect = thinking.get("long_wait_effect", _DEFAULT_EFFECT_POOL)
             self._cfg_progressive_reveal = bool(thinking.get("progressive_reveal", True))
         except Exception:
             _log.warning(

@@ -67,11 +67,12 @@ class ThemeService(AppService):
 
     def _do_refresh_runtime_skin_consumers(self) -> None:
         """One DOM walk; refresh all skin consumers after current frame (SVC-13)."""
-        from hermes_cli.tui.widgets import _hint_cache, StatusBar, StreamingCodeBlock
+        from hermes_cli.tui.widgets import _clear_hint_cache, StatusBar, StreamingCodeBlock
         from hermes_cli.tui.tool_blocks import ToolBlock
         app = self.app
         app._theme_manager.apply()
-        _hint_cache.clear()
+        # HB2-M2: use _clear_hint_cache() so FIFO eviction logic is consistent
+        _clear_hint_cache()
         try:
             sb = app.query_one(StatusBar)
             sb._idle_tips_cache = None

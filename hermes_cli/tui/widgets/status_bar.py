@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 
 _hint_cache: dict[tuple[str, str], dict[str, str]] = {}
 
+# HB2-M2: bound cache at 32 entries with FIFO eviction
+_HINT_CACHE_MAX = 32
+
 _SEP = " [dim]·[/dim] "
 
 # E4: canonical key-symbol constants — use these in all hint composers
@@ -61,6 +64,9 @@ KEY_CTRL_SHIFT_H = "⌃⇧H"
 KEY_CTRL_J  = "⌃J"
 KEY_CTRL_Z  = "⌃Z"
 HINT_MAX_PRIMARY = 3  # D-1: cap on primary hint entries visible at once (AT-D1)
+
+# HB2-H2: promotion threshold — NORMAL (10) and above are left-anchored during streaming
+_STREAMING_PROMOTE_PRIORITY: int = 10  # = feedback.NORMAL
 
 _COMPACTION_ZERO_PROBES: set[int] = set()
 
@@ -157,31 +163,67 @@ def _build_hints(phase: str, key_color: str) -> dict[str, str]:
 
 
 def _hints_for(phase: str, key_color: str) -> dict[str, str]:
-    """Return {long, medium, short, minimal} for this phase+color. Cached."""
+    """Return {long, medium, short, minimal} for this phase+color. Cached (HB2-M2: FIFO-bounded)."""
     cache_key = (phase, key_color.lower())
-    if cache_key not in _hint_cache:
-        _hint_cache[cache_key] = _build_hints(phase, key_color)
+    if cache_key in _hint_cache:
+        return _hint_cache[cache_key]
+    if len(_hint_cache) >= _HINT_CACHE_MAX:
+        # FIFO: drop oldest insertion (dict preserves insertion order in Python 3.7+)
+        oldest = next(iter(_hint_cache))
+        _hint_cache.pop(oldest, None)
+    _hint_cache[cache_key] = _build_hints(phase, key_color)
     return _hint_cache[cache_key]
 
 
-def _build_streaming_hint(key_color: str) -> "tuple[Text, list[tuple[int, int]]]":
+def _clear_hint_cache() -> None:
+    """Test/utility hook — clear cached hint variants (HB2-M2)."""
+    _hint_cache.clear()
+
+
+def _hint_to_text(raw: str, default_style: str | None = None) -> Text:
+    """Parse Rich markup in a hint string; fall back to plain text if parsing raises (HB2-H1).
+
+    Callers that pass literal `[` chars must escape them as `\\[`.
+    """
+    try:
+        t = Text.from_markup(raw)
+    except Exception:
+        _log.debug("hint markup parse failed for %r", raw, exc_info=True)
+        t = Text(raw)
+    if default_style and not t.spans and not t.style:
+        t.stylize(default_style)
+    return t
+
+
+def _build_streaming_hint(
+    key_color: str, width: int = 120,
+) -> "tuple[Text, list[tuple[int, int]]]":
     """
     Returns the streaming-phase hint Text and the character ranges of key
     badge names that must be excluded from shimmer.
+
+    HB2-H3: width-aware — degrades to short/minimal form on narrow terminals.
     """
     text = Text()
     badges: list[tuple[int, int]] = []
 
-    def badge(key: str, desc: str, sep: bool = False) -> None:
+    def badge(key: str, desc: str | None, sep: bool = False) -> None:
         if sep:
             text.append("  ·  ", style="dim")
         start = len(text)
         text.append(key, style=Style(color=key_color, bold=True))
         badges.append((start, len(text)))   # end is exclusive
-        text.append(f" {desc}", style="dim")
+        if desc:
+            text.append(f" {desc}", style="dim")
 
-    badge(KEY_CTRL_C, "interrupt")
-    badge("Esc", "dismiss", sep=True)
+    if width >= 78:
+        badge(KEY_CTRL_C, "interrupt")
+        badge("Esc", "dismiss", sep=True)
+    elif width >= 48:
+        badge(KEY_CTRL_C, None)
+        badge("Esc", None, sep=True)
+    else:
+        badge(KEY_CTRL_C, None)
     return text, badges
 
 
@@ -281,14 +323,34 @@ class HintBar(Widget):
         # Trigger repaint — render() picks up hint directly
         self.refresh()
 
-    def _get_key_color(self) -> str:
-        """Read key badge color from CSS variables."""
+    # ------------------------------------------------------------------
+    # HB2-M1: unified CSS variable resolution — single resolver, one fallback chain
+    # ------------------------------------------------------------------
+
+    def _vars(self) -> dict[str, str]:
+        """Return CSS vars dict with empty-dict fallback. Cached per-render only."""
         try:
-            v = self.app.get_css_variables()
-            return v.get("accent-interactive", v.get("primary", "#5f87d7"))
+            return self.app.get_css_variables() or {}
         except Exception:
-            _log.debug("HintBar._get_key_color: css var lookup failed", exc_info=True)
-            return "#5f87d7"
+            _log.debug("get_css_variables failed in HintBar", exc_info=True)
+            return {}
+
+    def _key_color(self, vars_: "dict[str, str] | None" = None) -> str:
+        """Resolve key-badge accent color with consistent fallback chain."""
+        v = vars_ if vars_ is not None else self._vars()
+        return v.get("accent-interactive", v.get("primary", "#5f87d7"))
+
+    def _shimmer_colors(self, vars_: "dict[str, str] | None" = None) -> "tuple[str, str]":
+        """Return (dim, peak) shimmer hex colors from CSS vars."""
+        v = vars_ if vars_ is not None else self._vars()
+        return (
+            v.get("spinner-shimmer-dim",  "#6e6e6e"),
+            v.get("spinner-shimmer-peak", "#909090"),
+        )
+
+    def _get_key_color(self) -> str:
+        """Deprecated alias — use _key_color() instead. Remove after 2026-06-30."""
+        return self._key_color()
 
     def on_mount(self) -> None:
         self.watch(self.app, "status_streaming", self._on_streaming_change)
@@ -346,38 +408,78 @@ class HintBar(Widget):
                 _log.debug("HintBar.on_unmount: _flash_timer stop failed", exc_info=True)
             self._flash_timer = None
 
+    def _should_shimmer(self) -> bool:
+        """Return True if shimmer should be active (running + animations enabled)."""
+        running = (
+            getattr(self.app, "agent_running", False)
+            or getattr(self.app, "command_running", False)
+        )
+        return running and getattr(self.app, "_animations_enabled", True)
+
+    def _shimmer_state_consistent_with_phase(self, phase: str) -> bool:
+        """Return True if the shimmer timer state is correct for the given phase."""
+        if phase in ("stream", "file") and self._should_shimmer():
+            return self._shimmer_timer is not None
+        return self._shimmer_timer is None
+
+    def _peek_flash(self) -> "object | None":
+        """Return the active FlashState on the hint-bar channel, or None (HB2-H2)."""
+        _feedback = getattr(self.app, "feedback", None)
+        if _feedback is None or not hasattr(_feedback, "peek"):
+            return None
+        try:
+            return _feedback.peek("hint-bar")
+        except Exception:
+            _log.debug("HintBar._peek_flash: peek failed", exc_info=True)
+            return None
+
+    def _streaming_pinned_text(self, key_color: str, width: int) -> Text:
+        """Return the width-aware streaming pinned text (HB2-H3)."""
+        hints = _hints_for("stream", key_color)
+        if width >= 78:
+            markup = hints["long"]
+        elif width >= 48:
+            markup = hints["short"]
+        else:
+            markup = hints["minimal"]
+        return Text.from_markup(markup)
+
     def _on_streaming_change(self, streaming: bool = False) -> None:
-        """S0-C: suppress shimmer while streaming; restore when done."""
+        """S0-C: suppress shimmer while streaming; restore when done.
+
+        HB2-M3: actively evict stale stream/file phase when streaming ends and
+        neither agent nor command is running — don't wait for next render.
+        """
         if streaming and self._shimmer_timer is not None:
             self._shimmer_stop()
-            self.refresh()
-        elif not streaming and self._phase in ("stream", "file"):
-            _running = (
+        elif not streaming:
+            running = (
                 getattr(self.app, "agent_running", False)
                 or getattr(self.app, "command_running", False)
             )
-            if _running and getattr(self.app, "_animations_enabled", True):
+            # HB2-M3: phase eviction — drop stale stream/file phase immediately
+            if not running and self._phase in ("stream", "file"):
+                self._phase = "idle"
+            elif self._phase in ("stream", "file") and getattr(self.app, "_animations_enabled", True):
                 self._shimmer_start()
-            else:
-                self.refresh()  # guard-fail path; repaint to show idle hints
+        self.refresh()
 
     def set_phase(self, phase: str) -> None:
-        """Transition to a new hint phase. Manages shimmer lifecycle."""
-        if phase == self._phase:
-            return  # shimmer-state changes driven by _on_streaming_change, not set_phase
+        """Transition to a new hint phase. Manages shimmer lifecycle.
+
+        HB2-M4: also checks shimmer-state consistency so re-entering the same
+        phase (e.g. 'stream' after reduced-motion toggled off) correctly
+        restarts the shimmer without waiting for _on_streaming_change.
+        """
+        same_phase = (phase == self._phase)
+        if same_phase and self._shimmer_state_consistent_with_phase(phase):
+            return  # already in correct state — no-op
         # Stop any existing shimmer first
         self._shimmer_stop()
         self._phase = phase
         streaming = getattr(self.app, "status_streaming", False)
-        if phase in ("stream", "file") and not streaming:
-            _running = (
-                getattr(self.app, "agent_running", False)
-                or getattr(self.app, "command_running", False)
-            )
-            if _running and getattr(self.app, "_animations_enabled", True):
-                self._shimmer_start()
-            else:
-                self.refresh()  # guard failed or animations off — repaint without shimmer
+        if phase in ("stream", "file") and not streaming and self._should_shimmer():
+            self._shimmer_start()
         else:
             self.refresh()
 
@@ -388,8 +490,10 @@ class HintBar(Widget):
             return
         if getattr(self.app, "has_class", lambda *a: False)("reduced-motion"):
             return
-        key_color = self._get_key_color()
-        base_text, skip = _build_streaming_hint(key_color)
+        key_color = self._key_color()
+        # HB2-H3: pass current width so shimmer base matches width-aware pinned text
+        width = getattr(self.content_size, "width", 0) or 120
+        base_text, skip = _build_streaming_hint(key_color, width)
         self._shimmer_base = base_text
         self._shimmer_skip = skip
         self._shimmer_tick = 0
@@ -425,41 +529,22 @@ class HintBar(Widget):
 
     def render(self) -> "RenderResult":
         streaming = getattr(self.app, "status_streaming", False)
-
         _running = (
             getattr(self.app, "agent_running", False)
             or getattr(self.app, "command_running", False)
         )
         if streaming and _running:
-            try:
-                k = self.app.get_css_variables().get("accent-interactive", "#5f87d7")
-            except Exception:
-                # colour resolve failed; use hardcoded fallback blue
-                k = "#5f87d7"
-            pinned = Text.from_markup(
-                f"[bold {k}]{KEY_CTRL_C}[/] [dim]interrupt[/dim]  ·  [bold {k}]Esc[/] [dim]dismiss[/dim]"
-            )
-            flash_hint = self.hint
-            if flash_hint:
-                sep = Text.from_markup("  [dim]|[/dim]  ")
-                flash_t = Text(flash_hint, style="dim")
-                w = self.content_size.width
-                if pinned.cell_len + sep.cell_len + flash_t.cell_len <= w:
-                    pinned.append_text(sep)
-                    pinned.append_text(flash_t)
-            return pinned
+            return self._render_streaming()
 
-        # Non-streaming: existing behaviour unchanged
+        # Non-streaming path
+        # HB2-H1: parse markup in self.hint instead of treating as literal string
         if self.hint:
-            return Text(self.hint)  # pre-existing: strips markup; fix deferred
+            return _hint_to_text(self.hint)
+
         if self._shimmer_base is not None and self._shimmer_timer is not None:
             if _running:
-                try:
-                    _sv = self.app.get_css_variables()
-                    _sdim  = _sv.get("spinner-shimmer-dim",  "#6e6e6e")
-                    _speak = _sv.get("spinner-shimmer-peak", "#909090")
-                except Exception:
-                    _sdim, _speak = "#6e6e6e", "#909090"
+                # HB2-M1: unified shimmer color resolution via _shimmer_colors()
+                _sdim, _speak = self._shimmer_colors()
                 return shimmer_text(
                     self._shimmer_base,
                     self._shimmer_tick,
@@ -470,10 +555,13 @@ class HintBar(Widget):
                 )
             # Stale shimmer — agent/command not running; stop and fall through.
             self._shimmer_stop()
-        key_color = self._get_key_color()
+
+        # HB2-M1: single _vars() call at top of phase-render path
+        v = self._vars()
+        key_color = self._key_color(v)
         phase = self._phase
         if phase in ("stream", "file") and not _running:
-            # Stale phase — agent/command not running; reset and show idle hints.
+            # HB2-M3: belt-and-braces fallback — evict stale phase if watcher missed it
             self._phase = "idle"
             phase = "idle"
         hints = _hints_for(phase, key_color)
@@ -488,6 +576,44 @@ class HintBar(Widget):
             bucket, hint_text = "minimal", hints["minimal"]
         hint_text = hint_text + self._tab_hint_suffix(bucket, key_color)
         return Text.from_markup(hint_text)
+
+    def _render_streaming(self) -> "RenderResult":
+        """Streaming-phase render: error flashes left-anchored, low-priority right (HB2-H2)."""
+        # HB2-M1: single _vars() call for all color needs
+        v = self._vars()
+        k = self._key_color(v)
+        flash = self._peek_flash()
+        width = self.content_size.width
+
+        # HB2-H2: promote NORMAL-and-above flashes to left anchor
+        flash_priority = getattr(flash, "priority", -1) if flash is not None else -1
+        flash_message = getattr(flash, "message", "") if flash is not None else ""
+
+        if flash is not None and flash_priority >= _STREAMING_PROMOTE_PRIORITY:
+            # HB2-H1: parse markup in flash message (bold-red errors preserve styling)
+            body = _hint_to_text(flash_message)
+            # Append compact interrupt cue on the right, only if width allows
+            cue_full = Text.from_markup(
+                f"  [dim]·[/dim]  [bold {k}]{KEY_CTRL_C}[/] [dim]interrupt[/dim]"
+            )
+            cue_min = Text.from_markup(f"  [dim]·[/dim]  [bold {k}]{KEY_CTRL_C}[/]")
+            if body.cell_len + cue_full.cell_len <= width:
+                body.append_text(cue_full)
+            elif body.cell_len + cue_min.cell_len <= width:
+                body.append_text(cue_min)
+            return body
+
+        # Default streaming layout — width-aware pinned interrupt + optional flash on the right
+        # HB2-H3: use width-aware helper instead of hardcoded long form
+        pinned = self._streaming_pinned_text(k, width)
+        if flash is not None and flash_message:
+            sep = Text.from_markup("  [dim]|[/dim]  ")
+            # HB2-H1: parse markup in flash message (not forced dim)
+            flash_t = _hint_to_text(flash_message)
+            if pinned.cell_len + sep.cell_len + flash_t.cell_len <= width:
+                pinned.append_text(sep)
+                pinned.append_text(flash_t)
+        return pinned
 
 
 # ---------------------------------------------------------------------------

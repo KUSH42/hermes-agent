@@ -121,10 +121,26 @@ from .status_bar import (  # noqa: F401
     _BAR_FILLED,
     _BAR_WIDTH,
     _SEP,
+    _STREAMING_PROMOTE_PRIORITY,
     _build_hints,
     _build_streaming_hint,
+    _clear_hint_cache,
     _hint_cache,
+    _hint_to_text,
     _hints_for,
+    # HB2-L2: KEY_* constants and HINT_MAX_PRIMARY exported for test imports
+    KEY_ENTER,
+    KEY_TAB,
+    KEY_SPACE,
+    KEY_ESC,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_CTRL_C,
+    KEY_CTRL_F,
+    KEY_CTRL_SHIFT_H,
+    KEY_CTRL_J,
+    KEY_CTRL_Z,
+    HINT_MAX_PRIMARY,
 )
 
 from .overlays import (  # noqa: F401

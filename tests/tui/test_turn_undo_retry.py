@@ -652,3 +652,48 @@ async def test_agent_running_auto_cancels_overlay():
         assert app.undo_state is None
         hint = _get_hint(app)
         assert "undo cancelled" in hint.lower() or "cancelled" in hint.lower()
+
+
+@pytest.mark.asyncio
+async def test_input_unlocked_after_agent_auto_cancels_undo():
+    """Regression: input must be re-enabled after agent auto-clears undo_state.
+
+    The bug: on_undo_state(None) had `elif not agent_running` guard, so the
+    unlock path was skipped when the agent was running.  Input stayed disabled
+    forever (has focus but can't type).
+    """
+    app = _make_app()
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        output = app.query_one(OutputPanel)
+        panel = MessagePanel(user_text="unlock test")
+        await output.mount(panel)
+        await pilot.pause()
+
+        from hermes_cli.tui.input_widget import HermesInput
+        inp = app.query_one(HermesInput)
+
+        # Open undo overlay → input locked
+        state = UndoOverlayState(
+            deadline=time.monotonic() + 30,
+            response_queue=queue.Queue(),
+            user_text="unlock test",
+            has_checkpoint=False,
+        )
+        app.undo_state = state
+        await pilot.pause()
+        assert inp.disabled, "input should be disabled while undo overlay is active"
+
+        # Agent starts → auto-clears undo_state while agent_running=True
+        app.agent_running = True
+        await pilot.pause()
+        assert app.undo_state is None
+
+        # Input must be re-enabled even though agent is still running
+        assert not inp.disabled, "input must be re-enabled after undo auto-cancel"
+        assert not inp._locked, "_locked flag must be cleared"
+
+        # After agent stops, input is still usable
+        app.agent_running = False
+        await pilot.pause()
+        assert not inp.disabled, "input still enabled after agent stops"

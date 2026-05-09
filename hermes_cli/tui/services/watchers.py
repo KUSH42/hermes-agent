@@ -612,12 +612,17 @@ class WatchersService(AppService):
         try:
             inp = self.app.query_one("#input-area")
             if value is not None:
-                inp.disabled = True
                 try:
                     inp._set_input_locked(True)
                 except Exception as exc:
+                    # Fallback: direct set — note: also sets _pre_lock_disabled if we
+                    # do it before the call, so only set here on _set_input_locked failure.
+                    inp.disabled = True
                     _log.debug("on_undo_state: _set_input_locked(True) failed: %s", exc, exc_info=True)
-            elif not self.app.agent_running and not self.app.command_running:
+            else:
+                # undo_state is None → undo overlay gone; always unlock regardless of
+                # agent_running. The undo lock is the only reason input is disabled here,
+                # and watch_agent_running never calls _set_input_locked(False).
                 inp.disabled = False
                 try:
                     inp._set_input_locked(False)

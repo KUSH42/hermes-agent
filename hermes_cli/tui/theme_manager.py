@@ -287,6 +287,8 @@ COMPONENT_VAR_DEFAULTS: dict[str, str] = {
     "scrollbar": "#5f87d7",
     # Drawbraille overlay braille canvas color (default: bright cyan)
     "drawbraille-canvas-color": "#00d7ff",
+    # Animation overlay foreground; skins may override independently of $accent
+    "drawbraille-fg": "#00d7ff",
     # Panel border color — used by SourcesBar and other bordered panels
     "panel-border":       "#333333",
     # Footnote superscript marker color (in _render_footnote_section)

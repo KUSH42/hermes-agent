@@ -81,7 +81,7 @@ class DrawbrailleOverlayCfg:
     position: str = "bottom-right"
     size: str = "medium"
     vertical: bool = False
-    color: str = "$accent"
+    color: str = "$drawbraille-fg"
     gradient: bool = False
     color_secondary: str = "$primary"
     dim_background: bool = True
@@ -163,7 +163,7 @@ def _cfg_from_mapping(d: dict) -> DrawbrailleOverlayCfg:
         position=str(d.get("position", "bottom-right")),
         size=str(d.get("size", "medium")),
         vertical=bool(d.get("vertical", True)),
-        color=str(d.get("color", "$accent")),
+        color=str(d.get("color", "$drawbraille-fg")),
         gradient=bool(d.get("gradient", False)),
         color_secondary=str(d.get("color_secondary", "$primary")),
         dim_background=bool(d.get("dim_background", True)),

@@ -214,6 +214,20 @@ class ContextMenu(ModalOverlayMixin, Widget):
                 self.dismiss_overlay()
             return
 
+        # Claim the modal slot BEFORE any await so that two concurrent show()
+        # coroutines (rapid right-clicks) never accumulate duplicate stack entries.
+        # If we already own a slot, pop it first (take-over), then push once.
+        if "--modal" in self.classes:
+            try:
+                self.app.pop_modal(self)
+            except AttributeError:
+                pass
+        try:
+            self.app.push_modal(self)
+        except AttributeError:
+            pass  # app has no push_modal — graceful degrade
+        self.add_class("--modal")
+
         # Tear down previous contents (if menu was already visible); await
         # each remove so the DOM is clean before mounting new children.
         for child in list(self.children):
@@ -257,21 +271,9 @@ class ContextMenu(ModalOverlayMixin, Widget):
         self._opener_browse_target = next(
             (w for w in self.app.query(".--browse-focused")), None
         )
-        # MOD-8: use _capture_focus_caller + push_modal, then add CSS classes
+        # MOD-8: capture focus caller before stealing focus
         self._capture_focus_caller()  # record focus caller before stealing focus
-        # Guard: if a prior show() already pushed us (re-entrant call while the async
-        # body was suspended across two rapid right-clicks), pop first so we don't
-        # accumulate duplicate stack entries that can never be fully dismissed.
-        if "--modal" in self.classes:
-            try:
-                self.app.pop_modal(self)
-            except AttributeError:
-                pass
-        try:
-            self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter
-        except AttributeError:
-            pass  # app has no push_modal — graceful degrade
-        self.add_class("--modal")  # il-m1: owned by ContextMenu.show (permanent widget override)
+        # --modal and push_modal already claimed synchronously above (before any await)
         self.add_class("--visible")
         self.focus()
 

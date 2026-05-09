@@ -422,11 +422,12 @@ class ContextMenuService(AppService):
             UsageOverlay, WorkspaceOverlay,
             ToolPanelHelpOverlay as _TPHO,
         )
+        from hermes_cli.tui.context_menu import ContextMenu as _CM
         app = self.app
         # Widgets with dismiss_overlay() registered in the modal stack
         for cls in (
             HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
-            SessionOverlay, ConfigOverlay, _TPHO,
+            SessionOverlay, ConfigOverlay, _TPHO, _CM,
         ):
             for widget in app.query(cls):
                 if widget.has_class("--visible"):

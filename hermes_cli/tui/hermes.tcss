@@ -228,9 +228,10 @@ MessagePanel.--entering {
  * prepended ▌ had — it only appeared on the first row of wrapped lines. */
 
 ReasoningPanel {
-    margin: 0 2;
+    padding: 0 1;           /* mirrors DEFAULT_CSS; tcss wins on specificity */
     /* 60% = Primary tier — see category accent opacity rule */
     border-left: vkey $reasoning-accent 60%;
+    /* margin: 0 2 removed — DEFAULT_CSS now declares margin: 0 (LP-GUTTER-3) */
 }
 
 /* Hover affordance on closeable reasoning panels */
@@ -242,7 +243,7 @@ ReasoningPanel.--closeable:hover {
 ReasoningPanel StreamingCodeBlock {
     opacity: 0.7;
     border: round $surface-darken-2;
-    margin: 0 0 1 2;
+    margin: 0 0 1 2;  /* left:2 = intentional code indent inside rail; see LP-GUTTER-3 */
 }
 
 ReasoningPanel StreamingCodeBlock .code-block-footer {

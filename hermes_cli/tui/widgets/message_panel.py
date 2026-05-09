@@ -52,14 +52,15 @@ class ReasoningPanel(Widget):
     ReasoningPanel {
         display: none;
         height: auto;
-        margin: 0 2;
+        margin: 0;              /* was: 0 2; LP-GUTTER-3: margin removed, rail owns col 0 */
+        padding: 0 1;           /* new: rail compensation, text → col 2 */
     }
     ReasoningPanel.visible {
         display: block;
     }
     ReasoningPanel #reasoning-collapsed {
         background: $primary 5%;
-        padding: 0 1;
+        padding: 0;             /* was: 0 1; parent padding-left:1 already applied */
         height: 1;
         display: none;
     }
@@ -806,8 +807,9 @@ class UserMessagePanel(Widget):
     DEFAULT_CSS = """
     UserMessagePanel {
         height: auto;
-        margin: 1 0 0 0;
-        padding: 0 2;
+        margin: 1 0 0 0;   /* keep top margin for rhythm; left margin zeroed */
+        padding: 0 1;       /* was: 0 2; rail(1)+padding(1)=col 2 (LP-GUTTER-2) */
+        border-left: vkey $user-accent 60%;
     }
     """
 

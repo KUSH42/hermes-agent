@@ -67,6 +67,7 @@ x-hermes:
     tool-tier-query-accent: '#FFBF00'
     tool-tier-agent-accent: '#FFBF00'
     reasoning-accent: '#FFBF00'
+    user-accent: '#4db6ac'
     browse-turn: '#FFBF00'
     browse-code: '#4caf50'
     browse-tool: '#9b59b6'

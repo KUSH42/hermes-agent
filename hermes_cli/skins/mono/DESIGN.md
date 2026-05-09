@@ -50,6 +50,9 @@ x-hermes:
         - '#888888'
         - '#666666'
         - '#444444'
+        - '#888888'
+        - '#666666'
+        - '#444444'
   logo_startup_tte:
     effect: highlight
   schema: 1
@@ -175,7 +178,7 @@ x-hermes:
     rule-accent-color: '#FFD700'
     rule-accent-dim-color: '#B8860B'
     primary-darken-3: '#4a7aaa'
-    brand-glyph-color: '#FFD700'
+    brand-glyph-color: '#dddddd'
     scrollbar: '#5f87d7'
     drawbraille-canvas-color: '#00d7ff'
     panel-border: '#333333'
@@ -185,9 +188,9 @@ x-hermes:
     diff-add-bg: '#1a3a1a'
     diff-del-bg: '#3a1a1a'
     info: '#58A6FF'
-    nameplate-idle-color: '#888888'
-    nameplate-active-color: '#7b68ee'
-    nameplate-decrypt-color: '#00ff41'
+    nameplate-idle-color: '#444444'
+    nameplate-active-color: '#dddddd'
+    nameplate-decrypt-color: '#888888'
     spinner-shimmer-dim: '#555555'
     spinner-shimmer-peak: '#d8d8d8'
     attachment-chip-fg: '{colors.ui-accent}'

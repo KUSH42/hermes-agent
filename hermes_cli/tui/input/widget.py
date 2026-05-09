@@ -79,7 +79,7 @@ if TYPE_CHECKING:
     pass
 
 
-class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextArea, can_focus=True):
+class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextArea):
     """Multiline input bar (1–3 rows) with history, autocomplete, and ghost text.
 
     Extends TextArea for multiline support.  Shift+Enter inserts a newline;
@@ -108,6 +108,29 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         Binding("alt+up",       "history_prev_prompt", "",         show=False, priority=True),
         Binding("alt+down",     "history_next_prompt", "",         show=False, priority=True),
     ]
+
+    @property
+    def can_focus(self) -> bool:  # type: ignore[override]
+        """Deny focus when a focus-capturing modal overlay is active."""
+        try:
+            return not self.app.has_focus_capturing_modal()
+        except AttributeError:
+            return True  # app not yet attached (pre-mount) — allow
+
+    def on_focus(self, event: events.Focus) -> None:
+        try:
+            app = self.app
+            if not app.has_focus_capturing_modal():
+                return
+            self.blur()
+            top = app.top_modal()
+            if top is not None:
+                try:
+                    top.focus()
+                except Exception:
+                    _log.debug("on_focus: modal focus redirect failed", exc_info=True)
+        except AttributeError:
+            pass  # pre-mount — no app yet, nothing to redirect to
 
     # --- Messages ---
     class Submitted(Message):

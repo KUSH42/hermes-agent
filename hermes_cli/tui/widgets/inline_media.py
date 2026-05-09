@@ -1,6 +1,8 @@
 """Inline media display widgets for the Hermes TUI.
 
-Contains: InlineImage, InlineThumbnail, InlineImageBar.
+Contains: InlineImage, InlineThumbnail, InlineImageBar,
+          ChipPlan, OverflowChip, _render_attachment_thumb,
+          _layout_chips, _size_suffix, _size_str_for_path.
 """
 
 from __future__ import annotations
@@ -8,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +30,136 @@ from textual.widgets import Static
 from hermes_cli.tui.tooltip import TooltipMixin
 
 _MAX_THUMBNAILS = 40
+
+# ---------------------------------------------------------------------------
+# IB-VIS-1 / IB-VIS-2: chip layout constants
+# ---------------------------------------------------------------------------
+
+_THUMB_DROP_BUDGET = 15  # drop thumbnail when per-chip width budget is below this
+_MIN_CHIP_WIDTH = 14     # minimum cols for a fully-collapsed 1-row chip:
+                         # 📎 (2) + 8 name chars + "  ✕" (3) + 1 padding = 14
+
+
+# ---------------------------------------------------------------------------
+# IB-VIS-1: shared decode helper
+# ---------------------------------------------------------------------------
+
+def _render_attachment_thumb(path: Path, cols: int = 6, rows: int = 3) -> "list[Strip]":
+    """Decode path and return halfblock strips (one per output row).
+
+    Returns [] when path cannot be decoded as an image; the caller must
+    then fall back to 1-row text rendering and reset chip height to 1.
+
+    render_halfblock signature: render_halfblock(image, max_cols, max_rows, *, ...)
+    — positional for both size args, matching kitty_graphics.render_halfblock.
+    """
+    from hermes_cli.tui.kitty_graphics import _load_image, render_halfblock
+    img = _load_image(path)
+    if img is None:
+        return []
+    return render_halfblock(img, cols, rows)
+
+
+# ---------------------------------------------------------------------------
+# IB-VIS-2: ChipPlan dataclass + layout helpers
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChipPlan:
+    path: Path
+    display_name: str   # final name to render (possibly truncated)
+    show_thumb: bool    # whether to show halfblock thumbnail
+    show_size: bool     # whether to append size suffix
+
+
+def _layout_chips(width: int, paths: "list[Path]") -> "tuple[list[ChipPlan], int]":
+    """Return (visible_plans, hidden_count).
+
+    visible_plans: chips to render, each with budget-aware display_name,
+                   show_thumb, and show_size fields set.
+    hidden_count:  number of paths collapsed into the +N more chip (0 if none).
+    """
+    from hermes_cli.tui.widgets.status_bar import _truncate
+
+    n = max(1, len(paths))
+    budget = max(1, min(40, width // n))
+    max_visible = max(1, width // _MIN_CHIP_WIDTH)
+
+    plans: list[ChipPlan] = []
+    for p in paths:
+        name = p.name
+        show_size = True
+        show_thumb = True
+
+        # Width-budget ladder: apply steps until chip fits within budget
+        # Step 1: Drop size suffix (reclaims 8-12 cols)
+        if budget - len(name) < 6:
+            show_size = False
+
+        # Step 2: Truncate name to ≤12 chars
+        if len(name) > budget:
+            name = _truncate(name, 12)
+
+        # Step 3: Drop thumbnail when budget below threshold
+        if budget < _THUMB_DROP_BUDGET:
+            show_thumb = False
+
+        plans.append(ChipPlan(
+            path=p,
+            display_name=name,
+            show_thumb=show_thumb,
+            show_size=show_size,
+        ))
+
+    # Chip-count overflow: collapse excess into +N more
+    if len(plans) > max_visible:
+        hidden_count = len(plans) - max_visible
+        visible_plans = plans[:max_visible]
+        return visible_plans, hidden_count
+
+    return plans, 0
+
+
+# ---------------------------------------------------------------------------
+# IB-VIS-3: size suffix helpers
+# ---------------------------------------------------------------------------
+
+def _size_suffix(path: Path, budget_spare: int) -> str:
+    """Return ' (N KB)' when spare budget >= 6; '' otherwise or on stat error."""
+    if budget_spare < 6:
+        return ""
+    try:
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        return f" ({_human_size(path.stat().st_size)})"
+    except OSError:
+        return ""
+
+
+def _size_str_for_path(path: Path) -> str:
+    """Return human-readable size string for path, or '' on OSError."""
+    try:
+        from hermes_cli.tui.streaming_microcopy import _human_size
+        return _human_size(path.stat().st_size)
+    except OSError:
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# IB-VIS-2: OverflowChip
+# ---------------------------------------------------------------------------
+
+class OverflowChip(Static):
+    """Simple 1-row chip showing +N more when attachments exceed visible budget."""
+
+    DEFAULT_CSS = """
+    OverflowChip {
+        width: auto;
+        height: 1;
+        color: $text-muted;
+        margin: 0 1;
+    }
+    """
+
 
 if TYPE_CHECKING:
     pass

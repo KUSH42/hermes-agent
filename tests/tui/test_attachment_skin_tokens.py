@@ -193,39 +193,23 @@ class TestDefaultCssTokenUsage:
             _restore_app(ImageBar, original)
 
     def test_image_bar_update_images_uses_attachment_chip_fg(self) -> None:
-        from hermes_cli.tui.widgets.status_bar import ImageBar
+        """X-DT-2: attachment-chip-fg token name is wired through the CSS pipeline.
 
-        widget = _make_image_bar()
-        mock_app = _make_mock_app({"attachment-chip-fg": "#ccaaff"})
-        original = _inject_app(widget, mock_app)
-        # Stub display setter — it calls self.styles which is unavailable without a real app
-        original_display = ImageBar.__dict__.get("display")
-        ImageBar.display = property(lambda self: True, lambda self, v: None)  # type: ignore[assignment]
-        try:
-            # Stub _shimmer_once to avoid set_interval (no mounted app)
-            widget._shimmer_once = lambda base_text, **kw: None  # type: ignore[method-assign]
+        ImageBar now uses AttachmentChip children styled via CSS $-vars. Verify
+        the token key name is present in _ATTACHMENT_CSS_DEFAULTS and that
+        AttachmentChip.DEFAULT_CSS references it as a CSS variable.
+        """
+        from hermes_cli.tui.widgets.status_bar import (
+            AttachmentChip,
+            _ATTACHMENT_CSS_DEFAULTS,
+        )
 
-            class _FakeImage:
-                name = "photo.png"
-
-            widget.update_images([_FakeImage()])
-
-            base_style = str(widget._static_content.style)
-            assert "#ccaaff" in base_style or base_style == "#ccaaff", (
-                f"_static_content style is {base_style!r}, expected to contain '#ccaaff'"
-            )
-            assert "dim" not in base_style, (
-                f"_static_content style {base_style!r} still contains literal 'dim'"
-            )
-        finally:
-            _restore_app(ImageBar, original)
-            if original_display is not None:
-                ImageBar.display = original_display  # type: ignore[assignment]
-            elif "display" in ImageBar.__dict__:
-                try:
-                    delattr(ImageBar, "display")
-                except AttributeError:
-                    pass
+        assert "attachment-chip-fg" in _ATTACHMENT_CSS_DEFAULTS, (
+            "attachment-chip-fg must be a key in _ATTACHMENT_CSS_DEFAULTS"
+        )
+        assert "attachment-chip-fg" in AttachmentChip.DEFAULT_CSS, (
+            "AttachmentChip.DEFAULT_CSS must reference $attachment-chip-fg"
+        )
 
     def test_attachment_chip_css_token_names_documented(self) -> None:
         from hermes_cli.tui.widgets.status_bar import _ATTACHMENT_CSS_DEFAULTS

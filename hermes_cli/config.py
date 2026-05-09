@@ -813,6 +813,7 @@ DEFAULT_CONFIG = {
         "inline_images": "auto",  # auto | on | off — inline image rendering in TUI
         "halfblock_dark_threshold": 0.1,   # WCAG luminance < this → dark cell in halfblock art
         "image_bar": True,        # Show InlineImageBar thumbnail strip for inline images
+        "image_bar_thumbnails": True,  # Show halfblock thumbnail previews inside attachment chips
         "math": "auto",           # auto|on|off — render LaTeX block math as images
         "math_renderer": "auto",  # auto|image|unicode — image uses matplotlib; unicode always uses symbol table
         "mermaid": "auto",        # auto|on|off — render mermaid fences via mmdc if available

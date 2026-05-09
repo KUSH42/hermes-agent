@@ -5612,6 +5612,12 @@ class HermesCLI:
                 # settle frame is visually identical to TTE's final frame and no color snap
                 # occurs.  Destructive effects (burn, crumble) whose last TTE frame shows
                 # dispersed chars also benefit — the settle always shows complete text.
+                # Wait for logo TTE producer so the ramp can composite the logo
+                # settle frame.  Without this wait, _get_logo_frame_at returns None
+                # for the ramp frames and the LOGO_PLACEHOLDER_MARKER chars stay
+                # visible across the entire ~420ms fade.
+                if logo_cfg is not None:
+                    _logo_done.wait(timeout=2.0)
                 try:
                     for _fi in range(_POST_FADE_FRAMES):
                         _t = (_fi + 1) / _POST_FADE_FRAMES
@@ -5745,6 +5751,9 @@ class HermesCLI:
                         anim_frames.append(_process_raw_frame(raw_frame, _get_logo_frame_at(_ci2)))
                     # Gradient fade ramp — same as cache-miss path; use _settle_stops
                     # so colors match TTE's final frame exactly (no snap on transition).
+                    # Wait for logo TTE producer so ramp composites the logo settle.
+                    if logo_cfg is not None:
+                        _logo_done.wait(timeout=2.0)
                     try:
                         for _fi in range(_POST_FADE_FRAMES):
                             _t = (_fi + 1) / _POST_FADE_FRAMES

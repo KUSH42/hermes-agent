@@ -46,6 +46,10 @@ class SpinnerService(AppService):
         if not (app.agent_running or app.command_running):
             self._clear_spinner_overlay()
             return
+        # LIVE-1: statusline owns liveness during token streaming
+        if getattr(app, "status_streaming", False):
+            self._clear_spinner_overlay()
+            return
         app._shimmer_tick += 1
 
         hint_suffix = self.build_hint_text()

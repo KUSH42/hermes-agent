@@ -87,6 +87,7 @@ class IOService(AppService):
                     # A1: mark STREAMING phase on first token
                     from hermes_cli.tui.agent_phase import Phase as _Phase
                     app.status_phase = _Phase.STREAMING
+                    app.spinner_label = ""           # LIVE-2: drop stale tool label at stream start
                     app.hooks.fire("on_streaming_start")
                     try:
                         app.query_one(ThinkingWidget).deactivate()

@@ -1,377 +1,36 @@
 """_ToolPanelActionsMixin — all keyboard action handlers for ToolPanel."""
 from __future__ import annotations
 
-import logging
 import sys
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from textual import events
-from textual.message import Message
-
 from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
-
-_log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hermes_cli.tui.tool_result_parse import ResultSummaryV4
     from hermes_cli.tui.tool_payload import ResultKind
 
 
-class EditToolArgsRequested(Message):
-    """ER-5: emitted when the user requests to re-edit a failed tool's arguments."""
-
-    def __init__(self, tool_call_id: "str | None") -> None:
-        super().__init__()
-        self.tool_call_id = tool_call_id
-
-
-# HF-B: re-show toggle hint after this many seconds of unfocus
-TOGGLE_HINT_RESHOW_SECONDS = 300
-
-# DC-1: concept §Block-level keys H5 — full 4-tier cycle.
-# Tuple is populated lazily on first use to avoid import-time circular deps.
-_DENSITY_CYCLE: "tuple | None" = None
-
-
-def _density_cycle() -> "tuple":
-    global _DENSITY_CYCLE
-    if _DENSITY_CYCLE is None:
-        from hermes_cli.tui.tool_panel.density import DensityTier
-        _DENSITY_CYCLE = (
-            DensityTier.DEFAULT,
-            DensityTier.COMPACT,
-            DensityTier.TRACE,
-            DensityTier.HERO,
-        )
-    return _DENSITY_CYCLE
-
-
-_APP_BG_FALLBACK: str = "#1e1e2e"  # used when app-bg / background CSS vars are missing
-
-
-def _is_hero_row_legal(body_lines: int) -> bool:
-    from hermes_cli.tui.tool_panel.layout_resolver import THRESHOLDS
-    return body_lines >= THRESHOLDS["HERO_MIN_BODY_ROWS"]
-
-
-def _copy_text_via_test_double(app: object, text: str) -> None:
-    """Mirror copy actions into injected pyperclip mocks used by unit tests.
-
-    Real apps route through ``app._copy_text_with_hint``. Some isolated panel
-    tests patch ``panel.app`` with a ``MagicMock`` and assert direct clipboard
-    writes via a fake ``pyperclip`` module instead. Support that test seam
-    without changing production behavior for real apps.
-    """
-    if not app.__class__.__module__.startswith("unittest.mock"):
-        return
-    pyperclip = sys.modules.get("pyperclip")
-    copy = getattr(pyperclip, "copy", None) if pyperclip is not None else None
-    if callable(copy):
-        copy(text)
-
-
-def _next_legal_tier_static(
-    start: "object",
-    direction: int,
-    body_lines: int,
-) -> "object":
-    """Skip HERO if row-budget forbids it; return nearest legal tier.
-
-    direction: +1 = forward, -1 = reverse.
-    Returns start if no legal tier found (all cycled without a legal candidate).
-    Caller is responsible for the post-resolve pressure flash.
-    """
-    from hermes_cli.tui.tool_panel.density import DensityTier
-    cycle = _density_cycle()
-    try:
-        idx = cycle.index(start)  # type: ignore[arg-type]
-    except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
-        return DensityTier.DEFAULT
-    for _ in range(len(cycle)):
-        idx = (idx + direction) % len(cycle)
-        candidate = cycle[idx]
-        if candidate != DensityTier.HERO or _is_hero_row_legal(body_lines):
-            return candidate
-        # HERO row-budget forbidden: skip and continue
-    return start
-
-
 class _ToolPanelActionsMixin:
     """Keyboard action handlers and their private helpers."""
 
-    @staticmethod
-    def _next_tier_in_cycle(current: "object") -> "object":
-        """Advance to the next tier in the forward density cycle.
-
-        Cycle: DEFAULT → COMPACT → TRACE → HERO → DEFAULT (concept §H5).
-        Any tier outside the cycle resets to DEFAULT.
-        """
-        from hermes_cli.tui.tool_panel.density import DensityTier
-        cycle = _density_cycle()
-        try:
-            idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
-            return DensityTier.DEFAULT
-        return cycle[(idx + 1) % len(cycle)]
-
-    @staticmethod
-    def _prev_tier_in_cycle(current: "object") -> "object":
-        """Retreat one step in the density cycle (reverse of _next_tier_in_cycle).
-
-        Any tier outside the cycle resets to DEFAULT.
-        """
-        from hermes_cli.tui.tool_panel.density import DensityTier
-        cycle = _density_cycle()
-        try:
-            idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:  # il-ex-1-exempt: noqa: bare-except
-            return DensityTier.DEFAULT
-        return cycle[(idx - 1) % len(cycle)]
-
     def action_toggle_collapse(self) -> None:
-        # Dismiss a visible tail panel first; Enter has no density effect while tail is open.
-        block = getattr(self, "_block", None)
-        tail = getattr(block, "_tail", None) if block is not None else None
-        if tail is not None and tail.has_class("--visible"):
-            tail.remove_class("--visible")
-            if hasattr(tail, "dismiss"):
-                tail.dismiss()
-            return
-        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        current = self._resolver.tier  # type: ignore[attr-defined]
-        if current == DensityTier.COMPACT:
-            target = DensityTier.DEFAULT
-            flash_label = "expanded"
-        else:
-            # DEFAULT, HERO, TRACE all collapse to COMPACT.
-            target = DensityTier.COMPACT
-            flash_label = "collapsed"
-
+        self.collapsed = not self.collapsed  # type: ignore[attr-defined]
         self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = target  # type: ignore[attr-defined]
         self._auto_collapsed = False  # type: ignore[attr-defined]
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        phase = _vs.state if _vs is not None else ToolCallState.DONE
-        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
-        kind = _vs_kind.kind if _vs_kind is not None else None
-        _size = getattr(self, "size", None)
-        width = _size.width if _size is not None else 0
-        inputs = DensityInputs(
-            phase=phase,
-            is_error=self._is_error(),
-            has_focus=False,
-            user_scrolled_up=False,
-            user_override=True,
-            user_override_tier=target,  # type: ignore[arg-type]
-            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,
-            row_budget=None,
-            kind=kind,
-            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-            width=width,
-            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
-        )
-        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        self._flash_header(flash_label, tone="info")
-        from ._keystroke_log import record_component, ENABLED  # KL-7
-        if ENABLED:
-            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
-            record_component(
-                action="expand_toggle",
-                widget=type(self).__name__,
-                block_id=_block_id,
-                phase=_phase,
-                kind=_kind_val,
-                density=self.density.value,  # type: ignore[attr-defined]
-                focused=self.has_focus,  # type: ignore[attr-defined]
-                extra={"expanded": target == DensityTier.DEFAULT},
-            )
-
-    def _hero_rejection_reason(self, inp: "object") -> str:
-        """Explain why a HERO tier request was downgraded."""
-        from hermes_cli.tui.tool_panel.layout_resolver import _HERO_KINDS, THRESHOLDS
-        _kind = getattr(inp, "kind", None)
-        if _kind not in _HERO_KINDS:
-            kind_name = _kind.value if _kind is not None else "unclassified"
-            return f"kind {kind_name} not eligible"
-        _body = getattr(inp, "body_line_count", 0)
-        if _body == 0:
-            return "no body content"
-        _hero_max = THRESHOLDS["HERO_MAX_LINES"]
-        if _body > _hero_max:
-            return f"body too long ({_body} > {_hero_max})"
-        _w = getattr(inp, "width", 0)
-        _resolver = getattr(self, "_resolver", None)  # type: ignore[attr-defined]
-        _hero_min = getattr(_resolver, "hero_min_width", 0) if _resolver is not None else 0
-        if _w and _hero_min and _w < _hero_min:
-            return f"terminal too narrow ({_w} < {_hero_min})"
-        return "ineligible"
-
-    def action_density_trace(self) -> None:
-        """Force TRACE tier — show everything, no row clamp."""
-        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = DensityTier.TRACE  # type: ignore[attr-defined]
-        self._auto_collapsed = False  # type: ignore[attr-defined]
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        phase = _vs.state if _vs is not None else ToolCallState.DONE
-        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
-        kind = _vs_kind.kind if _vs_kind is not None else None
-        inputs = DensityInputs(
-            phase=phase,
-            is_error=bool(
-                getattr(self._result_summary_v4, "is_error", False)  # type: ignore[attr-defined]
-                if self._result_summary_v4 else False  # type: ignore[attr-defined]
-            ),
-            has_focus=False,
-            user_scrolled_up=False,
-            user_override=True,
-            user_override_tier=DensityTier.TRACE,
-            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,  # irrelevant; override wins
-            row_budget=None,
-            kind=kind,
-            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-            width=self.size.width,  # type: ignore[attr-defined]
-            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
-        )
-        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        if self._resolver.tier != DensityTier.TRACE:  # type: ignore[attr-defined]
-            if inputs.is_error:
-                self._flash_header("trace unavailable — block errored", tone="warning")
-                self._user_collapse_override = False  # type: ignore[attr-defined]
-                self._user_override_tier = None  # type: ignore[attr-defined]
-            elif inputs.phase in (ToolCallState.STREAMING, ToolCallState.STARTED):
-                self._flash_header("trace pending — block still streaming", tone="warning")
-                # Flags stay set; post-completion resolve will promote to TRACE.
-            else:
-                self._flash_header("trace unavailable", tone="warning")
-                self._user_collapse_override = False  # type: ignore[attr-defined]
-                self._user_override_tier = None  # type: ignore[attr-defined]
-
-    def action_density_cycle(self) -> None:
-        """D key — advance density tier in cycle (concept §H5)."""
-        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        _old_tier = self._resolver.tier.value  # type: ignore[attr-defined]  # KL-7: capture before resolve
-        requested_tier = _next_legal_tier_static(
-            self._resolver.tier, direction=+1,  # type: ignore[attr-defined]
-            body_lines=self._body_line_count(),  # type: ignore[attr-defined]
-        )
-        self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = requested_tier  # type: ignore[attr-defined]
-        self._auto_collapsed = False  # type: ignore[attr-defined]
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        phase = _vs.state if _vs is not None else ToolCallState.DONE
-        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
-        kind = _vs_kind.kind if _vs_kind is not None else None
-        _size = getattr(self, "size", None)
-        width = _size.width if _size is not None else 0
-        inputs = DensityInputs(
-            phase=phase,
-            is_error=self._is_error(),
-            has_focus=False,
-            user_scrolled_up=False,
-            user_override=True,
-            user_override_tier=requested_tier,  # type: ignore[arg-type]
-            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,
-            row_budget=None,
-            kind=kind,
-            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-            width=width,
-            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
-        )
-        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
-            self._flash_header("hero mode unavailable", tone="warning")
-        else:
-            self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
-        from ._keystroke_log import record_component, ENABLED  # KL-7
-        if ENABLED:
-            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
-            record_component(
-                action="density_toggle",
-                widget=type(self).__name__,
-                block_id=_block_id,
-                phase=_phase,
-                kind=_kind_val,
-                density=self.density.value,  # type: ignore[attr-defined]
-                focused=self.has_focus,  # type: ignore[attr-defined]
-                extra={"from": _old_tier, "to": self.density.value},  # type: ignore[attr-defined]
-            )
-
-    def action_density_cycle_reverse(self) -> None:
-        """Shift+D — reverse density tier in cycle (concept §H5)."""
-        from hermes_cli.tui.tool_panel.density import DensityInputs, DensityTier
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        _old_tier = self._resolver.tier.value  # type: ignore[attr-defined]  # KL-7: capture before resolve
-        requested_tier = _next_legal_tier_static(
-            self._resolver.tier, direction=-1,  # type: ignore[attr-defined]
-            body_lines=self._body_line_count(),  # type: ignore[attr-defined]
-        )
-        self._user_collapse_override = True  # type: ignore[attr-defined]
-        self._user_override_tier = requested_tier  # type: ignore[attr-defined]
-        self._auto_collapsed = False  # type: ignore[attr-defined]
-        _vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        phase = _vs.state if _vs is not None else ToolCallState.DONE
-        _vs_kind = getattr(_vs, "kind", None) if _vs is not None else None
-        kind = _vs_kind.kind if _vs_kind is not None else None
-        _size = getattr(self, "size", None)
-        width = _size.width if _size is not None else 0
-        inputs = DensityInputs(
-            phase=phase,
-            is_error=self._is_error(),
-            has_focus=False,
-            user_scrolled_up=False,
-            user_override=True,
-            user_override_tier=requested_tier,  # type: ignore[arg-type]
-            body_line_count=self._body_line_count(),  # type: ignore[attr-defined]
-            threshold=0,
-            row_budget=None,
-            kind=kind,
-            parent_clamp=self._parent_clamp_tier,  # type: ignore[attr-defined]
-            width=width,
-            is_streaming=(phase in (ToolCallState.STARTED, ToolCallState.STREAMING)),
-        )
-        self._resolver.resolve(inputs)  # type: ignore[attr-defined]
-        if requested_tier == DensityTier.HERO and self._resolver.tier != DensityTier.HERO:  # type: ignore[attr-defined]
-            self._flash_header("hero mode unavailable", tone="warning")
-        else:
-            self._flash_header(self._resolver.tier.value, tone="info")  # type: ignore[attr-defined]
-        from ._keystroke_log import record_component, ENABLED  # KL-7
-        if ENABLED:
-            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
-            record_component(
-                action="density_toggle",
-                widget=type(self).__name__,
-                block_id=_block_id,
-                phase=_phase,
-                kind=_kind_val,
-                density=self.density.value,  # type: ignore[attr-defined]
-                focused=self.has_focus,  # type: ignore[attr-defined]
-                extra={"from": _old_tier, "to": self.density.value},  # type: ignore[attr-defined]
-            )
 
     def action_open_primary(self) -> None:
         import os
         import shlex
         header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
         if header is not None and getattr(header, "_path_clickable", False) and header._full_path:
-            self._flash_header("opening…")  # flash before the blocking call
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
-            except Exception:  # il-ex-1-exempt: OS open failure surfaced to user via _flash_header("open failed")
-                self._flash_header("open failed", tone="error")
+                self._flash_header("opening…")
+            except Exception:
+                pass
             return
         paths = self._result_paths_for_action()
         if not paths:
@@ -425,13 +84,12 @@ class _ToolPanelActionsMixin:
                 tone=tone,
                 priority=NORMAL,
             )
-        except Exception:  # channel not registered or widget unmounted — best-effort flash
-            _log.debug("_flash_header suppressed: msg=%r", msg, exc_info=True)
+        except Exception:
+            pass
 
     def action_copy_body(self) -> None:
         text = self.copy_content()  # type: ignore[attr-defined]
         if not text:
-            self._flash_header("body: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
         from hermes_cli.tui.streaming_microcopy import _human_size
@@ -453,7 +111,6 @@ class _ToolPanelActionsMixin:
                         url = artifact.path_or_url
                         break
         if not url:
-            self._flash_header("no URL in result", tone="warning")
             return
         self._flash_header("opening…")
         safe_open_url(
@@ -482,13 +139,12 @@ class _ToolPanelActionsMixin:
             if existing:
                 try:
                     inp._save_to_history(existing)
-                except Exception:  # il-ex-1-exempt: history save is best-effort; input proceeds regardless
+                except Exception:
                     pass
             inp.value = payload
             inp.focus()
             self._flash_header("edit cmd")
         except Exception:
-            _log.exception("action_edit_cmd failed")
             self._flash_header("edit unavailable")
 
     def action_copy_err(self) -> None:
@@ -502,7 +158,6 @@ class _ToolPanelActionsMixin:
                     payload = action.payload
                     break
         if not payload:
-            self._flash_header("stderr: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(payload)  # type: ignore[attr-defined]
         self._flash_header("copied stderr")
@@ -510,7 +165,6 @@ class _ToolPanelActionsMixin:
     def action_copy_paths(self) -> None:
         paths = self._result_paths_for_action()
         if not paths:
-            self._flash_header("paths: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint("\n".join(paths))  # type: ignore[attr-defined]
         self._flash_header(f"copied paths ({len(paths)})")
@@ -522,16 +176,8 @@ class _ToolPanelActionsMixin:
             return
         try:
             self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
-            self._flash_header("retrying…")
-        except Exception:  # il-ex-1-exempt: retry failure surfaced to user via _flash_header("retry failed")
+        except Exception:
             self._flash_header("retry failed")
-
-    def action_edit_args(self) -> None:
-        """ER-5: emit EditToolArgsRequested so the orchestrator can pre-fill the prompt."""
-        vs = getattr(self, "_view_state", None)  # type: ignore[attr-defined]
-        tool_call_id = getattr(vs, "tool_call_id", None) if vs is not None else None
-        self.post_message(EditToolArgsRequested(tool_call_id))  # type: ignore[attr-defined]
-        self._flash_header("edit args…")
 
     def action_copy_invocation(self) -> None:
         terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
@@ -541,7 +187,7 @@ class _ToolPanelActionsMixin:
             spec = spec_for(self._tool_name or "")  # type: ignore[attr-defined]
             is_shell = spec.category == ToolCategory.SHELL
             cat_name = spec.category.value
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             is_shell = False
             cat_name = "tool"
         label = self._tool_name or "tool"  # type: ignore[attr-defined]
@@ -582,7 +228,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted
+            except Exception:
                 pass
         if not all_rich:
             self.action_copy_body()
@@ -599,6 +245,7 @@ class _ToolPanelActionsMixin:
         self._flash_header(f"copied ANSI{size_suffix}")
 
     def action_copy_html(self) -> None:
+        import time as _time
         from rich.console import Console
         terminal_width = getattr(self.app, "size", None)  # type: ignore[attr-defined]
         terminal_width = terminal_width.width if terminal_width else 80
@@ -611,31 +258,29 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted
+            except Exception:
                 pass
         if not all_rich:
-            self._flash_header("HTML: nothing to copy", tone="warning")
             return
         console = Console(record=True, width=terminal_width)
         for t in all_rich:
             console.print(t, highlight=False)
         html = console.export_html(inline_styles=True)
         try:
-            css = self.app.get_css_variables()  # type: ignore[attr-defined]
-            bg_hex = css.get("app-bg") or css.get("background") or _APP_BG_FALLBACK
-        except Exception as exc:  # il-ex-1-exempt: swallow
-            _log.debug("app-bg css lookup failed: %s", exc)
-            bg_hex = _APP_BG_FALLBACK
+            bg_hex = self.app.get_css_variables().get("base", "#1e1e2e")  # type: ignore[attr-defined]
+        except Exception:
+            bg_hex = "#1e1e2e"
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
+        tmp_path = f"/tmp/hermes_copy_{int(_time.time())}.html"
         self.app._copy_text_with_hint(html)  # type: ignore[attr-defined]
         from hermes_cli.tui.streaming_microcopy import _human_size as _hs
         _html_size = len(html.encode("utf-8"))
         _size_suffix = f" ({_hs(_html_size)})" if _html_size >= 1024 else ""
         try:
-            from hermes_cli.tui.clipboard_cache import write_html as _write_html
-            cache_path = _write_html(html)
-            self._flash_header(f"copied HTML{_size_suffix}  (saved {cache_path})")
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+            with open(tmp_path, "w") as f:  # allow-sync-io: tempfile under 4KB, fallback path for pbcopy
+                f.write(html)
+            self._flash_header(f"copied HTML{_size_suffix}  (saved {tmp_path})")
+        except Exception:
             self._flash_header(f"copied HTML{_size_suffix}")
 
     def action_copy_urls(self) -> None:
@@ -644,7 +289,6 @@ class _ToolPanelActionsMixin:
             return
         urls = [a.path_or_url for a in rs.artifacts if a.kind == "url"]
         if not urls:
-            self._flash_header("URLs: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint("\n".join(urls))  # type: ignore[attr-defined]
         self._flash_header(f"copied URLs ({len(urls)})")
@@ -655,7 +299,6 @@ class _ToolPanelActionsMixin:
             return
         path = getattr(header, "_full_path", None)
         if not path:
-            self._flash_header("path: nothing to copy", tone="warning")
             return
         self.app._copy_text_with_hint(path)  # type: ignore[attr-defined]
         self._flash_header("copied path")
@@ -666,7 +309,7 @@ class _ToolPanelActionsMixin:
                 self._footer_pane._remediation_row.update("")  # type: ignore[attr-defined]
                 self._footer_pane._remediation_row.remove_class("footer-remediation--error")  # type: ignore[attr-defined]
                 self._footer_pane.remove_class("has-remediation")  # type: ignore[attr-defined]
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_show_context_menu(self) -> None:
@@ -675,7 +318,7 @@ class _ToolPanelActionsMixin:
             return
         try:
             header._show_context_menu_at_center()
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_down(self) -> None:
@@ -685,7 +328,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_down(animate=False)
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_up(self) -> None:
@@ -695,7 +338,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_up(animate=False)
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_page_down(self) -> None:
@@ -707,7 +350,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_down(animate=False)
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_page_up(self) -> None:
@@ -719,7 +362,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_up(animate=False)
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_top(self) -> None:
@@ -729,7 +372,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_home(animate=False)
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             pass
 
     def action_scroll_body_bottom(self) -> None:
@@ -739,212 +382,101 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_end(animate=False)
-        except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted; scroll is a no-op before first render
+        except Exception:
             pass
 
     def action_show_help(self) -> None:
+        # Set the session-wide discovery flag
+        from . import _completion as _comp_mod
+        _comp_mod._DISCOVERY_GLOBAL_SHOWN = True
         from hermes_cli.tui.overlays import ToolPanelHelpOverlay
         from textual.css.query import NoMatches
         try:
             overlay = self.app.query_one(ToolPanelHelpOverlay)  # type: ignore[attr-defined]
-        except NoMatches:  # il-ex-1-exempt: swallow
-            # overlay not yet mounted; action is a no-op before TUI is fully composed
-            return
-        is_opening = not overlay.has_class("--visible")
-        if is_opening:
-            overlay.add_class("--visible")
-            # Only mark categories discovered when actually opening, not closing
-            from . import _completion as _comp_mod
-            from hermes_cli.tui.tool_category import ToolCategory
-            for _cat in ToolCategory:
-                _comp_mod._DISCOVERY_SHOWN_CATEGORIES.add(_cat)
-        else:
-            overlay.remove_class("--visible")
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
+            else:
+                overlay.add_class("--visible")
+        except (NoMatches, Exception):
+            pass
 
     def on_focus(self) -> None:
-        import time as _time
         self._maybe_show_discovery_hint()  # type: ignore[attr-defined]
         self._refresh_collapsed_strip()  # type: ignore[attr-defined]
-        self._refresh_action_row_display()  # type: ignore[attr-defined]
-        now = _time.monotonic()
-        last_shown = getattr(self, "_toggle_hint_shown_at", 0.0)
-        if now - last_shown < TOGGLE_HINT_RESHOW_SECONDS:
+        if getattr(self, "_toggle_hint_shown", False):
             return
         block = getattr(self, "_block", None)
         if block is not None:
             header = getattr(block, "_header", None)
             if not getattr(header, "_has_affordances", False):
                 return
-        self._toggle_hint_shown_at = now  # type: ignore[attr-defined]
+        self._toggle_hint_shown = True  # type: ignore[attr-defined]
         self._flash_header("(Enter) toggle", tone="accent")
 
     def on_blur(self) -> None:
-        self._refresh_collapsed_strip()  # type: ignore[attr-defined]
-        self._refresh_action_row_display()  # type: ignore[attr-defined]
-
-    def on_descendant_focus(self) -> None:
-        """Show action row when any child widget receives focus (focus-within)."""
-        self._refresh_action_row_display()  # type: ignore[attr-defined]
-
-    def on_descendant_blur(self) -> None:
-        """Hide action row when all descendants lose focus (focus-within lost)."""
-        self._refresh_action_row_display()  # type: ignore[attr-defined]
-
-    def _refresh_action_row_display(self) -> None:
-        """Programmatic fallback for :focus-within — Textual does not always propagate
-        CSS re-evaluation to deeply nested descendants when pseudo-class state changes.
-        We drive action-row visibility explicitly to complement the CSS rule.
-
-        NOTE: on_blur fires BEFORE Widget._on_blur (MRO order), so self.has_focus is
-        still True when we're called from on_blur.  Use app.focused to get the
-        authoritative post-transition focused widget instead.
-        """
-        from textual.css.query import NoMatches
-        try:
-            footer = self.query_one("FooterPane")  # type: ignore[attr-defined]
-        except NoMatches:  # il-ex-1-exempt: swallow
-            return
-        if not footer.has_class("has-actions"):
-            return
-        try:
-            action_row = footer.query_one(".action-row")
-        except NoMatches:  # il-ex-1-exempt: swallow
-            return
-        # Show when panel or any descendant currently holds focus.
-        # Use app.focused instead of self.has_focus because on_blur fires before
-        # Widget._on_blur (which updates has_focus), so has_focus is stale here.
-        try:
-            focused = self.app.focused  # type: ignore[attr-defined]
-        except Exception:  # il-ex-1-exempt: app may not be available during teardown; skip silently
-            return
-        has_focus_within = (
-            focused is not None and self in focused.ancestors_with_self  # type: ignore[attr-defined]
-        )
-        action_row.display = has_focus_within
-
-    def _available_width(self) -> int:
-        """Return the content area width in terminal cells."""
-        try:
-            return self.content_region.width  # type: ignore[attr-defined]
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
-            return 80
-
-    def _is_error(self) -> bool:
-        """True when the panel is in a completed error state."""
-        vs = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        return vs.is_error_for_ui if vs is not None else False
-
-    def _refresh_hint_row(self) -> None:
-        """Recompute and apply hint row content based on focus and affordances state."""
-        hint_row = getattr(self, "_hint_row", None)  # type: ignore[attr-defined]
-        if hint_row is None:
-            return
-        show = getattr(self, "has_focus", False) or self.has_class("--has-affordances")  # type: ignore[attr-defined]
-        if show:
-            hint_row.update(self._build_hint_text())
-            hint_row.add_class("--has-hint")
-        else:
-            hint_row.update("")
-            hint_row.remove_class("--has-hint")
+        strip = getattr(self, "_collapsed_strip", None)
+        if strip is not None:
+            strip.remove_class("--visible")
 
     def watch_has_focus(self, value: bool) -> None:
         if self._hint_row is None:  # type: ignore[attr-defined]
             return
         self._hint_visible = value  # type: ignore[attr-defined]
-        self._refresh_hint_row()
         if value:
+            self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
+            self._hint_row.add_class("--has-hint")  # type: ignore[attr-defined]
             try:
                 block = self._block  # type: ignore[attr-defined]
                 if block is not None and getattr(block._header, "_path_clickable", False):
                     self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
-            except Exception:  # il-ex-1-exempt: panel may be unmounting; PathFocused message is best-effort
+            except Exception:
                 pass
+        else:
+            self._hint_row.update("")  # type: ignore[attr-defined]
+            self._hint_row.remove_class("--has-hint")  # type: ignore[attr-defined]
 
-    def on_resize(self, event: "events.Resize") -> None:
-        width = event.size.width
+    def on_resize(self, event: object) -> None:
+        width = getattr(getattr(event, "size", None), "width", 80)
         self._last_resize_w = width  # type: ignore[attr-defined]
-        always_visible = self.has_class("--has-affordances")  # type: ignore[attr-defined]
-        if (self._hint_visible or always_visible) and self._hint_row is not None:  # type: ignore[attr-defined]
+        if self._hint_visible and self._hint_row is not None:  # type: ignore[attr-defined]
             self._hint_row.update(self._build_hint_text())  # type: ignore[attr-defined]
 
-    def _visible_footer_action_kinds(self) -> "set[str]":
-        """Return the set of action kind names currently visible as chips in the footer."""
-        fp = getattr(self, "_footer_pane", None)
-        if fp is None or fp.styles.display == "none":
-            return set()
-        try:
-            return {
-                getattr(b, "name", "") for b in fp._action_row.query(".--action-chip")
-            } - {""}
-        except Exception:  # il-ex-1-exempt: swallow
-            # Best-effort DOM query during layout; partial DOM is expected at startup
-            return set()
+    def _build_hint_text(self) -> "Any":
+        from rich.text import Text
+        _mounted = getattr(self, "is_mounted", True)
+        _size = getattr(self, "size", None)
+        width = ((_size.width if _size is not None else 0) or 80) if _mounted else 80
+        narrow = width < 50
 
-    def _collect_hints(
-        self,
-    ) -> "tuple[list[tuple[str, str]], list[tuple[str, str]]]":
-        """H-2: Build (primary, contextual) hint lists from panel state.
-
-        Returns two lists of (key, label) pairs. Primary hints are always shown;
-        contextual hints are shown when space allows and deduplicated against
-        visible footer chips.
-        """
-        rs = getattr(self, "_result_summary_v4", None)
-        block = getattr(self, "_block", None)
+        rs = self._result_summary_v4  # type: ignore[attr-defined]
         _block_streaming = (
-            block is not None
-            and hasattr(block, "_completed")
-            and not block._completed
+            hasattr(self._block, "_completed") and  # type: ignore[attr-defined]
+            not self._block._completed  # type: ignore[attr-defined]
         )
-
-        # HF-A: consult visible footer chips to suppress duplicate hints
-        visible_action_kinds = self._visible_footer_action_kinds()
 
         primary: list[tuple[str, str]] = []
         if _block_streaming:
-            # Streaming: follow + tail are the two most important actions
             primary.append(("Enter", "follow"))
-            primary.append(("f", "tail"))
+        elif rs is not None and rs.is_error:
+            primary.append(("Enter", "toggle"))
+            primary.append(("x", "dismiss"))
         else:
-            # Binary: COMPACT → "expand"; everything else → "collapse".
-            enter_label = "expand" if getattr(self, "collapsed", False) else "collapse"
-            primary.append(("Enter", enter_label))
-            if self._is_error():
-                # HF-A: dedup retry against visible footer chips before adding to primary
-                if "retry" not in visible_action_kinds:
-                    primary.append(("r", "retry"))
-            else:
-                primary.append(("c", "copy"))
+            primary.append(("Enter", "toggle"))
+            primary.append(("c", "copy"))
 
         contextual: list[tuple[str, str]] = []
+        if _block_streaming:
+            contextual.append(("f", "tail"))
         bar = self._get_omission_bar()
         if bar is not None:
             contextual.append(("*", "all"))
-
         if rs is not None:
-            # KO-4 / ML-3 / TBM-1: KIND cycle hint first — concept.md §Hint
-            # pipeline ranks level-3 KIND affordances above generic extras
-            # (e/o/u/E). Must precede the e/o/u/E appends below.
-            if not _block_streaming and not self._is_error():
-                _view = (
-                    getattr(self, "_view_state", None)
-                    or (getattr(self, "_lookup_view_state", lambda: None))()
-                )
-                _current_kind = getattr(_view, "user_kind_override", None) if _view else None
-                _next_kind_label = getattr(self, "_next_kind_label", None)
-                if _next_kind_label is not None:
-                    _next_label = _next_kind_label(_current_kind)
-                    contextual.append(("t", f"as {_next_label}"))
-                    if _current_kind is not None:
-                        contextual.append(("T", "auto"))  # ML-2: revert hint when override active
-
             has_copy_err = rs.stderr_tail or any(
                 a.kind == "copy_err" and a.payload for a in (rs.actions or ())
             )
-            # Recovery contract (ER-4): dedup against visible footer chips.
-            if has_copy_err and "copy_err" not in visible_action_kinds:
+            if has_copy_err:
                 contextual.append(("e", "stderr"))
-            if self._result_paths_for_action() and "open_first" not in visible_action_kinds:
+            if self._result_paths_for_action():
                 contextual.append(("o", "open"))
             has_urls = any(a.kind == "url" for a in (rs.artifacts or ()))
             if has_urls:
@@ -952,117 +484,25 @@ class _ToolPanelActionsMixin:
             has_edit = any(a.kind == "edit_cmd" and a.payload for a in (rs.actions or ()))
             if has_edit:
                 contextual.append(("E", "edit"))
-            # Error-state retry takes priority over t/T (paths are mutually
-            # exclusive via the not _is_error() guard above).
-            if self._is_error() and "retry" not in visible_action_kinds and ("r", "retry") not in primary:
+            if rs.is_error and not any(h[0] == "Enter" and h[1] == "retry" for h in primary):
                 contextual.insert(0, ("r", "retry"))
 
-        # DC-4: density cycle hints (D forward, Shift+D reverse) for complete blocks
-        if not _block_streaming and not getattr(self, "collapsed", False):
-            contextual.append(("D", "density-cycle"))
-            contextual.append(("shift+d", "density-back"))
+        _power_keys_exist = bool(rs is not None)
 
-        # FH-1: final-pass dedup keyed on (key, label). Primary always wins.
-        seen_in_primary = set(primary)
-        contextual = [t for t in contextual if t not in seen_in_primary]
-        return primary, contextual
+        primary = primary[:2]
+        shown = list(primary)
+        if not narrow:
+            shown += contextual[:2]
 
-    def _truncate_hints(
-        self,
-        chips: "list[tuple[str, str]]",
-        budget: int,
-    ) -> "tuple[Any, int]":
-        """H-3: Fit as many chips as possible within ``budget`` terminal cells.
-
-        Returns ``(Text, dropped_count)`` where dropped_count is the number of
-        chips that did not fit.
-        """
-        from rich.text import Text
         t = Text()
-        cell_used = 0
-        fitted = 0
-        for i, (key, label) in enumerate(chips):
-            sep = "  " if i > 0 else ""
-            chunk = f"{sep}{key} {label}"
-            chunk_cells = len(chunk)  # ASCII keys/labels; len == cell width
-            if cell_used + chunk_cells > budget and fitted > 0:
-                break
-            from hermes_cli.tui.services.chip_format import format_chip as _fc
-            t.append(sep, style="dim")
-            t.append(_fc(key, "").rstrip(), style="bold")
-            t.append(f" {label}", style="dim")
-            cell_used += chunk_cells
-            fitted += 1
-        return t, len(chips) - fitted
-
-    def _render_hints(
-        self,
-        primary: "list[tuple[str, str]]",
-        contextual: "list[tuple[str, str]]",
-        width: int,
-    ) -> "Any":
-        """H-3: Render primary + contextual hints into a Rich Text.
-
-        F1 is always appended regardless of width (P-6 / HF-C).
-        """
-        from rich.text import Text
-        narrow = width < 50
-        t = Text()
-
-        # Primary (at most 2, always shown)
-        for i, (key, label) in enumerate(primary[:2]):
+        for i, (key, label) in enumerate(shown):
             if i > 0:
                 t.append("  ", style="dim")
             t.append(key, style="bold")
             t.append(f" {label}", style="dim")
 
-        # Contextual (truncated to 2 at wide width, 0 at narrow)
-        shown_contextual = contextual[:2] if not narrow else []
-        n_dropped = len(contextual) - len(shown_contextual)
-        if shown_contextual:
-            ctx_text, ctx_dropped = self._truncate_hints(shown_contextual, width - t.cell_len - 2)
-            n_dropped += ctx_dropped
-            if ctx_text.plain:
-                t.append("  ", style="dim")
-                t.append_text(ctx_text)
-
-        # P-7: +N keys when contextual hints were truncated
-        if n_dropped > 0:
-            t.append("  ", style="dim")
-            t.append(f"+{n_dropped}", style="bold dim")
-            t.append(" keys", style="dim")
-
-        # HF-C / P-6: F1 always pinned regardless of terminal width
-        t.append("  F1 ", style="bold dim")
-        t.append("help", style="dim")
-
-        return t
-
-    def _build_hint_text(self) -> "Any":
-        _mounted = getattr(self, "is_mounted", True)
-        _size = getattr(self, "size", None)
-        width = ((_size.width if _size is not None else 0) or 80) if _mounted else 80
-
-        primary, contextual = self._collect_hints()
-        t = self._render_hints(primary, contextual, width)
-
-        # HF-G: append rotating power-key tip when wide and block is complete
-        rs = getattr(self, "_result_summary_v4", None)
-        block = getattr(self, "_block", None)
-        _block_streaming = (
-            block is not None
-            and hasattr(block, "_completed")
-            and not block._completed
-        )
-        narrow = width < 50
-        if not narrow and rs is not None and not _block_streaming:
-            from hermes_cli.tui.services import tool_tips
-            tip_key, tip_label = tool_tips.current_tip()
-            t.append("  ", style="dim")
-            from hermes_cli.tui.services.chip_format import format_chip as _fc
-            _norm_key = _fc(tip_key, "").rstrip()
-            t.append(_norm_key, style="bold dim italic")
-            t.append(f" {tip_label}", style="dim italic")
+        if _power_keys_exist:
+            t.append("  F1", style="bold dim")
 
         return t
 
@@ -1073,7 +513,7 @@ class _ToolPanelActionsMixin:
             bar = getattr(block, "_omission_bar_bottom", None)
             if isinstance(bar, _OB) and getattr(block, "_omission_bar_bottom_mounted", False):
                 return bar
-        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:
             pass
         return None
 
@@ -1116,19 +556,23 @@ class _ToolPanelActionsMixin:
 
     def action_copy_output(self) -> None:
         text = self.copy_content()  # type: ignore[attr-defined]
-        if not text:
-            self._flash_header("output: nothing to copy", tone="warning")
-            return
-        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
-        _copy_text_via_test_double(self.app, text)  # type: ignore[attr-defined]
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied output", timeout=1.5)  # type: ignore[attr-defined]
+            except Exception:
+                self.app.notify("Copy failed — use mouse select", timeout=3)  # type: ignore[attr-defined]
 
     def action_copy_input(self) -> None:
         text = self._format_arg_summary()  # type: ignore[attr-defined]
-        if not text:
-            self._flash_header("input: nothing to copy", tone="warning")
-            return
-        self.app._copy_text_with_hint(text)  # type: ignore[attr-defined]
-        _copy_text_via_test_double(self.app, text)  # type: ignore[attr-defined]
+        if text:
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+                self.app.notify("Copied input", timeout=1.5)  # type: ignore[attr-defined]
+            except Exception:
+                self.app.notify("Copy failed", timeout=3)  # type: ignore[attr-defined]
 
     def action_rerun(self) -> None:
         try:
@@ -1137,7 +581,7 @@ class _ToolPanelActionsMixin:
             header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
             if header is not None:
                 header.flash_success()
-        except Exception:  # il-ex-1-exempt: noqa: bare-except
+        except Exception:
             self.app.notify("Rerun not available", timeout=2)  # type: ignore[attr-defined]
 
     def action_omission_expand(self) -> None:
@@ -1146,7 +590,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_expand_one()
-        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:
             pass
 
     def action_omission_collapse(self) -> None:
@@ -1155,39 +599,14 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_collapse_one()
-        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:
             pass
 
-    def _clear_streaming_kind_hint(self, view: "object") -> None:
-        """TBM-3: single tear-down site for streaming_kind_hint axis. SK-2 contract.
-
-        Use set_axis so watchers fire and the hint clear is observable before
-        any subsequent state write. Routes through the helper from both
-        force_renderer and action_kind_revert.
-        """
-        from hermes_cli.tui.services.tools import set_axis
-        if getattr(view, "streaming_kind_hint", None) is not None:
-            set_axis(view, "streaming_kind_hint", None)
-
-    def force_renderer(self, kind: "ResultKind | None") -> None:
-        """Set the user KIND override on this panel's view-state and re-render.
-
-        KO-4: writes view.user_kind_override (single source of truth). Legacy
-        self._forced_renderer_kind slot is gone. Passing kind=None clears the
-        override (cycle returns to classifier verdict).
-        """
+    def force_renderer(self, kind: "ResultKind") -> None:
+        self._forced_renderer_kind = kind  # type: ignore[attr-defined]
         try:
             from hermes_cli.tui.body_renderers import pick_renderer
-            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult, ResultKind
-            from hermes_cli.tui.tool_panel.density import DensityTier
-            from hermes_cli.tui.services.tools import ToolCallState, set_axis, set_user_kind_override
-
-            view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-            if view is not None:
-                # AB-1 / TBM-3: clear stale classifier-driven hint BEFORE override write
-                # so the streaming_kind_hint watcher branch refreshes the header first.
-                _ToolPanelActionsMixin._clear_streaming_kind_hint(self, view)
-                set_user_kind_override(view, kind, source_widget=self)
+            from hermes_cli.tui.tool_payload import ToolPayload, ClassificationResult
 
             output_raw = self.copy_content()  # type: ignore[attr-defined]
             payload = ToolPayload(
@@ -1198,140 +617,11 @@ class _ToolPanelActionsMixin:
                 output_raw=output_raw,
                 line_count=self._body_line_count(),  # type: ignore[attr-defined]
             )
-            if kind is not None:
-                cls_result = ClassificationResult(kind=kind, confidence=1.0)
-                # KO-C: annotate user-forced renders so renderers can disclose them
-                object.__setattr__(cls_result, "_user_forced", True)
-            else:
-                stamped = view.kind if view is not None else None
-                cls_result = stamped or ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
-
-            phase = view.state if view is not None else ToolCallState.DONE
-            density = view.density if view is not None else DensityTier.DEFAULT
-
-            renderer_cls = pick_renderer(
-                cls_result, payload,
-                phase=phase, density=density,
-                user_kind_override=kind,
-            )
-            # force_renderer is the ACTIVE entry point; replay the swap even
-            # when the result is FallbackRenderer so a "clear override" cycle
-            # produces an observable mount.
+            cls_result = ClassificationResult(kind=kind, confidence=1.0)
+            renderer_cls = pick_renderer(cls_result, payload)
             self._swap_renderer(renderer_cls, payload, cls_result)  # type: ignore[attr-defined]
         except Exception:
-            _log.exception("force_renderer failed for kind=%s", kind)
-
-    def action_cycle_kind(self) -> None:
-        """KO-4: cycle user KIND override on focused, post-streaming block."""
-        # KO-D: 150 ms debounce — rapid presses on slow terminals cause flicker
-        now = time.monotonic()
-        last = getattr(self, "_cycle_kind_last_fired", 0.0)
-        if now - last < 0.15:
-            return
-        self._cycle_kind_last_fired: float = now
-
-        from hermes_cli.tui.tool_payload import ResultKind
-        from hermes_cli.tui.services.tools import ToolCallState
-
-        # KO-B: TEXT intentionally absent — pick_renderer routes both None (auto)
-        # and TEXT (override) to FallbackRenderer for typical payloads, so the
-        # two stops produce identical output.  Every stop in this cycle is visually
-        # distinct.
-        cycle: tuple["ResultKind | None", ...] = (
-            None,
-            ResultKind.CODE,
-            ResultKind.JSON,
-            ResultKind.DIFF,
-            ResultKind.TABLE,
-            ResultKind.LOG,
-            ResultKind.SEARCH,
-        )
-
-        view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        if view is None:
-            self._flash_header("no block focused", tone="warning")
-            return
-        _RENDERABLE = {
-            ToolCallState.COMPLETING,
-            ToolCallState.DONE,
-            ToolCallState.ERROR,
-            ToolCallState.CANCELLED,
-        }
-        # KO-A: flash on every no-op path instead of silently returning
-        if view.state not in _RENDERABLE:
-            if view.state in (ToolCallState.STREAMING, ToolCallState.STARTED):
-                self._flash_header("render-as: wait for completion", tone="warning")
-            else:
-                self._flash_header(
-                    f"render-as N/A (state={view.state.value})", tone="warning"
-                )
-            return
-
-        current = view.user_kind_override
-        try:
-            idx = cycle.index(current)
-        except ValueError:  # il-ex-1-exempt: swallow
-            _log.debug("user_kind_override=%r not in cycle; snapping to None", current)
-            idx = -1
-        next_kind = cycle[(idx + 1) % len(cycle)]
-
-        self.force_renderer(next_kind)  # type: ignore[attr-defined]
-        label = next_kind.value if next_kind is not None else "auto"
-        self._flash_header(f"render as: {label}", tone="accent")
-        from ._keystroke_log import record_component, ENABLED  # KL-7
-        if ENABLED:
-            _block_id, _phase, _kind_val = self._ks_context()  # type: ignore[attr-defined]
-            _old_kind = current.value if current is not None else "auto"
-            _new_kind = next_kind.value if next_kind is not None else "auto"
-            record_component(
-                action="kind_override",
-                widget=type(self).__name__,
-                block_id=_block_id,
-                phase=_phase,
-                kind=_kind_val,
-                density=self.density.value,  # type: ignore[attr-defined]
-                focused=self.has_focus,  # type: ignore[attr-defined]
-                extra={"from": _old_kind, "to": _new_kind},
-            )
-
-    # ML-3: canonical cycle order (mirrors action_cycle_kind — keep in sync)
-    _KIND_CYCLE: "tuple[Any, ...]" = ()  # populated lazily after ResultKind import
-
-    @staticmethod
-    def _next_kind_label(current: "Any") -> str:
-        """Return the lowercase label of the kind `t` would advance to."""
-        from hermes_cli.tui.tool_payload import ResultKind as _RK
-        cycle = (
-            None,
-            _RK.CODE,
-            _RK.JSON,
-            _RK.DIFF,
-            _RK.TABLE,
-            _RK.LOG,
-            _RK.SEARCH,
-        )
-        try:
-            idx = cycle.index(current)
-        except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
-            idx = -1
-        nxt = cycle[(idx + 1) % len(cycle)]
-        return nxt.value.lower() if nxt is not None else "auto"
-
-    def action_kind_revert(self) -> None:
-        """ML-2: clear user_kind_override and flash confirmation."""
-        view = self._view_state or self._lookup_view_state()  # type: ignore[attr-defined]
-        if view is None:
-            self._flash_header("no block focused", tone="warning")
-            return
-        if view.user_kind_override is None:
-            self._flash_header("render as: no override", tone="warning")
-            return
-        # AB-1 / TBM-3: clear stale hint BEFORE override write so the watcher fires first.
-        from hermes_cli.tui.services.tools import set_user_kind_override
-        _ToolPanelActionsMixin._clear_streaming_kind_hint(self, view)
-        set_user_kind_override(view, None, source_widget=self)
-        self.force_renderer(None)  # type: ignore[attr-defined]
-        self._flash_header("render as: auto", tone="accent")
+            pass
 
     def on_tool_header_clicked(self, event: "object") -> None:
         getattr(event, "stop", lambda: None)()

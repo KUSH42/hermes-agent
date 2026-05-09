@@ -1,25 +1,18 @@
 """Reactive watcher logic, file-drop helpers service extracted from _app_watchers.py."""
 from __future__ import annotations
 
-import logging
 import os as _os_mod
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
-
-_log = logging.getLogger(__name__)
 
 from textual.css.query import NoMatches
 
 from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import ChoiceOverlayState, SecretOverlayState, UndoOverlayState
 from .base import AppService
-from . import feedback as _fb
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
-
-
-_INTERRUPT_ATTRS = ("approval_state", "interrupt_state", "confirm_state")
 
 
 class WatchersService(AppService):
@@ -29,13 +22,6 @@ class WatchersService(AppService):
         super().__init__(app)
         self._phase_before_error: str = ""  # A1: phase saved before ERROR overlay
         self._compact_warn_flashed: bool = False  # A7-1: guard single warn flash per cycle
-        self._last_compact_value: bool | None = None  # PERF-3: dedup guard (None forces first call through)
-        self._approval_state_seen: bool = False  # M-1: skip initial reactive fire-through
-        self._pending_drop_queue: list[Path] = []  # DD-PL-6: buffered drops during modal
-        self._last_drop_undo_state: tuple[str, list] | None = None  # DD-PL-7: single-slot undo
-
-    def _modal_active(self) -> bool:
-        return any(getattr(self.app, attr, None) is not None for attr in _INTERRUPT_ATTRS)
 
     # ------------------------------------------------------------------
     # Input change watchers
@@ -86,33 +72,28 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import HintBar, ImageBar
         try:
             h = size.height
-        except AttributeError:  # il-ex-1-exempt: swallow
+        except AttributeError:
             return
         try:
             plain_rule = self.app.query_one("#input-rule-bottom")
             plain_rule.display = h >= 8
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         try:
             image_bar = self.app.query_one(ImageBar)
-            image_bar.recompute_visibility()
-        except (NoMatches, AttributeError):  # il-ex-1-exempt: swallow
-            pass  # NoMatches: ImageBar not yet mounted during startup; AttributeError: app.size not set
+            if h < 10:
+                image_bar.styles.display = "none"
+            elif image_bar._static_content:
+                image_bar.styles.display = "block"
+        except (NoMatches, AttributeError):
+            pass
         try:
             hint_bar = self.app.query_one(HintBar)
             hint_bar.display = h >= 9
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def on_compact(self, value: bool) -> None:
-        # PERF-3: dedupe against last-seen value. The reactive descriptor on
-        # HermesApp is already updated to `value` by the time this runs, so
-        # we cannot compare against `self.app.compact` here — that would
-        # short-circuit every call. Compare against our own cached prior value.
-        if self._last_compact_value == value:
-            return
-        self._last_compact_value = value
-
         from hermes_cli.tui.tool_panel import ToolPanel
         from textual.widgets import Static
 
@@ -127,17 +108,20 @@ class WatchersService(AppService):
         try:
             chev = self.app.query_one("#input-chevron", Static)
             chev.update("❯" if value else "❯ ")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except Exception:
             pass
 
         # A1: ToolHeaderBar deleted — sync --compact on ToolPanel directly
-        for tp in self.app.query(ToolPanel):
-            tp.set_class(value, "--compact")
+        try:
+            for tp in self.app.query(ToolPanel):
+                tp.set_class(value, "--compact")
+        except Exception:
+            pass
 
         try:
             self.sync_compact_visibility()
-        except Exception as exc:
-            _log.debug("on_compact: sync_compact_visibility failed: %s", exc, exc_info=True)
+        except Exception:
+            pass
 
     def sync_compact_visibility(self) -> None:
         from hermes_cli.tui.session_widgets import SessionBar
@@ -146,7 +130,7 @@ class WatchersService(AppService):
             sbar = self.app.query_one(SessionBar)
             single = len(getattr(self.app, "_session_records_cache", [])) <= 1
             sbar.display = not (compact and single)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     # ------------------------------------------------------------------
@@ -159,7 +143,7 @@ class WatchersService(AppService):
             self.app.hooks.fire("on_compact_complete")
         try:
             self.app.query_one("#input-rule", TitledRule).progress = value
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         _warn = float(
             getattr(self.app, "config", {}).get("display", {}).get("compact_warn_threshold", 0.85)
@@ -175,10 +159,9 @@ class WatchersService(AppService):
                     f"Context {int(_warn * 100)}% full — /compact available",
                     duration=8.0,
                     priority=5,
-                    key=_fb.HINT_KEY_COMPACTION_WARN,
                 )
-            except Exception as exc:
-                _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
+            except Exception:
+                pass
         elif value < _warn:
             self._compact_warn_flashed = False
         if value >= _crit and not getattr(self.app, "_compaction_warn_99", False):
@@ -189,10 +172,9 @@ class WatchersService(AppService):
                     f"Context {int(_crit * 100)}% full — /compact or clear conversation",
                     duration=8.0,
                     priority=8,
-                    key=_fb.HINT_KEY_COMPACTION_CRIT,
                 )
-            except Exception as exc:
-                _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Voice watchers
@@ -202,7 +184,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import VoiceStatusBar
         try:
             self.app.query_one(VoiceStatusBar).set_class(value, "active")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         self.app._svc_spinner.set_hint_phase("voice" if value else self.app._svc_spinner.compute_hint_phase())
 
@@ -214,7 +196,7 @@ class WatchersService(AppService):
                 bar.update_status("● REC")
             elif self.app.voice_mode:
                 bar.update_status("🎤 Voice mode")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     # ------------------------------------------------------------------
@@ -225,7 +207,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import ImageBar
         try:
             self.app.query_one(ImageBar).update_images(value)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def append_attached_images(self, images: list[Path]) -> None:
@@ -249,32 +231,13 @@ class WatchersService(AppService):
     # Link token insertion
     # ------------------------------------------------------------------
 
-    def _insert_plain_text(self, text: str) -> None:
-        """Insert raw text at the input cursor (no link formatting)."""
-        try:
-            inp = self.app.query_one("#input-area")
-        except NoMatches:  # il-ex-1-exempt: swallow
-            return
-        if hasattr(inp, "insert_text"):
-            inp.insert_text(text)
-        elif hasattr(inp, "value"):
-            inp.value = f"{getattr(inp, 'value', '')}{text}"
-
     def insert_link_tokens(self, tokens: list[str]) -> None:
         if not tokens:
             return
         try:
             inp = self.app.query_one("#input-area")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
-
-        # DD-PL-7: snapshot pre-drop state for single-slot undo
-        prior_text = getattr(inp, "value", "")
-        prior_attached = list(getattr(self.app, "attached_images", []))
-
-        if hasattr(inp, "history"):
-            inp.history.checkpoint()
-
         selection = getattr(inp, "selection", None)
         if hasattr(inp, "_location_to_flat") and selection is not None:
             start = end = inp.cursor_pos
@@ -299,11 +262,6 @@ class WatchersService(AppService):
         else:
             inp.insert_text(payload)
 
-        if hasattr(inp, "history"):
-            inp.history.checkpoint()
-
-        self._last_drop_undo_state = (prior_text, prior_attached)
-
     # ------------------------------------------------------------------
     # File drop
     # ------------------------------------------------------------------
@@ -313,11 +271,11 @@ class WatchersService(AppService):
         """Format a dropped file path: relative if in cwd/child/parent, else absolute."""
         try:
             return path.relative_to(cwd).as_posix()
-        except ValueError:  # il-ex-1-exempt: swallow
+        except ValueError:
             pass
         try:
             rel = _os_mod.path.relpath(path, cwd)
-        except ValueError:  # il-ex-1-exempt: swallow
+        except ValueError:
             return path.as_posix()
         depth = 0
         r = rel
@@ -328,61 +286,38 @@ class WatchersService(AppService):
             return rel.replace(_os_mod.sep, "/")
         return path.as_posix()
 
-    def _replay_pending_drops(self) -> None:
-        """Replay buffered drops once all modals are dismissed (DD-PL-6)."""
-        if self._pending_drop_queue and not self._modal_active():
-            queued = list(self._pending_drop_queue)
-            self._pending_drop_queue.clear()
-            self.handle_file_drop_inner(queued)
-
     def handle_file_drop(self, paths: list[Path]) -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
         try:
             self.handle_file_drop_inner(paths)
         except Exception:
-            _log.exception("handle_file_drop: inner handler raised")
             self.app._flash_hint("file drop failed — see log for details", 2.0)
 
-    def handle_file_drop_inner(self, paths: list[Path], remainder: str = "") -> None:
-        if self._modal_active():
-            self._pending_drop_queue.extend(paths)
-            n = len(paths)
-            self.app._flash_hint(
-                f"queued {n} path(s) — will attach after prompt closes",
-                2.0,
-            )
+    def handle_file_drop_inner(self, paths: list[Path]) -> None:
+        if any(getattr(self.app, attr) is not None for attr in ("approval_state", "clarify_state", "sudo_state", "secret_state")):
+            self.app._flash_hint("file drop unavailable while prompt is open", 1.5)
             return
-
-        allow_dir = bool(
-            getattr(self.app, "config", {}) and
-            getattr(self.app.config, "display", {}) and
-            getattr(self.app.config.display, "drop_directory_as_glob", False)
-        )
 
         cwd = self.app.get_working_directory()
         link_tokens: list[str] = []
         image_paths: list[Path] = []
-        rejected_names: list[str] = []
+        rejected: list[str] = []
 
         for path in paths:
-            dropped = classify_dropped_file(path, cwd, allow_directory=allow_dir)
+            dropped = classify_dropped_file(path, cwd)
             if dropped.kind == "image":
                 image_paths.append(path)
-            elif dropped.kind == "directory_glob":
-                link_tokens.append(format_link_token(path, cwd) + "/**/*")
-            elif dropped.kind in ("linkable_text",):
+            elif dropped.kind in ("linkable_text", "directory"):
                 link_tokens.append(format_link_token(path, cwd))
-            elif dropped.kind in ("unsupported_binary", "directory_rejected", "invalid"):
-                rejected_names.append(path.name)
+            elif dropped.kind == "unsupported_binary":
+                rejected.append(dropped.reason or "unsupported file type")
             else:
-                rejected_names.append(path.name)
+                rejected.append(dropped.reason or dropped.kind)
 
         if image_paths:
             self.append_attached_images(image_paths)
         if link_tokens:
             self.insert_link_tokens(link_tokens)
-        if remainder:
-            self._insert_plain_text(remainder)
 
         hint_parts: list[str] = []
         if link_tokens:
@@ -391,12 +326,9 @@ class WatchersService(AppService):
         if image_paths:
             noun = "image" if len(image_paths) == 1 else "images"
             hint_parts.append(f"attached {len(image_paths)} {noun}")
-        if rejected_names:
-            first = rejected_names[0]
-            rest = len(rejected_names) - 1
-            suffix = f" (+{rest} more)" if rest else ""
-            self.app._flash_hint(f"⚠ skipped {first}{suffix} (unsupported)", 2.5)
-            return
+        if rejected:
+            noun = "item" if len(rejected) == 1 else "items"
+            hint_parts.append(f"dropped {len(rejected)} unsupported {noun}")
 
         if hint_parts:
             self.app._flash_hint(" · ".join(hint_parts), 1.2)
@@ -410,7 +342,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.overlays import InterruptOverlay
         try:
             return self.app.query_one(InterruptOverlay)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return None
 
     def _post_interrupt_focus(self) -> None:
@@ -426,10 +358,8 @@ class WatchersService(AppService):
                 # Agent still running: return focus to screen (App.focus() doesn't exist
                 # in Textual 8.x; screen.focus() is the correct call).
                 self.app.call_after_refresh(self.app.screen.focus)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except Exception:
             pass
-        except Exception as exc:
-            _log.debug("_post_interrupt_focus: focus call failed: %s", exc, exc_info=True)
 
     def on_clarify_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
@@ -449,47 +379,21 @@ class WatchersService(AppService):
     def on_approval_state(self, value: "ChoiceOverlayState | None") -> None:
         from hermes_cli.tui.overlays import InterruptKind
         from hermes_cli.tui.overlays._adapters import make_approval_payload
-        if value is None and not self._approval_state_seen:
-            _log.debug("on_approval_state: initial fire-through (no approval pending)")
-            return
-        self._approval_state_seen = True
-        _log.debug("on_approval_state: value_set=%s", value is not None)
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except Exception:
             pass
         ov = self._get_interrupt_overlay()
-        if ov is None:
+        if ov is not None:
             if value is not None:
-                _log.warning("on_approval_state: InterruptOverlay not mounted — approval prompt cannot show")
-            return
-        if value is not None:
-            try:
                 ov.present(make_approval_payload(self.app, value), replace=True)
-            except Exception:
-                _log.exception("on_approval_state: make_approval_payload/present failed")
-                return
-            self.app._hide_completion_overlay_if_present()
-            self.app._dismiss_floating_panels()
-            self.app.call_after_refresh(ov.focus)
-            try:
-                region = getattr(ov, "region", None)
-                _log.debug(
-                    "on_approval_state: present returned display=%s visible_cls=%s region=%s "
-                    "current_kind=%s queue_len=%s",
-                    getattr(ov, "display", "?"),
-                    ov.has_class("--visible"),
-                    region,
-                    getattr(ov, "current_kind", "?"),
-                    len(getattr(ov, "_queue", []) or []),
-                )
-            except Exception:
-                _log.exception("on_approval_state: post-present diagnostic failed")
-        else:
-            ov.hide_if_kind(InterruptKind.APPROVAL)
-            self._post_interrupt_focus()
-            self._replay_pending_drops()
+                self.app._hide_completion_overlay_if_present()
+                self.app._dismiss_floating_panels()
+                self.app.call_after_refresh(ov.focus)
+            else:
+                ov.hide_if_kind(InterruptKind.APPROVAL)
+                self._post_interrupt_focus()
         self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
 
     def on_highlighted_candidate(self, c: Any) -> None:
@@ -499,7 +403,7 @@ class WatchersService(AppService):
             from hermes_cli.tui.path_search import PathCandidate as _PC
             panel = self.app.query_one(_PP)
             panel.candidate = c if isinstance(c, _PC) else None
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         try:
             from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
@@ -508,7 +412,7 @@ class WatchersService(AppService):
                 comp.add_class("--no-preview")
             else:
                 comp.remove_class("--no-preview")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def on_sudo_state(self, value: "SecretOverlayState | None") -> None:
@@ -546,7 +450,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import TitledRule
         try:
             self.app.query_one("#input-rule", TitledRule).set_error(bool(value))
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
         # A1: ERROR phase is orthogonal — save/restore previous phase
@@ -565,26 +469,21 @@ class WatchersService(AppService):
             from hermes_cli.tui.input.widget import HermesInput
             inp = self.app.query_one("#input-area", HermesInput)
             inp.error_state = value if value else None
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except Exception:
             pass
         # A3-2: route error message to HintBar for prominent left-side display
-        # HB2-H1: wrap in bold-red markup so _hint_to_text() preserves styling
         try:
             if value:
-                _vars = getattr(self.app, "get_css_variables", lambda: {})() or {}
-                err_color = _vars.get("status-error-color", "#EF5350")
-                flash_text = f"[bold {err_color}]⚠ {value}[/]"
                 self.app.feedback.flash(
                     "hint-bar",
-                    flash_text,
+                    f"⚠ {value}",
                     duration=9999,
                     priority=10,
-                    key=_fb.HINT_KEY_STATUS_ERROR,
                 )
             else:
-                self.app.feedback.cancel("hint-bar", key=_fb.HINT_KEY_STATUS_ERROR)
-        except Exception as exc:
-            _log.warning("on_status_error: feedback flash/cancel failed: %s", exc, exc_info=True)
+                self.app.feedback.cancel("hint-bar")
+        except Exception:
+            pass
 
     def auto_clear_status_error(self, expected: str) -> None:
         """Clear status_error if it still matches *expected*."""
@@ -612,23 +511,18 @@ class WatchersService(AppService):
         try:
             inp = self.app.query_one("#input-area")
             if value is not None:
+                inp.disabled = True
                 try:
                     inp._set_input_locked(True)
-                except Exception as exc:
-                    # Fallback: direct set — note: also sets _pre_lock_disabled if we
-                    # do it before the call, so only set here on _set_input_locked failure.
-                    inp.disabled = True
-                    _log.debug("on_undo_state: _set_input_locked(True) failed: %s", exc, exc_info=True)
-            else:
-                # undo_state is None → undo overlay gone; always unlock regardless of
-                # agent_running. The undo lock is the only reason input is disabled here,
-                # and watch_agent_running never calls _set_input_locked(False).
+                except Exception:
+                    pass
+            elif not self.app.agent_running and not self.app.command_running:
                 inp.disabled = False
                 try:
                     inp._set_input_locked(False)
-                except Exception as exc:
-                    _log.debug("on_undo_state: _set_input_locked(False) failed: %s", exc, exc_info=True)
-        except NoMatches:  # il-ex-1-exempt: swallow
+                except Exception:
+                    pass
+        except NoMatches:
             pass
         if value is None:
             self.app._pending_undo_panel = None

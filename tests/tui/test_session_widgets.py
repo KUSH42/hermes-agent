@@ -11,7 +11,7 @@ Phase C — session_widgets.py + app.py session attrs.
   6.  SessionBar._rebuild() with empty list shows only + button
   7.  SessionBar at max capacity shows dim + button
   8.  SessionBar + click calls app._open_new_session_overlay()
-  9.  SessionBar session button click calls app._svc_sessions.switch_to_session(id)
+  9.  SessionBar session button click calls app._switch_to_session(id)
   10. SessionBar active session button click is no-op (no switch)
   11. HermesApp._sessions_enabled defaults False
   12. HermesApp on_mount with sessions.enabled=False leaves bar hidden
@@ -240,7 +240,7 @@ async def test_session_bar_add_click_opens_overlay():
 
 
 # ---------------------------------------------------------------------------
-# 9. SessionBar session button click calls app._svc_sessions.switch_to_session(id)
+# 9. SessionBar session button click calls app._switch_to_session(id)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -362,9 +362,9 @@ async def test_hermes_app_get_active_session_id():
 async def test_new_worktree_session_disabled_noop():
     app = _make_app(sessions_enabled=False)
     called = []
-    app._svc_sessions.open_new_session_overlay = lambda: called.append(True)
     async with app.run_test(size=(120, 24)) as pilot:
         await pilot.pause()
+        app._svc_sessions.open_new_session_overlay = lambda: called.append(True)
         app.action_new_worktree_session()
         await pilot.pause()
     assert len(called) == 0

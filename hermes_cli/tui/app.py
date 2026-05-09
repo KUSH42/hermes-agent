@@ -16,7 +16,6 @@ import asyncio
 import collections
 import dataclasses
 import enum
-from functools import cached_property
 import logging
 import math
 import platform
@@ -26,7 +25,6 @@ import threading
 
 from hermes_cli.tui._app_constants import KNOWN_SLASH_COMMANDS as _KNOWN_SLASH_COMMANDS
 from hermes_cli.tui.agent_phase import Phase as _Phase
-from hermes_cli.tui.messages import ReducedMotionChanged
 
 # File-touching tool names — used by watch_spinner_label to extract active file
 _FILE_TOOLS: frozenset[str] = frozenset({
@@ -66,7 +64,7 @@ from textual.screen import Screen
 from textual.widgets import Static, TextArea
 from textual import events, work
 
-from hermes_cli.file_drop import classify_dropped_file, format_link_token, parse_dragged_file_paste
+from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
@@ -74,7 +72,6 @@ from hermes_cli.tui.state import (
     UndoOverlayState,
 )
 from hermes_cli.tui.widgets import (
-    AttachmentChip,
     CopyableRichLog,
     FPSCounter,
     HistorySearchOverlay,
@@ -87,7 +84,6 @@ from hermes_cli.tui.widgets import (
     OutputPanel,
     PlainRule,
     ReasoningPanel,
-    ScrollState,
     StartupBannerWidget,
     StatusBar,
     StreamingCodeBlock,
@@ -129,17 +125,14 @@ from hermes_cli.tui.tool_category import (
     register_tool,
 )
 from hermes_cli.tui.constants import ICON_COPY
-from hermes_cli.tui.tool_panel.density import DensityTier as _DensityTier
 from hermes_cli.tui.animation import AnimationClock, shimmer_text
 from hermes_cli.tui.perf import (
     EventLoopLatencyProbe,
     FrameRateProbe,
     SuspicionDetector,
     WorkerWatcher,
-    measure,
 )
 from hermes_cli.tui.theme_manager import ThemeManager
-from hermes_cli.tui.services import feedback as _fb
 from wcwidth import wcswidth
 
 
@@ -195,7 +188,7 @@ class _HermesScreen(Screen):
             event._set_forwarded()
             try:
                 widget, region = self.get_widget_at(event.x, event.y)
-            except Exception:  # il-ex-1-exempt: widget lookup failed (e.g. during rapid resize) — skip forward
+            except Exception:
                 return
             event.style = self.get_style_at(event.screen_x, event.screen_y)
             if widget.loading:
@@ -244,12 +237,6 @@ class MCPServerDisconnected(_TxtMessage):
 
 # ---------------------------------------------------------------------------
 
-# W-15 / D-3: first-time-in-zone extended hints (shown once per zone per turn)
-EXTENDED_HINT: dict[str, str] = {
-    "output": "↑↓ scroll · g jump · Esc → input · Ctrl+B browse",
-    "tool": "Enter toggle · t cmd · c copy · ? help",
-    "compose": "Enter submit · Tab complete · ↑ history",
-}
 
 # BrowseAnchorType, BrowseAnchor, _BROWSE_TYPE_GLYPH, _is_in_reasoning
 # moved to _browse_types.py — imported above
@@ -266,8 +253,8 @@ class HermesApp(App):
     CSS_PATH = "hermes.tcss"
 
     # Layer declaration — required before any widget uses ``layer: overlay``
-    # or ``layer: interrupt`` in CSS.  Draw order: default → overlay → interrupt.
-    LAYERS = ("default", "overlay", "interrupt")
+    # in CSS.  Draw order: default → overlay.
+    LAYERS = ("default", "overlay")
 
     def get_default_screen(self) -> Screen:
         """Use custom Screen that prevents focus stealing on right-click."""
@@ -285,7 +272,6 @@ class HermesApp(App):
         Binding("alt+down", "jump_turn_next", "Next turn",     show=False),
         Binding("ctrl+shift+a", "open_anim_config", "Animation config", show=True, priority=True),
         Binding("ctrl+b", "toggle_browse_mode", "Browse", show=True, priority=True),
-        Binding("ctrl+j", "open_sessions", show=False),
         Binding("ctrl+shift+h", "open_sessions", show=False),
         Binding("ctrl+w+n", "new_worktree_session", show=False),
         Binding("o", "focus_output", "Output", show=False),
@@ -298,23 +284,11 @@ class HermesApp(App):
         Binding("f7", "focus_right_pane", "Right pane", show=False),
         Binding("f9", "cycle_pane_forward", "Next pane", show=False),
         Binding("shift+f9", "cycle_pane_backward", "Prev pane", show=False),
-        # Pane layout — primary (layout-agnostic; reachable on QWERTY and QWERTZ)
-        Binding("alt+comma", "collapse_left_pane", "Collapse left", show=False),
-        Binding("alt+full_stop", "collapse_right_pane", "Collapse right", show=False),
-        Binding("alt+m", "toggle_center_split", "Split center", show=False),
-        # Alt+digit pane-focus aliases (tmux/i3 muscle memory)
-        Binding("alt+1", "focus_left_pane", show=False),
-        Binding("alt+2", "focus_center_pane", show=False),
-        Binding("alt+3", "focus_right_pane", show=False),
-        # Compat aliases — US QWERTY legacy (kept for muscle memory; not advertised)
-        Binding("ctrl+left_square_bracket", "collapse_left_pane", show=False),
-        Binding("ctrl+right_square_bracket", "collapse_right_pane", show=False),
-        Binding("alt+left_square_bracket", "collapse_left_pane", show=False),
-        Binding("alt+right_square_bracket", "collapse_right_pane", show=False),
-        Binding("ctrl+backslash", "toggle_center_split", show=False),
-        Binding("ctrl+p", "toggle_plan_panel", "Plan", show=True),
-        Binding("end", "scroll_to_latest", "Latest", show=False),
-        Binding("u", "dismiss_update_banner", "Dismiss update notice", show=False),
+        Binding("ctrl+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("ctrl+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("alt+[", "collapse_left_pane", "Collapse left", show=False),
+        Binding("alt+]", "collapse_right_pane", "Collapse right", show=False),
+        Binding("ctrl+\\", "toggle_center_split", "Split center", show=False),
     ]
 
     _CHEVRON_PHASE_CLASSES: frozenset[str] = frozenset({
@@ -339,8 +313,6 @@ class HermesApp(App):
     status_model: reactive[str] = reactive("")
     status_context_tokens: reactive[int] = reactive(0)
     status_context_max: reactive[int] = reactive(0)
-    # CWD-1: current working directory — updated by BashService after each command
-    status_cwd: reactive[str] = reactive("")
 
     # Compaction state — display-only (status_compaction_progress has a watcher; enabled does not)
     status_compaction_progress: reactive[float] = reactive(0.0)  # 0.0–1.0
@@ -348,8 +320,6 @@ class HermesApp(App):
 
     # Tok/s throughput (last turn) — display-only
     status_tok_s: reactive[float] = reactive(0.0)
-    # Wall-clock seconds since streaming reply started — display-only
-    status_streaming_elapsed_s: reactive[float] = reactive(0.0)
 
     # Browse mode — keyboard-driven navigation through ToolBlock widgets
     browse_mode: reactive[bool] = reactive(False)
@@ -369,9 +339,6 @@ class HermesApp(App):
     # Compact layout — True = density-compact CSS class active
     compact: reactive[bool] = reactive(False)
     _compact_manual: "bool | None" = None  # None = auto; True/False = user override
-    # SVC-7: thresholds used by _recompute_auto_compact
-    _COMPACT_WIDTH: int = 120
-    _COMPACT_HEIGHT: int = 30
 
     # Animation hint for StatusBar — display-only
     _anim_hint: reactive[str] = reactive("")
@@ -386,17 +353,11 @@ class HermesApp(App):
     # Output dropped flag — display-only; shown in StatusBar until next successful write
     status_output_dropped: reactive[bool] = reactive(False)
 
-    # Output pressure flag — set when queue depth ≥ 75% capacity; cleared below 50%
-    status_output_pressure: reactive[bool] = reactive(False)
-
     # D5: count of currently-streaming tool blocks (shows badge in StatusBar)
     _streaming_tool_count: reactive[int] = reactive(0, repaint=False)
 
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
-    # Hidden-attachment chip count: non-zero when images are attached but ImageBar is
-    # forced hidden by short terminal height (h < 10); drives StatusBar 📎N chip.
-    status_attachment_count_hidden: reactive[int] = reactive(0)
 
     # --- PlanPanel (R1) ---
     # planned_calls: list of PlannedCall (frozen dataclass); factory form avoids shared mutable.
@@ -433,21 +394,11 @@ class HermesApp(App):
     # Current session label — display-only; shown in StatusBar chip
     session_label: reactive[str] = reactive("")
 
-    # SS-9: full (non-truncated) session ID for clipboard copy
-    _active_session_id: str = ""
-
     # S0-D/S0-E: True while assistant is actively streaming tokens
     status_streaming: reactive[bool] = reactive(False)
 
-    # C2: compact ghost-text affordance signals for HintBar
-    status_ghost_suggestion: reactive[bool] = reactive(False)
-    status_density_tier: reactive[str] = reactive("default")
-
     # A1: coarse phase within an agent turn — widgets subscribe via cross-widget watch()
     status_phase: reactive[str] = reactive(_Phase.IDLE)
-
-    # TCS-MED-02: projected phase for visual widgets; prioritizes blockers over tool/reasoning
-    ui_phase: reactive[str] = reactive("idle")
 
     # S0-A: verbose mode — show ctx_label in StatusBar alongside bar
     status_verbose: reactive[bool] = reactive(False)
@@ -459,26 +410,6 @@ class HermesApp(App):
     session_count: reactive[int] = reactive(1)
 
     # hint_text is NOT on HermesApp — HintBar.hint is the single source of truth.
-
-    # MMP-M4: _browse_anchors / _browse_cursor are owned by BrowseService.
-    # These property shims proxy through so all existing read/write sites work
-    # without modification.  BrowseService.__init__ initialises both to [] / 0.
-
-    @property
-    def _browse_anchors(self) -> "list[BrowseAnchor]":
-        return self._svc_browse._browse_anchors
-
-    @_browse_anchors.setter
-    def _browse_anchors(self, value: "list[BrowseAnchor]") -> None:
-        self._svc_browse._browse_anchors = list(value)
-
-    @property
-    def _browse_cursor(self) -> int:
-        return self._svc_browse._browse_cursor
-
-    @_browse_cursor.setter
-    def _browse_cursor(self, value: int) -> None:
-        self._svc_browse._browse_cursor = int(value)
 
     def __init__(
         self,
@@ -495,7 +426,7 @@ class HermesApp(App):
         try:
             if "app" in AssistantNameplate.__dict__:
                 delattr(AssistantNameplate, "app")
-        except Exception:  # il-ex-1-exempt: attribute absent or already removed — safe to ignore
+        except Exception:
             pass
         self.cli = cli
         self._startup_fn = startup_fn
@@ -540,8 +471,10 @@ class HermesApp(App):
 
         # Browse-mode visit counter — first 3 visits show full hint, then compact
         self._browse_uses: int = 0
+        # Unified anchor list for []/{}/ Alt+↑↓ navigation
+        self._browse_anchors: list[BrowseAnchor] = []
+        self._browse_cursor: int = 0
         # Browse mode visual markers config (wired from cli.py)
-        # _browse_anchors / _browse_cursor owned by BrowseService (MMP-M4 property shims above)
         self._browse_markers_enabled: bool = True
         self._browse_reasoning_markers: bool = True
         self._browse_minimap_default: bool = False
@@ -560,8 +493,7 @@ class HermesApp(App):
         self._response_metrics_active: bool = False
         self._response_wall_start_time: float | None = None
         self._response_segment_start_time: float | None = None
-        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque(maxlen=500)
-        self._last_stream_chunk_ts: float | None = None
+        self._response_token_window: collections.deque[tuple[float, int]] = collections.deque()
 
         # Undo/retry state
         self._undo_in_progress: bool = False
@@ -571,18 +503,15 @@ class HermesApp(App):
         self._pending_rollback_n: int = 0
         # Animation feature flag — checked by all shimmer/pulse paths
         self._animations_enabled: bool = _animations_enabled_check()
-        # F2: reduced-motion — resolved once in __init__ (config > env > False)
-        self._reduced_motion: bool = self._resolve_reduced_motion()
-        if self._reduced_motion:
-            self.add_class("reduced-motion")
+        # F2: reduced-motion — disable shimmer/pulse; set from config or env var
+        import os as _os
+        self._reduced_motion: bool = bool(_os.environ.get("HERMES_REDUCED_MOTION"))
         # Current hint phase — tracks what the user is doing
         self._hint_phase: str = "idle"
         # RX1 Phase C: _flash_hint_expires/_flash_hint_timer/_flash_hint_prior removed.
         # FeedbackService owns all flash timer state. E3 guard replaced by on_agent_idle().
         # Compaction warning state — reset when progress returns to 0
         self._compaction_warned: bool = False
-        # DU-6: one-shot per-process flag for the t→Shift+T rebind learning hint.
-        self._t_rebind_hint_shown: bool = False
         # Clear animation guard — prevents re-entry while fade is running
         self._clear_animation_in_progress: bool = False
         # InlineImageBar enabled state — set from cli.py before app launch
@@ -607,8 +536,6 @@ class HermesApp(App):
         self._last_git_snapshot: GitSnapshot | None = None
         self._git_poll_h: object | None = None  # textual.timer.Timer
         self._workspace_hint_shown: bool = False
-        self._workspace_auto_suppressed: bool = False
-        self._workspace_last_shown_fingerprint: str | None = None
         self._workspace_tracker = None
         self._git_poller = None
         self._git_poll_in_flight: bool = False
@@ -616,25 +543,13 @@ class HermesApp(App):
         # Resize debounce — coalesces rapid resize events before app-level work
         self._pending_resize: "object | None" = None
         self._resize_timer: "object | None" = None  # textual Timer
-        # Last (w, h) that completed _flush_resize; (-1, -1) sentinel ensures first
-        # real flush always wins width_changed / geom_changed (RZ-APP-L6).
-        self._last_flushed_size: tuple[int, int] = (-1, -1)
         # Panel-ready gate: cli.py waits on this Event before starting chat() so
         # streaming only begins after the new MessagePanel and its engine are
         # mounted.  Eliminates the multi-line-chunk race where lines arrive on the
         # old panel before watch_agent_running(True) fires.
         self._panel_ready_event: "threading.Event | None" = None
-        # PM-05: wall-clock anchor for [STARTUP] timing (set at start of on_mount)
-        self._mount_start_monotonic: float = 0.0
         # F4: track last keypress time for desktop notify active-user gate
         self._last_keypress_time: float = 0.0
-        # W-15: zone-hint tracking — cleared on new turn
-        self._zones_first_entry_seen: set[str] = set()
-        # W-10: scroll catchup hint — reset when PINNED
-        self._scroll_hint_shown: bool = False
-
-        # MOD-1: modal focus-arbiter stack.  Populated by ModalOverlayMixin.on_mount.
-        self._modal_stack: list[Widget] = []
 
         # R2 pane layout — read from display.layout in cli config
         _display_cfg = (getattr(self.cli, "_cfg", None) or {}).get("display", {})
@@ -673,8 +588,6 @@ class HermesApp(App):
             BrowseService, SessionsService, ContextMenuService, CommandsService,
             WatchersService, KeyDispatchService, BashService,
         )
-        from hermes_cli.services.clipboard import TextualClipboardService
-        self._clipboard_svc = TextualClipboardService(self)
         self._svc_theme    = ThemeService(self)
         self._svc_spinner  = SpinnerService(self)
         self._svc_io       = IOService(self)
@@ -686,84 +599,6 @@ class HermesApp(App):
         self._svc_bash     = BashService(self)
         self._svc_watchers = WatchersService(self)
         self._svc_keys     = KeyDispatchService(self)
-
-    # --- Reduced-motion API (SVC-8) ---
-
-    def _read_reduced_motion_from_config(self) -> bool:
-        """Read reduced-motion flag from config + env. Contains all file I/O."""
-        try:
-            from hermes_cli.config import read_raw_config
-            cfg = read_raw_config().get("tui", {}).get("reduced_motion")
-            if cfg is not None:
-                return bool(cfg)
-        except Exception:
-            logger.warning("_read_reduced_motion_from_config: failed to read config", exc_info=True)
-        env = _os_mod.environ.get("HERMES_REDUCED_MOTION")
-        if env is not None:
-            return env.lower() in ("1", "true", "yes")
-        return False
-
-    @cached_property
-    def _reduced_motion_cached(self) -> bool:
-        return self._read_reduced_motion_from_config()
-
-    def refresh_reduced_motion(self) -> None:
-        """Invalidate and re-warm the reduced-motion cache. Call after any config change."""
-        self.__dict__.pop("_reduced_motion_cached", None)
-        _ = self._reduced_motion_cached  # re-warm immediately
-
-    def _resolve_reduced_motion(self) -> bool:
-        """Compatibility shim: delegates to cached property."""
-        return self._reduced_motion_cached
-
-    def is_reduced_motion(self) -> bool:
-        return self._reduced_motion
-
-    def set_reduced_motion(self, enabled: bool) -> None:
-        self._reduced_motion = enabled
-        if enabled:
-            self.add_class("reduced-motion")
-        else:
-            self.remove_class("reduced-motion")
-        self.post_message(ReducedMotionChanged(enabled))
-
-    # --- MOD-1: Modal focus-arbiter ---
-
-    def push_modal(self, overlay: Widget) -> None:
-        """Register an overlay as the active modal and suppress the previous top."""
-        if self._modal_stack:
-            self._modal_stack[-1].add_class("--modal-suppressed")
-        self._modal_stack.append(overlay)
-
-    def pop_modal(self, overlay: Widget) -> None:
-        """Deregister an overlay; unsuppress the new top if one exists."""
-        try:
-            self._modal_stack.remove(overlay)
-        except ValueError:  # il-ex-1-exempt: swallow
-            pass  # overlay was not in stack (double-pop or never pushed) — no-op
-        if self._modal_stack:
-            try:
-                self._modal_stack[-1].remove_class("--modal-suppressed")
-            except Exception:
-                logger.debug("pop_modal: remove_class --modal-suppressed failed", exc_info=True)
-
-    def top_modal(self) -> Widget | None:
-        """Return the overlay at the top of the modal stack, or None."""
-        return self._modal_stack[-1] if self._modal_stack else None
-
-    def is_modal_active(self) -> bool:
-        """Return True when at least one modal overlay is registered."""
-        return bool(self._modal_stack)
-
-    def has_focus_capturing_modal(self) -> bool:
-        """True when any modal on the stack is not WorkspaceOverlay.
-
-        WorkspaceOverlay is the only overlay that intentionally leaves
-        HermesInput in focus; all others steal it.
-        """
-        # Import here to avoid circular dependency with overlays module
-        from hermes_cli.tui.overlays.reference import WorkspaceOverlay
-        return any(not isinstance(m, WorkspaceOverlay) for m in self._modal_stack)
 
     # --- Compose ---
 
@@ -779,10 +614,9 @@ class HermesApp(App):
             yield SplitTargetStub(id="split-target-stub")
         else:
             yield self._output_panel
-        # PlanPanel: bottom-docked strip above StatusBar (non-v2 layout only).
-        if self._display_layout != "v2":
-            from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
-            yield _PP(id="plan-panel")
+        # PlanPanel: bottom-docked strip above StatusBar; shows tool work queue.
+        from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+        yield _PP(id="plan-panel")
         # TTEWidget uses layer: overlay + dock: top in its DEFAULT_CSS so it
         # floats over the banner area when active.  Banner content is already
         # in OutputPanel underneath; when effect ends the overlay hides and
@@ -791,28 +625,15 @@ class HermesApp(App):
         with Vertical(id="overlay-layer"):
             from hermes_cli.tui.overlays import InterruptOverlay as _IO
             yield _IO(id="interrupt-overlay")
-        with Horizontal(id="nameplate-hint-row"):
-            _np_kwargs: dict[str, Any] = {
-                "id": "nameplate",
-                "name": getattr(self, "_nameplate_name", "Hermes"),
-                "morph_speed": getattr(self, "_nameplate_morph_speed", 1.0),
-            }
-            # Recording/demo override: speed up idle beats so they fire often
-            # enough to capture in a short take. Default behavior unchanged.
-            _np_min = _os_mod.environ.get("HERMES_NP_IDLE_MIN_S")
-            _np_max = _os_mod.environ.get("HERMES_NP_IDLE_MAX_S")
-            if _np_min:
-                try:
-                    _np_kwargs["idle_beat_min_s"] = float(_np_min)
-                except ValueError:  # il-ex-1-exempt: swallow
-                    logger.warning("HERMES_NP_IDLE_MIN_S not a float: %r", _np_min)
-            if _np_max:
-                try:
-                    _np_kwargs["idle_beat_max_s"] = float(_np_max)
-                except ValueError:  # il-ex-1-exempt: swallow
-                    logger.warning("HERMES_NP_IDLE_MAX_S not a float: %r", _np_max)
-            yield AssistantNameplate(**_np_kwargs)
-            yield HintBar(id="hint-bar")
+        yield AssistantNameplate(
+            id="nameplate",
+            name=getattr(self, "_nameplate_name", "Hermes"),
+            effects_enabled=getattr(self, "_nameplate_effects", True),
+            idle_effect=getattr(self, "_nameplate_idle_effect", "breathe"),
+            morph_speed=getattr(self, "_nameplate_morph_speed", 1.0),
+            glitch_enabled=getattr(self, "_nameplate_glitch", True),
+        )
+        yield HintBar(id="hint-bar")
         yield SessionBar(id="session-bar")
         yield _SessionNotification(id="session-notification")
         yield InlineImageBar(id="inline-image-bar")
@@ -842,8 +663,8 @@ class HermesApp(App):
             yield _ILB(id="input-legend-bar")
             with Horizontal(id="input-row"):
                 yield Static("❯ ", id="input-chevron")
-                yield Static("", id="spinner-overlay")
                 yield _HI(id="input-area")
+                yield Static("", id="spinner-overlay")
             # PathSearchProvider is invisible — position is irrelevant.
             yield _PSP(id="path-search-provider")
         else:
@@ -872,8 +693,6 @@ class HermesApp(App):
     # --- Lifecycle ---
 
     def on_mount(self) -> None:
-        self._mount_start_monotonic = _time.monotonic()
-        _mount_start = self._mount_start_monotonic
         self._event_loop = asyncio.get_running_loop()
         self._worker_watcher = WorkerWatcher(self)
         self._event_loop_probe = EventLoopLatencyProbe()
@@ -924,39 +743,51 @@ class HermesApp(App):
         self._anim_clock_h = self.set_interval(1 / 15, self._anim_clock.tick)
         self._spinner_h = self.set_interval(0.14, self._svc_spinner.tick_spinner)  # ~7Hz — smooth enough, 30% less event-loop pressure vs 10Hz
         self._fps_h = self.set_interval(_frame_interval, self._svc_spinner.tick_fps)
-        # Staggered 500ms start so tick_duration (1Hz) doesn't land on the same
-        # 1s boundary as anim_clock's 15th tick + fps_probe's 60th tick, avoiding
-        # a triple timer pile-up at t=1.0, 2.0, 3.0... during the startup animation.
-        def _install_duration_h() -> None:
-            self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
-        self.set_timer(0.5, _install_duration_h)
+        self._duration_h = self.set_interval(1.0, self._svc_spinner.tick_duration)
         # Restore FPS HUD state from config (runtime toggle overrides this)
         if _fps_hud_enabled():
             self.fps_hud_visible = True
         # Focus the input bar so the user can type immediately
-        if not self.has_focus_capturing_modal():
-            from hermes_cli.tui.input_widget import HermesInput as _HI
+        try:
+            self.query_one("#input-area").focus()
+        except NoMatches:
+            pass
+        if not self._clipboard_available and not self._xclip_cmd:
             try:
-                self.query_one(_HI).focus()
-            except NoMatches:  # il-ex-1-exempt: swallow
+                self.query_one("#status-clipboard-warning").add_class("--active")
+            except NoMatches:
                 pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
-        if _os_mod.environ.get("HERMES_DENSITY", "").lower() == "compact":
+        import os as _os
+        if _os.environ.get("HERMES_DENSITY", "").lower() == "compact":
             self._compact_manual = True
             self.compact = True  # triggers watch_compact → adds "density-compact"
         elif self._compact_manual is None:
-            self._recompute_auto_compact()  # SVC-7: use shared helper
+            try:
+                w, h = self.size.width, self.size.height
+                if w > 0 and h > 0:
+                    self.compact = w <= 120 or h <= 30
+            except Exception:
+                pass
+        if _os.environ.get("HERMES_REDUCED_MOTION", "").lower() in ("1", "true", "yes"):
+            self.add_class("reduced-motion")
+        # G-1: also read tui.reduced_motion from config file
+        try:
+            from hermes_cli.config import read_raw_config
+            if read_raw_config().get("tui", {}).get("reduced_motion"):
+                self.add_class("reduced-motion")
+        except Exception:
+            pass
         # Wire slash commands from COMMAND_REGISTRY into the autocomplete engine
         if self._use_hermes_input:
             self._populate_slash_commands()
-            self._populate_skills()
         # Initialize hint bar to idle phase — shows key-badge hints immediately
         self._svc_spinner.set_hint_phase("idle")
         # Apply InlineImageBar enabled state from config
         try:
             self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         # Initialize workspace tracker in background thread (subprocess call)
         self._init_workspace_tracker()
@@ -964,7 +795,8 @@ class HermesApp(App):
         if not self._browse_turn_boundary_always:
             self.add_class("--no-turn-boundary")
         # Yolo mode: sync reactive with env var state at startup
-        self.yolo_mode = _os_mod.environ.get("HERMES_YOLO_MODE") == "1"
+        import os as _os2
+        self.yolo_mode = _os2.environ.get("HERMES_YOLO_MODE") == "1"
         # Desktop notify: track turn start time
         self._turn_start_time: float = 0.0
         self._last_assistant_text: str = ""
@@ -974,16 +806,16 @@ class HermesApp(App):
         if self._display_layout == "v2":
             self.add_class("layout-v2")
             try:
-                from hermes_cli.tui.widgets.plan_panel import PlanPanel as _PP
+                from hermes_cli.tui.widgets.plan_panel_stub import PlanPanelStub
                 from hermes_cli.tui.widgets.context_panel_stub import ContextPanelStub
                 pane_center = self.query_one("#pane-center")
                 pane_left = self.query_one("#pane-left")
                 pane_right = self.query_one("#pane-right")
                 pane_center.set_content(self._output_panel)
-                pane_left.set_content(_PP(id="plan-panel"))
+                pane_left.set_content(PlanPanelStub())
                 pane_right.set_content(ContextPanelStub())
             except Exception:
-                logger.exception("v2 pane wiring failed")
+                pass
         # Restore pane layout blob from previous session (worktree sessions only)
         try:
             if (
@@ -999,59 +831,12 @@ class HermesApp(App):
                         if self._pane_manager._center_split:
                             self._pane_manager.apply_center_split(self)
         except Exception:
-            # SVC-4: log pane restore failures so they are visible in debug logs
-            logger.warning("on_mount: pane layout restore failed; using default layout", exc_info=True)
-        # Link AssistantNameplate animation to TitledRule so the nameplate's timer
-        # drives TitledRule.refresh() — nameplate is display:none but keeps ticking.
-        try:
-            _np = self.query_one("#nameplate", AssistantNameplate)
-            _tr = self.query_one("#input-rule", TitledRule)
-            _np.link_to_rule(_tr)
-            _tr._nameplate = _np
-        except Exception:
-            logger.debug("nameplate→rule link failed", exc_info=True)
+            pass
         # RX4: register lifecycle hooks then drain any events queued before is_running
         self._register_lifecycle_hooks()
         self.hooks.drain_deferred()
-        # HF-E: prune stale HTML clipboard cache entries from previous sessions
-        try:
-            from hermes_cli.tui.clipboard_cache import prune_expired as _prune_clipboard
-            _prune_clipboard()
-        except Exception:
-            logger.debug("clipboard cache prune failed on mount", exc_info=True)
-        # W-10: watch OutputPanel.scroll_state to drive catchup hint in HintBar
-        try:
-            panel = self.query_one(OutputPanel)
-            self.watch(panel, "scroll_state", self._on_output_scroll_state)
-        except NoMatches:  # il-ex-1-exempt: swallow
-            pass
-        # Seed status_model from CLI so the bar shows the model name immediately.
-        try:
-            _cli = getattr(self, "cli", None)
-            _initial_model = (
-                getattr(getattr(_cli, "agent", None), "model", None)
-                or getattr(_cli, "model", None)
-                or ""
-            )
-            if _initial_model:
-                self.status_model = str(_initial_model)
-        except Exception:
-            logger.debug("status_model init from CLI failed", exc_info=True)
-        _mount_elapsed_ms = (_time.monotonic() - _mount_start) * 1000.0
-        if _mount_elapsed_ms > 500.0:
-            logger.warning("[STARTUP] slow mount: mount_ms=%.1f (budget=500)", _mount_elapsed_ms)
-        else:
-            logger.debug("[STARTUP] mount_ms=%.1f", _mount_elapsed_ms)
 
-    # Resize debounce window — coalesces app-level work only:
-    #   _maybe_reload_emoji, _recompute_auto_compact,
-    #   _apply_min_size_overlay, _pane_manager.on_resize.
-    # Child widgets receive raw Resize cascades from Textual; child-level
-    # rate-limiting is each widget's responsibility (use crosses_threshold
-    # from resize_utils for dead-band gating).
-    # 60 ms ≈ one frame at typical drag burst rate; small enough that the
-    # user does not perceive latency, large enough to coalesce the burst.
-    _RESIZE_DEBOUNCE_S: float = 0.06
+    _RESIZE_DEBOUNCE_S: float = 0.06  # 60 ms
 
     def on_resize(self, event: "events.Resize") -> None:
         """Debounce rapid resize events; flush once idle for 60 ms."""
@@ -1068,7 +853,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.emoji_registry import _cell_px
             cpw, cph = _cell_px()
-        except Exception:  # il-ex-1-exempt: _cell_px() unavailable (non-graphical terminal) — skip reload
+        except Exception:
             return
         cur = getattr(self, "_emoji_cell_px", None)
         if cur == (cpw, cph):
@@ -1085,36 +870,24 @@ class HermesApp(App):
         self._resize_timer = None
         self._maybe_reload_emoji(event)
         try:
-            size = event.size  # type: ignore[union-attr]  # SVC-6: single attribute fetch
-            w = size.width
-            h = size.height
+            w = event.size.width  # type: ignore[union-attr]
+            h = event.size.height  # type: ignore[union-attr]
         except AttributeError:
-            logger.warning(
-                "_flush_resize: pending event lacked .size; skipping flush",
-                exc_info=True,
-            )
             return
-
-        last_w, last_h = self._last_flushed_size  # init (-1, -1) in __init__
-        width_changed = w != last_w
-        geom_changed = width_changed or h != last_h
-
-        # _apply_min_size_overlay depends on (w, h) — skip if geometry unchanged
-        if geom_changed:
-            self._apply_min_size_overlay(w, h)
-        # SVC-7: delegate auto-compact logic to single helper — only when width changed
-        if width_changed:
-            self._recompute_auto_compact()
-            # Hard floor: w < 30 forces compact regardless of manual override
-            if w < 30 and not self.compact:
-                self.compact = True
-        # R2 pane layout — recalculate mode on geometry change
-        if geom_changed and getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
-            changed = self._pane_manager.update_for_size(w, h)
+        self._apply_min_size_overlay(w, h)
+        # Auto compact-mode detection (debounced here, not in watch_size)
+        if self._compact_manual is None:
+            should = w <= 120 or h <= 30
+            if self.compact != should:
+                self.compact = should
+        # Hard floor: w < 30 forces compact regardless of manual override
+        if w < 30 and not self.compact:
+            self.compact = True
+        # R2 pane layout — recalculate mode on every resize
+        if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
+            changed = self._pane_manager.on_resize(w, h)
             if changed:
                 self._pane_manager._apply_layout(self)
-
-        self._last_flushed_size = (w, h)
 
     def _apply_min_size_overlay(self, w: int, h: int) -> None:
         """Mount or dismiss the MinSizeBackdrop based on current terminal dimensions."""
@@ -1126,7 +899,7 @@ class HermesApp(App):
         too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT
         try:
             existing = self.screen.query("MinSizeBackdrop")
-        except ScreenStackError:  # il-ex-1-exempt: swallow
+        except ScreenStackError:
             return
         if too_small and not existing:
             self.screen.mount(MinSizeBackdrop(w, h))
@@ -1142,8 +915,6 @@ class HermesApp(App):
         self._svc_bash.kill()
         self.hooks.shutdown()
         self._theme_manager.stop_hot_reload()
-        # SVC-1: release session notify socket on normal app exit
-        self._svc_sessions.stop_listener()
         for _attr in ("_anim_clock_h", "_spinner_h", "_fps_h", "_duration_h",
                       "_sessions_poll_timer", "_git_poll_h", "_resize_timer"):
             _h = getattr(self, _attr, None)
@@ -1151,7 +922,7 @@ class HermesApp(App):
                 try:
                     _h.stop()
                 except Exception:
-                    logger.debug("on_unmount: %s stop failed", _attr, exc_info=True)
+                    pass
         # Safety-net: stop any lingering media players
         try:
             from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
@@ -1162,9 +933,9 @@ class HermesApp(App):
                     if _w._ctrl:
                         _w._ctrl.stop()
                 except Exception:
-                    logger.debug("on_unmount: InlineMediaWidget stop failed", exc_info=True)
+                    pass
         except Exception:
-            logger.debug("on_unmount: media player query failed", exc_info=True)
+            pass
         # Safety-net delete-all: removes any TGP placements that leaked (e.g. crash path)
         try:
             import sys as _sys
@@ -1173,7 +944,7 @@ class HermesApp(App):
                 _sys.stdout.write(_get_renderer().delete_all_sequence())
                 _sys.stdout.flush()
         except Exception:
-            logger.debug("on_unmount: TGP delete-all failed", exc_info=True)
+            pass
         # Persist pane layout blob for the current worktree session
         try:
             if (
@@ -1185,7 +956,7 @@ class HermesApp(App):
                     self._own_session_id, self._pane_manager.dump_state()
                 )
         except Exception:
-            logger.debug("on_unmount: save_layout_blob failed", exc_info=True)
+            pass
         # Session switch: fire deferred exec (set by _svc_sessions.switch_to_session)
         _exec = getattr(self, "_pending_exec", None)
         if _exec is not None:
@@ -1193,7 +964,7 @@ class HermesApp(App):
             try:
                 _exec()
             except Exception:
-                logger.debug("on_unmount: _pending_exec failed", exc_info=True)
+                pass
 
     # --- Bash passthrough ---
 
@@ -1202,31 +973,23 @@ class HermesApp(App):
         """Thread adapter for BashService. exclusive=True serialises within group.
         NOTE: exclusive cancels the Worker object only — does NOT kill the OS
         subprocess. The is_running guard in BashService.run() is the real gate."""
-        try:
-            self._svc_bash._exec_sync(cmd, block)
-        except Exception:
-            logger.exception("_start_bash_worker: exec failed")
-        finally:
-            self._svc_bash._running = False
+        self._svc_bash._exec_sync(cmd, block)
 
     def _mount_bash_block(self, cmd: str) -> "Any":
-        """Mount a BashOutputBlock into OutputPanel before the live-output duo."""
+        """Mount a BashOutputBlock into OutputPanel before the ThinkingWidget sentinel."""
         from hermes_cli.tui.widgets.bash_output_block import BashOutputBlock
+        from hermes_cli.tui.widgets.thinking import ThinkingWidget
         block = BashOutputBlock(cmd)
         output = self._output_panel
-        anchor = output._live_anchor()
-        if anchor is not None:
-            output.mount(block, before=anchor)
-        else:
-            output.mount(block)
+        output.mount(block, before=output.query_one(ThinkingWidget))
         return block
 
     # --- Workspace tracker ---
 
-    # il-w1: stdlib imports + git rev-parse failure logged inside (line 1090)
     @work(thread=True)
     def _init_workspace_tracker(self) -> None:
         """Resolve repo root in a worker thread, then set tracker on event loop."""
+        import os as _os
         import subprocess as _sp
         try:
             root = _sp.check_output(
@@ -1236,11 +999,7 @@ class HermesApp(App):
             ).decode().strip()
             is_git_repo = True
         except Exception:
-            logger.debug(
-                "_init_workspace_tracker: git rev-parse failed; falling back to cwd",
-                exc_info=True,
-            )
-            root = _os_mod.getcwd()
+            root = _os.getcwd()
             is_git_repo = False
         tracker = WorkspaceTracker(root, is_git_repo=is_git_repo)
         poller = GitPoller(root, is_git_repo=is_git_repo)
@@ -1249,7 +1008,6 @@ class HermesApp(App):
     def _set_workspace_tracker(self, tracker: WorkspaceTracker, poller: GitPoller) -> None:
         self._workspace_tracker = tracker
         self._git_poller = poller
-        self.status_cwd = _os_mod.getcwd()
         if not poller.is_git_repo:
             self._last_git_snapshot = GitSnapshot(
                 branch="",
@@ -1274,13 +1032,6 @@ class HermesApp(App):
         self._git_poll_in_flight = True
         self._run_git_poll()
 
-    def _clear_git_poll_inflight(self) -> None:
-        """App-thread: clear in-flight flag and re-trigger if a poll was queued."""
-        self._git_poll_in_flight = False
-        if self._git_poll_retrigger:
-            self._git_poll_retrigger = False
-            self._trigger_git_poll()
-
     @work(thread=True, group="git-poll")
     def _run_git_poll(self) -> None:
         import time as _t
@@ -1288,12 +1039,7 @@ class HermesApp(App):
         if poller is None:
             return
         _t0 = _t.perf_counter()
-        try:
-            snapshot = poller.poll()
-        except Exception:
-            logger.exception("_run_git_poll: poller.poll() failed")
-            self.call_from_thread(self._clear_git_poll_inflight)
-            return
+        snapshot = poller.poll()
         elapsed_ms = (_t.perf_counter() - _t0) * 1000.0
         self.post_message(WorkspaceUpdated(snapshot, poll_elapsed_ms=elapsed_ms))
 
@@ -1304,7 +1050,7 @@ class HermesApp(App):
         overlay_visible = False
         try:
             overlay_visible = self.query_one(WorkspaceOverlay).has_class("--visible")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         return overlay_visible or bool(self.agent_running)
 
@@ -1323,11 +1069,7 @@ class HermesApp(App):
         tracker = getattr(self, "_workspace_tracker", None)
         if tracker is None:
             return
-        try:
-            warning = analyze_complexity(path)
-        except Exception:
-            logger.exception("_analyze_complexity: analyze_complexity(%r) failed", path)
-            return
+        warning = analyze_complexity(path)
         self.call_from_thread(tracker.set_complexity, path, warning)
         self.call_from_thread(self._refresh_workspace_overlay)
 
@@ -1340,7 +1082,7 @@ class HermesApp(App):
             ov = self.query_one(WorkspaceOverlay)
             if ov.has_class("--visible"):
                 ov.refresh_data(tracker, self._last_git_snapshot)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def on_workspace_updated(self, event: WorkspaceUpdated) -> None:
@@ -1362,7 +1104,7 @@ class HermesApp(App):
             ov = self.query_one(WorkspaceOverlay)
             if ov.has_class("--visible"):
                 ov.refresh_data(tracker, event.snapshot)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         apply_ms = (_t.perf_counter() - _t0) * 1000.0
         if self._workspace_apply_perf_alarm is not None:
@@ -1390,7 +1132,7 @@ class HermesApp(App):
             kw["icon_nf"] = msg.icon_nf
         try:
             register_mcp_server(msg.server, **kw)
-        except ValueError:  # il-ex-1-exempt: swallow
+        except ValueError:
             logger.warning("register_mcp_server failed for %r", msg.server)
             return
         for tool_meta in msg.tools:
@@ -1400,8 +1142,7 @@ class HermesApp(App):
                     overwrite=True,
                 )
             except Exception:
-                logger.debug("Failed to register MCP tool %r from %r",
-                             tool_meta.get("name"), msg.server, exc_info=True)
+                logger.debug("Failed to register MCP tool %r from %r", tool_meta.get("name"), msg.server)
 
     def on_mcp_server_disconnected(self, msg: MCPServerDisconnected) -> None:
         """Consume MCPServerDisconnected: specs stay — panels may still be on screen."""
@@ -1410,7 +1151,7 @@ class HermesApp(App):
     def action_toggle_workspace(self) -> None:
         try:
             ov = self.query_one(WorkspaceOverlay)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         if ov.has_class("--visible"):
             ov.action_dismiss()
@@ -1428,36 +1169,6 @@ class HermesApp(App):
             self._sync_workspace_polling_state()
             self._trigger_git_poll()
 
-    def _apply_model_inline(self, name: str) -> None:
-        """Route a /model <name> switch to the CLI agent via pending_input.
-
-        Mirrors what ConfigOverlay._confirm_model does without going through
-        the TUI input widget (avoids recursive handle_slash_command invocation).
-        """
-        # Strip --provider and other flags for the status bar display name.
-        model_display = name.split("--")[0].strip()
-        try:
-            cli = getattr(self, "cli", None)
-            if cli is not None and hasattr(cli, "_pending_input"):
-                cli._pending_input.put(f"/model {name}")
-            # Optimistic update in all paths — CLI will confirm on next turn.
-            self.status_model = model_display
-        except Exception:
-            logger.debug("_apply_model_inline: routing failed", exc_info=True)
-            try:
-                self.status_model = model_display
-            except Exception:
-                logger.warning("_apply_model_inline: status_model fallback failed", exc_info=True)
-
-    def action_dismiss_update_banner(self) -> None:
-        """Write banner ack file to suppress the update warning for the current behind count."""
-        try:
-            from hermes_cli.banner import _session_update_behind, write_banner_ack
-            if _session_update_behind > 0:
-                write_banner_ack(_session_update_behind)
-        except Exception:
-            logger.debug("dismiss_update_banner failed", exc_info=True)
-
     def action_dismiss_all_error_banners(self) -> None:
         """E5: query all .error-banner widgets in the screen and remove each."""
         try:
@@ -1465,9 +1176,9 @@ class HermesApp(App):
             for banner in banners:
                 try:
                     banner.remove()
-                except Exception:  # il-ex-1-exempt: widget already removed or detached — safe to ignore
+                except Exception:
                     pass
-        except Exception:  # il-ex-1-exempt: screen query failed (app shutting down) — safe to ignore
+        except Exception:
             pass
 
     # --- InlineImageBar handlers ---
@@ -1476,27 +1187,19 @@ class HermesApp(App):
         """Bubble from StreamingToolBlock.ImageMounted → add thumbnail to InlineImageBar."""
         try:
             self.query_one(InlineImageBar).add_image(event.path)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     async def on_inline_image_bar_thumbnail_clicked(self, event: Any) -> None:
         """Scroll OutputPanel to the InlineImage matching the clicked thumbnail."""
         from hermes_cli.tui.widgets import InlineImage
-        from hermes_cli.tui.services import feedback as _fb
         for widget in self.query(InlineImage):
             if getattr(widget, "_src_path", "") == event.path:
                 try:
                     self.query_one(OutputPanel).scroll_to_widget(widget, animate=True)
-                except NoMatches:  # il-ex-1-exempt: swallow
+                except NoMatches:
                     pass
-                widget.add_class("--highlight-pulse")
-                self.set_timer(0.6, lambda w=widget: w.remove_class("--highlight-pulse"))
-                return
-        self._flash_hint(
-            "image no longer in view — scroll back to find it",
-            1.5,
-            key=_fb.HINT_KEY_IMAGE_NOT_IN_VIEW,
-        )
+                break
 
     def _mount_inline_media_widget(self, kind: str, url: str) -> None:
         """Mount InlineMediaWidget in output panel. Event-loop only."""
@@ -1512,10 +1215,10 @@ class HermesApp(App):
             try:
                 tool_pending = output.query_one(ToolPendingLine)
                 output.mount(widget, before=tool_pending)
-            except NoMatches:  # il-ex-1-exempt: swallow
+            except NoMatches:
                 output.mount(widget)
         except Exception:
-            logger.exception("_mount_inline_media_widget: mount failed")
+            pass
 
     # IO methods extracted → _app_io.py
 
@@ -1535,23 +1238,16 @@ class HermesApp(App):
             for hint in panel.query(".--empty-state-hint"):
                 try:
                     hint.remove()
-                except Exception:  # il-ex-1-exempt: hint already removed — safe to ignore
+                except Exception:
                     pass
             ump = UserMessagePanel(text, images=images)
-            logger.debug(
-                "echo_user_message: mounting UMP (children_before=%d)", len(panel.children)
-            )
-            anchor = panel._live_anchor()
-            if anchor is not None:
-                panel.mount(ump, before=anchor)
-            else:
-                panel.mount(ump)
+            panel.mount(ump, before=panel.query_one(ThinkingWidget))
             # Always scroll to show the user's own message regardless of scroll
             # position — the user just submitted, they expect to see the exchange.
             # Re-engage auto-scroll for the upcoming assistant response.
             panel._user_scrolled_up = False
             self.call_after_refresh(panel.scroll_end, animate=False)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def _resolve_user_emoji(self, text: str, panel: "UserMessagePanel") -> None:
@@ -1592,8 +1288,7 @@ class HermesApp(App):
                     img.image = entry.pil_image
                     panel.mount(img)
             except Exception:
-                logger.warning("image replay mount failed for entry %r", entry, exc_info=True)
-                continue
+                pass
 
     # Hint phase + drawbraille methods extracted → _app_spinner.py
 
@@ -1605,81 +1300,48 @@ class HermesApp(App):
                 chevron.add_class("--yolo-active")
             else:
                 chevron.remove_class("--yolo-active")
-        except NoMatches:  # il-ex-1-exempt: swallow
-            pass  # chevron not yet mounted or already unmounted
         except Exception:
-            logger.warning("watch_yolo_mode: CSS swap failed", exc_info=True)
+            pass
         # E5: flash confirmation — skip initial reactive fire (old == value at init)
         if old == value:
             return
         msg = "YOLO mode ON — auto-approving all tool calls" if value else "YOLO mode OFF"
         self._flash_hint(msg, 2.0)
 
-    def watch_focused(self, focused: "Widget | None") -> None:
-        """W-15 / D-3: flash extended hint on first entry into each zone per turn."""
-        if focused is None:
-            return
-        zone_name: str | None = None
-        try:
-            from hermes_cli.tui.input_widget import HermesInput as _HI
-            if isinstance(focused, _HI) or (hasattr(focused, "parent") and isinstance(focused.parent, _HI)):
-                zone_name = "compose"
-        except ImportError:  # il-ex-1-exempt: swallow
-            pass  # input_widget not available — compose zone detection skipped
-        except Exception:
-            logger.warning("watch_focused: compose zone detect failed", exc_info=True)
-        if zone_name is None:
-            try:
-                op = self.query_one(OutputPanel)
-                if op.is_ancestor_of(focused) or focused is op:
-                    zone_name = "output"
-            except NoMatches:  # il-ex-1-exempt: swallow
-                pass  # OutputPanel not yet mounted
-            except Exception:
-                logger.warning("watch_focused: output zone detect failed", exc_info=True)
-        if zone_name is None:
-            try:
-                from hermes_cli.tui.tool_panel import ToolPanel as _TP
-                for tp in self.query(_TP):
-                    if tp.is_ancestor_of(focused) or focused is tp:
-                        zone_name = "tool"
-                        break
-            except ImportError:  # il-ex-1-exempt: swallow
-                pass  # tool_panel not available — tool zone detection skipped
-            except Exception:
-                logger.warning("watch_focused: tool zone detect failed", exc_info=True)
-        if zone_name and zone_name not in self._zones_first_entry_seen:
-            hint = EXTENDED_HINT.get(zone_name, "")
-            if hint:
-                self._flash_hint(hint, 4.0)
-            self._zones_first_entry_seen.add(zone_name)
-
     def watch_agent_running(self, value: bool) -> None:
         # A1: coarse phase transition on turn start/end
         self.status_phase = _Phase.REASONING if value else _Phase.IDLE
-        self._svc_spinner.drawbraille_show_hide(value, signal_on_show="thinking" if value else None)
+        self._svc_spinner.drawbraille_show_hide(value)
         if value:
-            self._workspace_auto_suppressed = False
+            # Signal thinking when agent starts
+            try:
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
+                self.query_one(_DO).signal("thinking")
+            except Exception:
+                pass
             self._svc_commands.update_anim_hint()
             self._svc_spinner.set_chevron_phase("--phase-stream")
             self._svc_spinner.set_hint_phase("stream")
-            _output: "OutputPanel | None" = None
             try:
-                _output = self.query_one(OutputPanel)
-                _output.reset_turn_capture()
+                output = self.query_one(OutputPanel)
+                output.reset_turn_capture()
                 try:
                     from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
-                    _output.query_one(_TW).activate()
-                except (NoMatches, Exception):  # il-ex-1-exempt: swallow
-                    pass  # ThinkingWidget not yet mounted — activation deferred to on_mount
-            except NoMatches:  # il-ex-1-exempt: swallow
+                    output.query_one(_TW).activate()
+                except NoMatches:
+                    pass
+            except NoMatches:
                 pass
+            self._sync_workspace_polling_state()
             # RX4: lifecycle hooks for turn start
-            # Note: _sync_workspace_polling_state() is intentionally omitted here —
-            # the on_turn_start hook → _lc_dismiss_info_overlays → dismiss_all_info_overlays
-            # calls it, so a direct call here would be a duplicate on every True transition.
             self.hooks.fire("on_turn_start")
         else:
+            # Signal complete when agent stops
+            try:
+                from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
+                self.query_one(_DO).signal("complete")
+            except Exception:
+                pass
             self._svc_commands.update_anim_hint()
             self._sync_workspace_polling_state()
             # Safety net: flush live buffer + stop all per-turn timers.
@@ -1691,36 +1353,27 @@ class HermesApp(App):
             try:
                 output = self.query_one(OutputPanel)
                 output.flush_live()
-                # Evict old turns after the layout pass — purely cosmetic, nothing reads
-                # the result synchronously, and deferring keeps the turn-boundary repaint fast.
-                self.call_after_refresh(output.evict_old_turns)
-            except NoMatches:  # il-ex-1-exempt: swallow
+                # Evict old turns at idle to prevent compositor cache thrash
+                # (Textual LRU maxsize=16 can't cope with 300+ children).
+                output.evict_old_turns()
+            except NoMatches:
                 pass
             # v2 heat injection: signal turn complete
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
                 ov = self.query_one(DrawbrailleOverlay)
                 ov.signal("complete")
-            except NoMatches:  # il-ex-1-exempt: swallow
-                pass  # DrawbrailleOverlay disabled or not in DOM
             except Exception:
-                logger.debug("drawbraille signal failed", exc_info=True)
-            # Rebuild unified browse anchor list now that all blocks are mounted.
-            # Deferred: CPU cost is proportional to output size; browse nav can update 1 frame later.
+                pass
+            # Rebuild unified browse anchor list now that all blocks are mounted
             if self.browse_mode:
-                self.call_after_refresh(self._svc_browse.rebuild_browse_anchors)
-            # Live-refresh history search index if overlay is open.
-            # Deferred: history overlay is already repainted by the time call_after_refresh fires.
+                self._svc_browse.rebuild_browse_anchors()
+            # Live-refresh history search index if overlay is open
             try:
                 hs = self.query_one(HistorySearchOverlay)
                 if hs.has_class("--visible"):
-                    def _send_turn_completed(widget: HistorySearchOverlay = hs) -> None:
-                        try:
-                            widget.post_message(HistorySearchOverlay.TurnCompleted())
-                        except Exception:  # il-ex-1-exempt: widget unmounted between now and refresh
-                            pass
-                    self.call_after_refresh(_send_turn_completed)
-            except NoMatches:  # il-ex-1-exempt: swallow
+                    hs.post_message(HistorySearchOverlay.TurnCompleted())
+            except NoMatches:
                 pass
             # RX4: fire lifecycle hooks for turn end
             self.hooks.fire("on_turn_end_any")
@@ -1734,12 +1387,14 @@ class HermesApp(App):
                 self._interrupt_source = None
 
         # --- nameplate ---
-        # Only transition on agent stop — nameplate stays at name while agent runs.
-        if not value:
-            try:
-                self.query_one("#nameplate", AssistantNameplate).transition_to_idle()
-            except NoMatches:  # il-ex-1-exempt: swallow
-                pass
+        try:
+            np = self.query_one("#nameplate", AssistantNameplate)
+            if value:
+                np.transition_to_active(label=self.spinner_label or "● thinking")
+            else:
+                np.transition_to_idle()
+        except NoMatches:
+            pass
 
         # --- undo safety guard ---
         if value and self.undo_state is not None:
@@ -1759,26 +1414,20 @@ class HermesApp(App):
                 widget.display = True
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
-                except NoMatches:  # il-ex-1-exempt: swallow
+                except NoMatches:
                     pass
                 # Clear the HintBar spinner when the agent stops.
                 # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
                 # untouched and only calls restore() when no flash is active.
                 self.feedback.on_agent_idle()
-                # Heal stale modal stack entries so HermesInput can receive focus.
-                # Non-visible overlays with --modal class are stale; clean them so
-                # call_after_refresh(widget.focus) below actually lands.
-                self._svc_context.heal_stale_modal_entries()
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         # New turn starting — create a new MessagePanel with the last user input
         if value:
             try:
-                if _output is None:
-                    raise NoMatches  # OutputPanel not mounted — skip new_message
-                output = _output
+                output = self.query_one(OutputPanel)
                 # Migrate any setext/table lookahead content buffered in the
                 # previous panel's engine to the new panel.
                 #
@@ -1808,7 +1457,7 @@ class HermesApp(App):
                             elif p is not None:
                                 # empty string sentinel — just clear it
                                 prev_engine._block_buf._pending = None
-                        except Exception:  # il-ex-1-exempt: old engine cleaned up; steal is best-effort
+                        except Exception:
                             pass
                         try:
                             # Also steal any partial chunk (no \n yet) buffered by feed()
@@ -1816,17 +1465,8 @@ class HermesApp(App):
                             if frag:
                                 prev_engine._partial = ""
                                 stolen_partial = frag
-                        except Exception:  # il-ex-1-exempt: old engine cleaned up; steal is best-effort
+                        except Exception:
                             pass
-                    logger.debug(
-                        "watch_agent_running: stolen_pending=%r stolen_partial=%r",
-                        stolen_pending,
-                        stolen_partial,
-                    )
-                logger.debug(
-                    "watch_agent_running(True): calling new_message (output children=%d)",
-                    len(output.children),
-                )
                 new_msg = output.new_message(user_text=self._last_user_input)
                 # Engine isn't ready yet (on_mount fires next cycle); use
                 # _carry_pending/_carry_partial so on_mount processes them once engine exists.
@@ -1834,31 +1474,11 @@ class HermesApp(App):
                     new_msg._carry_pending = stolen_pending
                 if stolen_partial and new_msg is not None:
                     new_msg._carry_partial = stolen_partial
-            except NoMatches:  # il-ex-1-exempt: swallow
+            except NoMatches:
                 pass
         # Recompute hint phase when agent stops
         if not value:
             self._svc_spinner.set_hint_phase(self._svc_spinner.compute_hint_phase())
-        if not value:
-            tracker = getattr(self, "_workspace_tracker", None)
-            if (
-                tracker is not None
-                and tracker.entries()
-                and not self._workspace_auto_suppressed
-                and not self._focus_blocking_overlay_visible()
-                and tracker.fingerprint() != self._workspace_last_shown_fingerprint
-            ):
-                try:
-                    ov = self.query_one(WorkspaceOverlay)
-                    if not ov.has_class("--visible"):
-                        fp = tracker.fingerprint()
-                        ov.refresh_data(tracker, self._last_git_snapshot)
-                        ov.show_overlay()
-                        self._workspace_last_shown_fingerprint = fp
-                        self._sync_workspace_polling_state()
-                        self._trigger_git_poll()
-                except NoMatches:  # il-ex-1-exempt: swallow
-                    pass  # WorkspaceOverlay not yet in DOM — skip auto-show
 
     def _osc_progress_update(self, running: bool) -> None:
         """Emit OSC 9;4 sequence when config flag is set."""
@@ -1871,7 +1491,7 @@ class HermesApp(App):
                 else:
                     osc_progress_end()
         except Exception:
-            logger.debug("_osc_progress_update: dispatch failed", exc_info=True)
+            pass
 
     # ── RX4: lifecycle hook registry + callbacks ──────────────────────────────
 
@@ -1914,8 +1534,6 @@ class HermesApp(App):
         self._svc_tools._turn_tool_calls = {}
         self._svc_tools._agent_stack = []
         self._svc_tools._open_tool_count = 0  # A1: reset concurrent tool count
-        self._svc_tools._tool_views_by_id = {}
-        self._svc_tools._tool_views_by_gen_index = {}
         self._turn_start_monotonic = None
         self._current_turn_tool_count = 0
         self._turn_start_time = _time.monotonic()
@@ -1923,14 +1541,6 @@ class HermesApp(App):
         self._response_wall_start_time = None
         self._response_segment_start_time = None
         self._response_token_window.clear()
-        # W-7 / AT-Z3: restore focus to compose on new turn start
-        self._zones_first_entry_seen.clear()
-        if not self.has_focus_capturing_modal():
-            from hermes_cli.tui.input_widget import HermesInput as _HI
-            try:
-                self.query_one(_HI).focus()
-            except NoMatches:  # il-ex-1-exempt: widget not mounted (e.g. headless mode)
-                pass
 
     def _lc_osc_progress_start(self) -> None:
         self._osc_progress_update(True)
@@ -1960,7 +1570,7 @@ class HermesApp(App):
             msg = self.query_one(OutputPanel).current_message
             if msg is not None:
                 msg._last_file_tool_block = None
-        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
+        except Exception:
             pass
 
     def _lc_drain_gen_queue(self, **_: object) -> None:
@@ -1969,7 +1579,7 @@ class HermesApp(App):
             for block in pending:
                 try:
                     block.remove()
-                except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
+                except Exception:
                     pass
             pending.clear()
 
@@ -1985,7 +1595,7 @@ class HermesApp(App):
                     widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
                 else:
                     widget.placeholder = getattr(widget, "_idle_placeholder", "")
-        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
+        except Exception:
             pass
 
     def _lc_chevron_done_pulse(self, **_: object) -> None:
@@ -1995,7 +1605,7 @@ class HermesApp(App):
             if not chevron.has_class("--phase-error"):
                 self._svc_spinner.set_chevron_phase("--phase-done")
                 self.set_timer(0.4, lambda: self._svc_spinner.set_chevron_phase(""))
-        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
+        except Exception:
             pass
 
     def _lc_auto_title(self, **_: object) -> None:
@@ -2012,7 +1622,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
+            except Exception:
                 pass
             self._status_error_timer = None
         if error:
@@ -2025,7 +1635,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
+            except Exception:
                 pass
             self._status_error_timer = None
 
@@ -2047,13 +1657,13 @@ class HermesApp(App):
                 if q is not None:
                     try:
                         q.put_nowait(sentinel)
-                    except Exception:  # il-ex-1-exempt: queue full or already closed during session switch — safe to ignore
+                    except Exception:
                         pass
         if getattr(self, "agent_running", False):
             try:
                 if hasattr(self.cli, "agent") and self.cli.agent:
                     self.cli.agent.interrupt()
-            except Exception:  # il-ex-1-exempt: agent already stopped or interrupt not supported — safe to ignore
+            except Exception:
                 pass
 
     def _lc_session_resume_reset(self, session_id: str = "", turn_count: int = 0, **_: object) -> None:
@@ -2062,12 +1672,12 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
+            except Exception:
                 pass
             self._status_error_timer = None
         try:
             self.status_error = ""
-        except Exception:  # il-ex-1-exempt: reactive not yet initialised during early teardown — safe to ignore
+        except Exception:
             pass
 
     def _on_streaming_start(self, **_: object) -> None:
@@ -2119,7 +1729,7 @@ class HermesApp(App):
                 sound=bool(display.get("notify_sound", False)),
                 sound_name=str(display.get("notify_sound_name", "Glass")),
             )
-        except Exception:  # il-ex-1-exempt: desktop notify unavailable — non-critical, skip silently
+        except Exception:
             pass
 
     def _refresh_live_response_metrics(self) -> None:
@@ -2128,7 +1738,7 @@ class HermesApp(App):
             return
         try:
             output = self.query_one(OutputPanel)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         msg = output.current_message
         if msg is None:
@@ -2148,7 +1758,6 @@ class HermesApp(App):
             span = max(now - self._response_token_window[0][0], 0.2)
             live_tok_s = token_sum / span
         msg.set_response_metrics(tok_s=live_tok_s, elapsed_s=elapsed, streaming=True)
-        self.status_streaming_elapsed_s = elapsed
 
     def mark_response_stream_started(self) -> None:
         """Start live response timing for current assistant turn."""
@@ -2159,16 +1768,7 @@ class HermesApp(App):
             self.hooks.fire("on_streaming_start")
         if self._response_segment_start_time is None:
             self._response_segment_start_time = _time.monotonic()
-        self._last_stream_chunk_ts = None
         self._refresh_live_response_metrics()
-        # Gate reflow so it does not fire while tokens are arriving (REFLOW-M1)
-        try:
-            panel = self.query_one(OutputPanel).current_message
-            if panel is not None:
-                panel._active_prose_block.set_streaming(True)
-        except Exception:  # il-ex-1-exempt: swallow
-            # OutputPanel or current_message absent at stream start — gate skipped
-            pass
 
     def mark_response_stream_delta(self, text: str) -> None:
         """Record streamed response text for rolling live tok/s."""
@@ -2178,19 +1778,13 @@ class HermesApp(App):
         est_tokens = estimate_tokens_rough(text)
         if est_tokens <= 0:
             return
-        now = _time.monotonic()
-        if self._last_stream_chunk_ts is not None:
-            gap_ms = (now - self._last_stream_chunk_ts) * 1000.0
-            from hermes_cli.tui.perf import _stream_probe
-            _stream_probe.record_chunk(gap_ms, est_tokens)
-        self._last_stream_chunk_ts = now
-        self._response_token_window.append((now, est_tokens))
+        self._response_token_window.append((_time.monotonic(), est_tokens))
         # v2 heat injection: bump heat on each streaming token chunk
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.query_one(DrawbrailleOverlay)
             ov.signal("token")
-        except Exception:  # il-ex-1-exempt: overlay absent or not yet mounted — heat signal skipped
+        except Exception:
             pass
         self._refresh_live_response_metrics()
 
@@ -2204,29 +1798,11 @@ class HermesApp(App):
         self.pause_response_stream()
         self._response_metrics_active = False
         self._response_wall_start_time = None
-        from hermes_cli.tui.perf import _stream_probe
-        _stream_probe.summarize()
-        self._last_stream_chunk_ts = None
         self._response_token_window.clear()
-        # Capture active panel before hook fires (panel may change during hook)
-        _reflow_panel = None
-        try:
-            _reflow_output = self.query_one(OutputPanel)
-            _reflow_panel = _reflow_output.current_message
-        except Exception:  # il-ex-1-exempt: swallow
-            pass
-        try:
-            self.hooks.fire("on_streaming_end")
-        finally:
-            # Release reflow gate so any pending reflow fires now (REFLOW-M1)
-            if _reflow_panel is not None:
-                try:
-                    _reflow_panel._active_prose_block.set_streaming(False)
-                except Exception:  # il-ex-1-exempt: swallow
-                    pass
+        self.hooks.fire("on_streaming_end")
         try:
             output = self.query_one(OutputPanel)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         msg = output.current_message
         if msg is None:
@@ -2260,11 +1836,13 @@ class HermesApp(App):
             self.status_active_file_offscreen = False  # S1-B
             if self.agent_running:
                 self._svc_spinner.set_chevron_phase("--phase-stream")
-        # nameplate: glitch on thinking start (works from IDLE — nameplate stays at name)
+        # nameplate: glitch + label update on non-empty spinner_label
         if value:
             try:
-                self.query_one("#nameplate", AssistantNameplate).glitch_idle()
-            except NoMatches:  # il-ex-1-exempt: swallow
+                np = self.query_one("#nameplate", AssistantNameplate)
+                np.glitch()
+                np.set_active_label(f"▸ {value[:16]}")
+            except NoMatches:
                 pass
 
     @property
@@ -2279,20 +1857,10 @@ class HermesApp(App):
     def _hide_completion_overlay_if_present(self) -> None:
         """Hide the completion overlay when a choice overlay activates."""
         try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.query_one(HermesInput).dismiss_completion_overlay()
-        except NoMatches:  # il-ex-1-exempt: swallow
+            from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
+            self.query_one(_CO).remove_class("--visible")
+        except NoMatches:
             pass
-
-    def on_completion_overlay__auto_dismiss_bubble(self, ev: "object") -> None:
-        """Route auto-dismiss from CompletionOverlay up to HermesInput.
-
-        CompletionOverlay is mounted at screen level (not inside HermesInput), so
-        _AutoDismissBubble cannot bubble through HermesInput directly. The App is
-        the first common ancestor that can receive and re-dispatch the dismiss.
-        """
-        ev.stop()  # type: ignore[attr-defined]
-        self._hide_completion_overlay_if_present()
 
     def action_open_history_search(self) -> None:
         """Open (or close) the history search overlay."""
@@ -2300,7 +1868,7 @@ class HermesApp(App):
         try:
             if self.query_one(_CO).has_class("--visible"):
                 return
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         try:
             hs = self.query_one(HistorySearchOverlay)
@@ -2308,25 +1876,25 @@ class HermesApp(App):
                 hs.action_dismiss()
             else:
                 hs.open_search()
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def action_show_commands(self) -> None:
         """F3: Show the slash commands reference overlay."""
         try:
             self.query_one(CommandsOverlay).show_overlay()
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def action_show_help(self) -> None:
         """Toggle the keyboard-shortcut reference overlay."""
         try:
-            km = self.query_one(KeymapOverlay)
-            if km.has_class("--visible"):
-                km.action_dismiss()         # was: km.remove_class("--visible") — bypassed pop_modal
+            overlay = self.query_one(KeymapOverlay)
+            if overlay.has_class("--visible"):
+                overlay.remove_class("--visible")
             else:
-                km.show()                   # was: km.add_class("--visible")
-        except NoMatches:  # il-ex-1-exempt: swallow
+                overlay.add_class("--visible")
+        except NoMatches:
             pass
 
     def show_model_switch_result(self, new_model: str) -> None:
@@ -2344,7 +1912,7 @@ class HermesApp(App):
             if agent is not None:
                 ov.refresh_data(agent)
             ov.add_class("--visible")
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def action_jump_turn_prev(self) -> None:
@@ -2367,57 +1935,28 @@ class HermesApp(App):
         """o: move focus to OutputPanel."""
         try:
             self.query_one(OutputPanel).focus()
-        except Exception:  # il-ex-1-exempt: widget absent or not yet mounted — focus skipped
+        except Exception:
             pass
-
-    def action_scroll_to_latest(self) -> None:
-        """W-10: End key — re-pin output to live edge and scroll to bottom."""
-        try:
-            panel = self.query_one(OutputPanel)
-        except NoMatches:  # il-ex-1-exempt: swallow
-            return
-        panel.scroll_state = ScrollState.PINNED
-        panel.scroll_end_if_pinned()
-
-    def _on_output_scroll_state(self, old: ScrollState, new: ScrollState) -> None:
-        """W-10: flash a catchup hint when output leaves PINNED; clear when it returns."""
-        if new == ScrollState.PINNED:
-            self._scroll_hint_shown = False
-        elif not self._scroll_hint_shown:
-            self._flash_hint("End → latest", 2.0, key=_fb.HINT_KEY_SCROLL_CATCHUP)
-            self._scroll_hint_shown = True
 
     def action_focus_input_from_output(self) -> None:
         """i: move focus back to HermesInput from output area."""
-        if self.has_focus_capturing_modal():
-            return
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.query_one(HermesInput).focus()
         except Exception:
-            logger.debug("action_focus_input_from_output: focus skipped", exc_info=True)
-
-    def _recompute_auto_compact(self) -> None:
-        """SVC-7: single source of truth for auto-compact state. Respects manual override."""
-        if self._compact_manual is not None:
-            self.compact = self._compact_manual
-            return
-        try:
-            w, h = self.size.width, self.size.height
-            self.compact = w <= self._COMPACT_WIDTH or h <= self._COMPACT_HEIGHT
-        except Exception:  # il-ex-1-exempt: swallow
-            pass  # size not yet available — leave compact unchanged
+            pass
 
     def action_toggle_density(self) -> None:
         """Toggle compact / normal density mode."""
         if self._compact_manual is None or not self.compact:
             self._compact_manual = True
             self.compact = True
-            self._flash_hint("Compact ON  (/density to toggle)", 1.5, key=_fb.HINT_KEY_DENSITY_TOGGLE)
+            self._flash_hint("Compact ON  (/density to toggle)", 1.5)
         else:
             self._compact_manual = None  # restore auto
-            self._recompute_auto_compact()
-            self._flash_hint("Compact auto", 1.5, key=_fb.HINT_KEY_DENSITY_TOGGLE)
+            w, h = self.size.width, self.size.height
+            self.compact = w <= 120 or h <= 30
+            self._flash_hint("Compact auto", 1.5)
 
     def action_enable_auto_mini(self) -> None:
         """E2: /density auto-mini — enable opt-in mini-mode (height:1 stub for trivial SHELL calls)."""
@@ -2425,7 +1964,7 @@ class HermesApp(App):
             cfg = getattr(self.cli, "_cfg", None) or {}
             if isinstance(cfg, dict):
                 cfg.setdefault("display", {})["auto_mini_mode"] = True
-        except Exception:  # il-ex-1-exempt: config dict absent or panel query failed — auto-mini cleanup skipped
+        except Exception:
             pass
         self._flash_hint("Auto-mini ON  (/density full to disable)", 2.0)
 
@@ -2439,7 +1978,7 @@ class HermesApp(App):
             from hermes_cli.tui.tool_panel import ToolPanel
             for panel in self.query(ToolPanel):
                 panel.remove_class("--minified")
-        except Exception:  # il-ex-1-exempt: config dict absent or panel query failed — auto-mini cleanup skipped
+        except Exception:
             pass
 
     def _dismiss_floating_panels(self) -> None:
@@ -2452,42 +1991,35 @@ class HermesApp(App):
             hs = self.query_one(HistorySearchOverlay)
             if hs.has_class("--visible"):
                 hs.action_dismiss()
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
         try:
             ko = self.query_one(KeymapOverlay)
             if ko.has_class("--visible"):
-                ko.action_dismiss()             # was: ko.remove_class("--visible") — bypassed pop_modal
-        except NoMatches:  # il-ex-1-exempt: swallow
+                ko.remove_class("--visible")
+        except NoMatches:
             pass
 
     def handle_session_resume(self, session_id: str, session_title: str, turn_count: int) -> None:
         """Clear OutputPanel and show resumed-session banner. Event-loop only."""
         try:
             panel = self.query_one(OutputPanel)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         panel.remove_children()
         banner = _SessionResumedBanner(session_title or session_id[-8:], turn_count)
         panel.mount(banner)
         self.session_label = session_title or session_id[-8:]
-        self._active_session_id = session_id  # SS-9: full ID for copy
-        try:
-            from hermes_cli.tui.widgets.status_bar import StatusBar as _StatusBar
-            self.query_one(_StatusBar)._full_session_id = session_id
-        except Exception:  # il-ex-1-exempt: swallow
-            pass
         self._auto_title_done = False
         # D3: reset browse anchor state so old indices do not point to removed widgets
         self._browse_anchors = []
         self._browse_cursor = 0
         self._browse_total = 0
-        if not self.has_focus_capturing_modal():
-            try:
-                from hermes_cli.tui.input_widget import HermesInput as _HI
-                self.query_one(_HI).focus()
-            except (NoMatches, ImportError):  # il-ex-1-exempt: swallow
-                pass
+        try:
+            from hermes_cli.tui.input_widget import HermesInput
+            self.query_one(HermesInput).focus()
+        except (NoMatches, ImportError):
+            pass
         # RX4: let services reset per-session state on resume
         self.hooks.fire("on_session_resume", session_id=session_id, turn_count=turn_count)
 
@@ -2557,10 +2089,6 @@ class HermesApp(App):
         self._pane_manager.toggle_right_collapsed()
         self._pane_manager._apply_layout(self)
 
-    def action_toggle_plan_panel(self) -> None:
-        """Ctrl+P: toggle PlanPanel collapsed/expanded."""
-        self.plan_panel_collapsed = not self.plan_panel_collapsed
-
     def action_toggle_center_split(self) -> None:
         """Ctrl+\\: toggle center-pane split between output and stub."""
         if not (getattr(self, "_pane_manager", None) and self._pane_manager.enabled):
@@ -2575,13 +2103,7 @@ class HermesApp(App):
     @work(exclusive=True)
     async def _consume_output(self) -> None:
         """Async worker — delegates body to IOService.consume_output."""
-        try:
-            await self._svc_io.consume_output()
-        except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
-            raise
-        except Exception:
-            logger.exception("_consume_output adapter: IOService.consume_output raised")
-            raise  # surface to Textual worker manager — consumer is invoked once at startup; swallowing kills output for the session
+        await self._svc_io.consume_output()
 
     def write_output(self, text: str) -> None:
         """Thread-safe: enqueue text for the output consumer."""
@@ -2607,13 +2129,7 @@ class HermesApp(App):
         params: "dict[str, object] | None" = None,
     ) -> None:
         """Suspend Textual, run a TTE animation, then resume."""
-        try:
-            await self._svc_io.play_effects_async(effect_name, text, params)
-        except (SystemExit, KeyboardInterrupt, asyncio.CancelledError):
-            raise
-        except Exception:
-            logger.exception("_play_effects adapter: play_effects_async raised")
-            raise  # symmetry with _consume_output; per-call, recoverable on next playback
+        await self._svc_io.play_effects_async(effect_name, text, params)
 
     def play_effects_blocking(
         self,
@@ -2747,51 +2263,6 @@ class HermesApp(App):
     def current_turn_tool_calls(self) -> "list[dict]":
         return self._svc_tools.current_turn_tool_calls()
 
-    # SM-02 forwarders
-    def open_tool_generation(self, gen_index: int, tool_name: str) -> None:
-        return self._svc_tools.open_tool_generation(gen_index, tool_name)
-
-    def append_generation_args_delta(self, gen_index: int, tool_name: str,
-                                     delta: str, accumulated: str) -> None:
-        return self._svc_tools.append_generation_args_delta(gen_index, tool_name, delta, accumulated)
-
-    def start_tool_call(self, tool_call_id: str, tool_name: str, args: "Any") -> None:
-        return self._svc_tools.start_tool_call(tool_call_id, tool_name, args)
-
-    def append_tool_output(self, tool_call_id: str, line: str) -> None:
-        return self._svc_tools.append_tool_output(tool_call_id, line)
-
-    def complete_tool_call(self, tool_call_id: str, tool_name: str, args: "Any",
-                           raw_result: str, *, is_error: bool, summary: "Any | None",
-                           diff_lines: "Any | None" = None,
-                           header_stats: "Any | None" = None,
-                           result_lines: "Any | None" = None,
-                           duration: "str | None" = None) -> None:
-        return self._svc_tools.complete_tool_call(
-            tool_call_id, tool_name, args, raw_result,
-            is_error=is_error, summary=summary,
-            diff_lines=diff_lines, header_stats=header_stats,
-            result_lines=result_lines, duration=duration,
-        )
-
-    def cancel_tool_call(self, tool_call_id: "str | None" = None,
-                         gen_index: "int | None" = None) -> None:
-        return self._svc_tools.cancel_tool_call(tool_call_id=tool_call_id,
-                                                gen_index=gen_index)
-
-    @property
-    def _turn_tool_calls(self) -> dict:
-        """Compat property: delegates to _svc_tools._turn_tool_calls."""
-        return self._svc_tools._turn_tool_calls
-
-    @_turn_tool_calls.setter
-    def _turn_tool_calls(self, value: dict) -> None:
-        self._svc_tools._turn_tool_calls = value
-
-    def _initiate_undo(self) -> None:
-        """Compat forwarder: delegates to _svc_commands.initiate_undo()."""
-        return self._svc_commands.initiate_undo()
-
     # --- from _app_browse.py ---
 
     def watch_browse_mode(self, value: bool) -> None:
@@ -2882,12 +2353,12 @@ class HermesApp(App):
                 AnimConfigPanel as _ACP,
                 AnimGalleryOverlay as _AGO,
             )
-        except Exception:  # il-ex-1-exempt: optional dep or widget not mounted — treat as not visible
+        except Exception:
             return False
         for cls in (_ACP, _AGO):
             try:
                 w = self.query_one(cls)
-            except Exception:  # il-ex-1-exempt: optional dep or widget not mounted — treat as not visible
+            except Exception:
                 continue
             if w.has_class("--visible"):
                 return True
@@ -2919,21 +2390,17 @@ class HermesApp(App):
 
     def get_css_variables(self) -> "dict[str, str]":
         """Merge ThemeManager overrides into Textual's CSS variable resolution."""
-        with measure("css_variables", budget_ms=5.0, silent=True):
-            base = super().get_css_variables()
-            tm = getattr(self, "_theme_manager", None)
-            if tm is not None:
-                overrides = tm.css_variables
-            else:
-                from hermes_cli.tui.theme_manager import _defaults_as_strs
-                overrides = _defaults_as_strs()
-            return {**base, **overrides}
+        base = super().get_css_variables()
+        tm = getattr(self, "_theme_manager", None)
+        if tm is not None:
+            overrides = tm.css_variables
+        else:
+            from hermes_cli.tui.theme_manager import COMPONENT_VAR_DEFAULTS
+            overrides = COMPONENT_VAR_DEFAULTS
+        return {**base, **overrides}
 
     def apply_skin(self, skin_vars: "dict[str, str] | Path") -> None:
         return self._svc_theme.apply_skin(skin_vars)
-
-    def apply_named_skin(self, name: str) -> bool:
-        return self._svc_theme.apply_named_skin(name)
 
     def _apply_override_dict(self, overrides: dict) -> None:
         return self._svc_theme._apply_override_dict(overrides)
@@ -2947,63 +2414,8 @@ class HermesApp(App):
     def _populate_slash_commands(self) -> None:
         return self._svc_theme.populate_slash_commands()
 
-    def _populate_skills(self) -> None:
-        return self._svc_theme.populate_skills()
-
-    def _open_skill_picker(
-        self,
-        seed_filter: str = "",
-        trigger_source: str = "prefix",
-    ) -> bool:
-        """Mount SkillPickerOverlay or update its filter if already mounted.
-
-        Idempotent: calling twice with different seeds updates the live overlay
-        rather than mounting a duplicate.  Detection uses query_one(SkillPickerOverlay)
-        wrapped in NoMatches; no stale-ref caching.
-
-        Guard: if another modal is already active, decline silently so we never
-        stack a skill picker on top of an interrupt overlay or similar.
-
-        Returns:
-            True if the picker was opened or updated successfully.
-            False if blocked by an active modal.
-        """
-        from textual.css.query import NoMatches as _NM
-        from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
-        try:
-            existing = self.query_one(SkillPickerOverlay)
-            existing.set_filter(seed_filter)
-            return True
-        except _NM:  # il-ex-1-exempt: swallow
-            # MOD-4: only open if no conflicting modal is active (or the stack is
-            # empty / the top is itself a SkillPickerOverlay).
-            top = self.top_modal()
-            if top is not None and not isinstance(top, SkillPickerOverlay):
-                logger.debug(
-                    "_open_skill_picker: blocked by active modal %r", type(top).__name__
-                )
-                return False
-            # MOD-L4: race window — if top_modal() returns SkillPickerOverlay between
-            # remove() and on_unmount, a second picker mounts for ~1 frame. Harmless:
-            # on_unmount pops the first; the second is the intended replacement.
-            self.mount(
-                SkillPickerOverlay(
-                    seed_filter=seed_filter,
-                    trigger_source=trigger_source,
-                )
-            )
-            return True
-
-    def _flash_hint(
-        self,
-        text: str,
-        duration: float = 1.5,
-        *,
-        key: "str | None" = None,
-        priority: int = 10,  # feedback.NORMAL = 10
-    ) -> "Any":
-        """Flash a hint in the HintBar. Returns a FlashHandle (displayed=True/False)."""
-        return self.feedback.flash("hint-bar", text, duration=duration, priority=priority, key=key)
+    def _flash_hint(self, text: str, duration: float = 1.5) -> None:
+        self.feedback.flash("hint-bar", text, duration=duration)
 
     def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
         return self._svc_theme.set_status_error(msg, auto_clear_s)
@@ -3028,7 +2440,6 @@ class HermesApp(App):
         self._svc_watchers.on_size(size)
 
     def watch_compact(self, value: bool) -> None:
-        self.status_density_tier = _DensityTier.COMPACT.value if value else _DensityTier.DEFAULT.value
         self._svc_watchers.on_compact(value)
 
     def watch_status_compaction_progress(self, value: float) -> None:
@@ -3043,28 +2454,15 @@ class HermesApp(App):
     def watch_attached_images(self, value: list) -> None:
         self._svc_watchers.on_attached_images(value)
 
-    def on_attachment_chip_removed(self, event: AttachmentChip.Removed) -> None:
-        images = [p for p in list(self.attached_images) if p != event.path]
-        self.attached_images = images
-        self.feedback.flash(
-            "hint-bar",
-            f"detached {event.path.name}",
-            duration=1.2,
-            priority=3,
-            key=_fb.HINT_KEY_ATTACHMENT_DETACH,
-        )
-
     def handle_file_drop(self, paths: "list[Path]") -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
         self._svc_watchers.handle_file_drop(paths)
 
     def watch_clarify_state(self, value: Any) -> None:
         self._svc_watchers.on_clarify_state(value)
-        self._update_ui_phase()
 
     def watch_approval_state(self, value: Any) -> None:
         self._svc_watchers.on_approval_state(value)
-        self._update_ui_phase()
 
     def watch_highlighted_candidate(self, c: Any) -> None:
         self._svc_watchers.on_highlighted_candidate(c)
@@ -3078,42 +2476,13 @@ class HermesApp(App):
     def watch_status_error(self, value: str) -> None:
         self._svc_watchers.on_status_error(value)
 
-    def _update_ui_phase(self) -> None:
-        """TCS-MED-02: Compute and update ui_phase from blocker visibility and status_phase."""
-        from hermes_cli.tui.agent_phase import Phase as _Phase
-        _blocker_attrs = ("approval_state", "clarify_state", "undo_state")
-        _has_blocker = any(getattr(self, a, None) is not None for a in _blocker_attrs)
-        if not _has_blocker:
-            try:
-                from hermes_cli.tui.overlays.interrupt import InterruptOverlay as _IO
-                _io = self.query_one(_IO)
-                _has_blocker = _io.has_class("--visible")
-            except Exception:  # il-ex-1-exempt: InterruptOverlay not mounted — treat as not visible
-                pass
-        if _has_blocker:
-            self.ui_phase = "blocker"
-            self.add_class("--blocker-active")
-        else:
-            self.remove_class("--blocker-active")
-            _sp = self.status_phase
-            if _sp == _Phase.TOOL_EXEC:
-                self.ui_phase = "tool_exec"
-            elif _sp == _Phase.REASONING:
-                self.ui_phase = "reasoning"
-            elif _sp == _Phase.STREAMING:
-                self.ui_phase = "streaming"
-            else:
-                self.ui_phase = "idle"
-
     def watch_status_phase(self, old: str, new: str) -> None:
         if old:
             self.remove_class(f"--phase-{old}")
         self.add_class(f"--phase-{new}")
-        self._update_ui_phase()
 
     def watch_undo_state(self, value: Any) -> None:
         self._svc_watchers.on_undo_state(value)
-        self._update_ui_phase()
 
     # --- from _app_key_handler.py ---
 
@@ -3124,32 +2493,4 @@ class HermesApp(App):
         self._svc_keys.dispatch_input_submitted(event)
 
     def on_hermes_input_files_dropped(self, event: Any) -> None:
-        remainder = getattr(event, "remainder_text", "")
-        try:
-            self._svc_watchers.handle_file_drop_inner(event.paths, remainder)
-        except Exception:
-            logger.exception("on_hermes_input_files_dropped: inner handler raised")
-            self._flash_hint("file drop failed — see log for details", 2.0)
-
-    async def on_paste(self, event: events.Paste) -> None:
-        """Route drag-and-drop pastes to the input regardless of which widget has focus.
-
-        HermesInput handles pastes when it is focused; this catches the case
-        where focus is on the OutputPanel or any other widget.
-        """
-        from hermes_cli.tui.input_widget import HermesInput
-        if isinstance(self.focused, HermesInput):
-            return  # HermesInput._on_paste already ran
-        try:
-            dropped_paths = parse_dragged_file_paste(event.text)
-        except Exception:
-            logger.debug("app on_paste: drag parse failed", exc_info=True)
-            dropped_paths = None
-        if dropped_paths:
-            self._svc_watchers.handle_file_drop(dropped_paths)
-            event.stop()
-            return
-        try:
-            self.feedback.flash_paste(len(event.text))
-        except Exception:  # feedback service unavailable — paste hint not shown
-            logger.debug("app on_paste: flash_paste failed", exc_info=True)
+        self._svc_watchers.handle_file_drop(event.paths)

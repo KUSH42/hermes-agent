@@ -26,14 +26,11 @@ are only appropriate for prompts the agent is blocked on.
 
 from __future__ import annotations
 
-import logging
 import queue
 import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable
-
-_log = logging.getLogger(__name__)
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -46,7 +43,6 @@ from textual.widgets import Button, Input, Static
 
 from hermes_cli.tui.animation import lerp_color
 from hermes_cli.tui.widgets.renderers import CopyableRichLog
-from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
 
 if TYPE_CHECKING:
     from hermes_cli.tui.state import (
@@ -150,10 +146,8 @@ _URGENCY_CLASSES = {
 _MAX_QUEUE_DEPTH = 8
 
 
-class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
+class InterruptOverlay(Widget, can_focus=True):
     """Single pre-mounted overlay fan-in for all 7 interrupt kinds."""
-
-    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed per present/dismiss cycle
 
     DEFAULT_CSS = """
     InterruptOverlay {
@@ -237,17 +231,6 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         yield Vertical(id="interrupt-body")
         yield Static("", id="interrupt-countdown")
 
-    def on_mount(self) -> None:
-        # Intentionally does NOT call super().on_mount().
-        # InterruptOverlay is a permanent pre-mounted widget that starts hidden.
-        # Modal registration happens lazily in _activate(), not at DOM mount.
-        pass
-
-    def on_unmount(self) -> None:
-        # Intentionally does NOT call super().on_unmount().
-        # Permanent widget: never removed from DOM; lifecycle is managed by _teardown_current.
-        pass
-
     # ── Public API ──────────────────────────────────────────────────────────
 
     def present(
@@ -277,8 +260,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             self._flash_replace_border()
             try:
                 self.call_after_refresh(self._activate, payload)
-            except Exception:  # il-ex-1-exempt: swallow
-                self._activate(payload)  # call_after_refresh unavailable pre-mount; activate immediately
+            except Exception:
+                self._activate(payload)
             return
         if replace or preempt:
             prior = self._current_payload
@@ -289,13 +272,19 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             self._queue.insert(0, prior)
             try:
                 self.call_after_refresh(self._activate, payload)
-            except Exception:  # il-ex-1-exempt: swallow
-                self._activate(payload)  # call_after_refresh unavailable pre-mount; activate immediately
+            except Exception:
+                self._activate(payload)
             return
         # C-3: cap queue depth to _MAX_QUEUE_DEPTH, drop oldest if over limit
         if len(self._queue) >= _MAX_QUEUE_DEPTH:
             dropped = self._queue.pop(0)
-            _log.warning("InterruptOverlay queue cap hit; dropped %s", dropped.kind)
+            try:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "InterruptOverlay queue cap hit; dropped %s", dropped.kind
+                )
+            except Exception:
+                pass
         self._queue.append(payload)
 
     def dismiss_current(self, value: str | None = "") -> None:
@@ -307,12 +296,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             # otherwise remounting same-id children raises DuplicateIds.
             try:
                 self.call_after_refresh(self._activate, nxt)
-            except Exception:  # il-ex-1-exempt: swallow
+            except Exception:
                 self._activate(nxt)
-
-    def dismiss(self) -> None:
-        """Public close helper for widget overlays."""
-        self.action_dismiss()
 
     def action_dismiss(self) -> None:  # BINDINGS
         self.dismiss_current("__cancel__")
@@ -333,7 +318,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             nxt = self._queue.pop(0)
             try:
                 self.call_after_refresh(self._activate, nxt)
-            except Exception:  # il-ex-1-exempt: swallow
+            except Exception:
                 self._activate(nxt)
 
     # ── Activation / teardown ───────────────────────────────────────────────
@@ -356,9 +341,6 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         self._ns_base = "current"
 
         # Visibility + border urgency.
-        self._capture_focus_caller()  # record focus before we steal it
-        self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter, not raw add_class
-        self.add_class("--modal")  # il-m1: owned by InterruptOverlay._activate (permanent widget override)
         self.add_class("--visible")
         self.display = True
         for urg_cls in _URGENCY_CLASSES.values():
@@ -375,8 +357,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                     self.border_subtitle = f"+{depth} queued"
                 else:
                     self.border_subtitle = payload.subtitle or ""
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # border_title/subtitle assignment unavailable before full mount; cosmetic only
+            except Exception:
+                pass
 
         self.current_kind = payload.kind
         self._render_current()
@@ -387,11 +369,11 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         # above `overlay`, so it visually paints on top too.
         try:
             self.call_after_refresh(self.focus)
-        except Exception:  # il-ex-1-exempt: swallow
+        except Exception:
             try:
                 self.focus()
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # focus() unavailable before widget is fully attached; not fatal
+            except Exception:
+                pass
 
         # Start countdown timer if applicable (CLARIFY only — APPROVAL/SUDO/SECRET never auto-dismiss).
         self._stop_countdown_timer()
@@ -406,13 +388,12 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                 )
             except Exception:
                 self._countdown_timer = None
-                _log.debug("Failed to start countdown timer; bar will be static", exc_info=True)
             self._refresh_countdown_display()
         else:
             try:
                 self.query_one("#interrupt-countdown", Static).update("")
-            except NoMatches:  # il-ex-1-exempt: swallow
-                pass  # countdown Static not yet in DOM; no-op is correct
+            except NoMatches:
+                pass
 
     def _teardown_current(
         self, *, resolve: bool, value: str | None
@@ -425,50 +406,29 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             try:
                 payload.on_resolve(value if value is not None else "")
             except Exception:
-                _log.warning("on_resolve callback raised during teardown", exc_info=True)
+                pass
         # Clear body children.
         try:
             body = self.query_one("#interrupt-body", Vertical)
             for child in list(body.children):
                 try:
                     child.remove()
-                except Exception:  # il-ex-1-exempt: swallow
-                    pass  # child may already be removed; safe to skip
-        except NoMatches:  # il-ex-1-exempt: swallow
+                except Exception:
+                    pass
+        except NoMatches:
             pass
         try:
             self.query_one("#interrupt-countdown", Static).update("")
-        except NoMatches:  # il-ex-1-exempt: swallow
-            pass  # countdown widget may not exist during teardown
+        except NoMatches:
+            pass
         self._current_payload = None
         self._clear_destructive_confirm()   # sees _current_payload=None → skips refresh
         self._enter_blocked_until = 0.0     # prevent block bleeding to next payload
         self.current_kind = None
         self.remove_class("--visible", "--diff-hint-visible")
-        # MOD-5: --modal and focus-restore are owned by dismiss_overlay (permanent-widget override)
-        self.dismiss_overlay()
         for urg_cls in _URGENCY_CLASSES.values():
             self.remove_class(urg_cls)
         self.display = False
-
-    def dismiss_overlay(self) -> None:
-        """MOD-5: permanent-widget override.  Does NOT remove() self.
-
-        Restores focus, removes --modal CSS, pops from arbiter stack.
-        --visible and display=False are handled by _teardown_current separately.
-        """
-        target = self._restore_focus_to()
-        self.remove_class("--modal")  # il-m1: owned by InterruptOverlay.dismiss_overlay (permanent override)
-        try:
-            self.app.pop_modal(self)
-        except AttributeError:  # il-ex-1-exempt: swallow
-            _log.debug("InterruptOverlay.dismiss_overlay: app has no pop_modal")
-        if target is not None:
-            try:
-                if target.is_mounted:
-                    target.focus()
-            except Exception:
-                _log.debug("InterruptOverlay.dismiss_overlay: focus() failed", exc_info=True)
 
     # ── Countdown ──────────────────────────────────────────────────────────
 
@@ -477,7 +437,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         if t is not None:
             try:
                 t.stop()
-            except Exception:  # il-ex-1-exempt: swallow
+            except Exception:
                 pass
         self._countdown_timer = None
 
@@ -486,7 +446,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         if t is not None:
             try:
                 t.stop()
-            except Exception:  # il-ex-1-exempt: swallow
+            except Exception:
                 pass
         self._dismiss_timer = None
 
@@ -513,7 +473,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             return
         try:
             w = self.query_one("#interrupt-countdown", Static)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         total = max(1, int(payload.countdown_s or 1))
         remaining = payload.remaining
@@ -567,14 +527,14 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             return
         try:
             body = self.query_one("#interrupt-body", Vertical)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         # Clear body.
         for child in list(body.children):
             try:
                 child.remove()
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # child already removed (async race); skip safely
+            except Exception:
+                pass
         kind = payload.kind
         renderer = {
             InterruptKind.CLARIFY: self._render_clarify,
@@ -605,7 +565,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         try:
             st = self.query_one(f"#{sel_id}", Static)
             st.update(self._render_choice_row(payload))
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     # ── CLARIFY ─────────────────────────────────────────────────────────────
@@ -633,7 +593,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             return
         try:
             diff_log = self.query_one("#approval-diff", CopyableRichLog)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return
         if not payload.diff_text:
             diff_log.display = False
@@ -658,7 +618,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             renderable = DiffRenderer(tp, cls_r).build()
             if renderable is not None:
                 diff_log.write(renderable)
-        except Exception:  # il-ex-1-exempt: swallow
+        except Exception:
             # Fallback to plain text.
             for line in (payload.diff_text or "").splitlines():
                 diff_log.write(line)
@@ -689,12 +649,6 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         )
         body.mount(inp)
         self.call_after_refresh(inp.focus)
-        import os as _os
-        _sep = "·" if not _os.environ.get("HERMES_NO_UNICODE") else "-"
-        body.mount(Static(
-            f"[dim]Alt+P reveal temporarily {_sep} Enter submit {_sep} Esc cancel[/dim]",
-            id=f"{prefix}-hint",
-        ))
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         payload = self._current_payload
@@ -713,7 +667,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                     self.query_one("#interrupt-countdown", Static).update(
                         f"[red]{err}[/red]"
                     )
-                except NoMatches:  # il-ex-1-exempt: swallow
+                except NoMatches:
                     pass
                 return
         self.dismiss_current(value)
@@ -734,7 +688,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                         self.add_class("--unmasked")
                     else:
                         self.remove_class("--unmasked")
-                except NoMatches:  # il-ex-1-exempt: swallow
+                except NoMatches:
                     pass
                 event.prevent_default()
                 return
@@ -758,7 +712,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
             prefix = "sudo" if payload.kind == InterruptKind.SUDO else "secret"
             try:
                 self.query_one(f"#{prefix}-input", Input).password = True
-            except NoMatches:  # il-ex-1-exempt: swallow
+            except NoMatches:
                 pass
             self.remove_class("--unmasked")
             self._unmasked = False
@@ -795,12 +749,9 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         body.mount(Static("[bold]New Session[/bold]", id="ns-title"))
         body.mount(Static("Branch name:", id="ns-branch-label"))
         spec = payload.input_spec or InputSpec(placeholder="feat/my-feature")
-        inp = Input(placeholder=spec.placeholder or "feat/my-feature", id="ns-branch-input")
-        body.mount(inp)
-        # Deferred one extra tick so this fires after _activate's call_after_refresh(self.focus).
-        # _activate queues self.focus in the same sync turn; by nesting here, inp.focus
-        # lands on the following refresh and wins.
-        self.call_after_refresh(lambda: self.call_after_refresh(inp.focus))
+        body.mount(
+            Input(placeholder=spec.placeholder or "feat/my-feature", id="ns-branch-input")
+        )
         body.mount(Static("Base:", id="ns-base-label"))
         base_row = Horizontal(id="ns-base-row")
         body.mount(base_row)
@@ -882,7 +833,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         """Session-flow error display (used by async _create_new_session)."""
         try:
             self.query_one("#ns-error", Static).update(msg)
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             pass
 
     def _flash_replace_border(self) -> None:
@@ -892,8 +843,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         self.add_class("--flash-replace")
         try:
             self.set_timer(0.3, lambda: self.remove_class("--flash-replace"))
-        except Exception:  # il-ex-1-exempt: swallow
-            self.remove_class("--flash-replace")  # set_timer unavailable pre-mount; remove class immediately
+        except Exception:
+            self.remove_class("--flash-replace")
 
     def _refresh_base_row(self) -> None:
         """Update NEW_SESSION base buttons to reflect self._ns_base."""
@@ -907,8 +858,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                     btn.add_class("--selected-base")
                 else:
                     btn.remove_class("--selected-base")
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # button widget may be absent if pane not currently rendered
+            except Exception:
+                pass
 
     def _refresh_strategy_row(self) -> None:
         """Update MERGE_CONFIRM strategy buttons to reflect self._merge_strategy."""
@@ -927,15 +878,15 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                     btn.add_class("--selected-strategy")
                 else:
                     btn.remove_class("--selected-strategy")
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # button widget may be absent if pane not currently rendered
+            except Exception:
+                pass
 
     def _clear_destructive_confirm(self) -> None:
         self._confirm_destructive_id = None
         if self._confirm_destructive_timer is not None:
             try:
                 self._confirm_destructive_timer.stop()
-            except Exception:  # il-ex-1-exempt: swallow
+            except Exception:
                 pass
         self._confirm_destructive_timer = None
         # Restore countdown strip (will re-render on next tick)
@@ -950,20 +901,20 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                 try:
                     queued.on_resolve("")  # "" = timeout_value (safest: deny for approval)
                 except Exception:
-                    _log.warning("on_resolve raised during drain_queue for %s", queued.kind, exc_info=True)
+                    pass
         self.dismiss_current("__cancel__")  # resolve the active one too
 
     def _do_new_session_create(self) -> None:
         try:
             branch = self.query_one("#ns-branch-input", Input).value.strip()
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             branch = ""
         if not branch:
             self._set_error("Branch name required.")
             return
         try:
             self.app._svc_sessions.create_new_session(branch, self._ns_base, self)  # type: ignore[attr-defined]
-        except Exception as exc:  # il-ex-1-exempt: swallow
+        except Exception as exc:
             self._set_error(str(exc))
 
     def _run_merge(
@@ -977,7 +928,7 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                 overlay=self,
             )
         except Exception:
-            _log.warning("run_merge raised unexpectedly", exc_info=True)
+            pass
 
     # ── Choice navigation (used by _app_key_handler) ────────────────────────
 
@@ -996,8 +947,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
         if linked is not None:
             try:
                 linked.selected = new_sel
-            except Exception:  # il-ex-1-exempt: swallow
-                pass  # linked legacy state may not accept attribute; backward-compat best-effort
+            except Exception:
+                pass
         sel_id = {
             InterruptKind.CLARIFY: "clarify-choices",
             InterruptKind.APPROVAL: "approval-choices",
@@ -1023,8 +974,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                 if self._confirm_destructive_timer is not None:
                     try:
                         self._confirm_destructive_timer.stop()
-                    except Exception:  # il-ex-1-exempt: swallow
-                        pass  # timer.stop() may raise if already fired; safe to ignore
+                    except Exception:
+                        pass
                 self._confirm_destructive_timer = self.set_timer(
                     1.5, self._clear_destructive_confirm
                 )
@@ -1033,8 +984,8 @@ class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
                     self.query_one("#interrupt-countdown", Static).update(
                         f"[bold yellow]⚠ Press Enter again to confirm '{chosen.id}'[/bold yellow]"
                     )
-                except Exception:  # il-ex-1-exempt: swallow
-                    pass  # countdown Static query; not yet mounted or already torn down
+                except Exception:
+                    pass
                 return
         self._clear_destructive_confirm()
         self.dismiss_current(chosen.id)

@@ -1,250 +1,20 @@
 """Tool block mounting, streaming, reasoning, plan-call tracking service extracted from _app_tool_rendering.py."""
 from __future__ import annotations
 
-import concurrent.futures
-from contextlib import nullcontext
 import logging
-import threading
 import time as _time
 from dataclasses import dataclass, field as _field
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
 
 from hermes_cli.tool_icons import get_display_name
-from hermes_cli.tui.tool_panel.density import DensityTier
 from .base import AppService
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
-    from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind
 
 logger = logging.getLogger(__name__)
-
-# SC-4: singleton executor for classifier timeout — shared across calls to
-# avoid per-call thread-pool overhead; max_workers=4 absorbs burst during plan fan-out.
-_CLASSIFIER_TIMEOUT_S: float = 0.050
-_POOL_STARVATION_METRIC_KEY: str = "classify_pool_starvation"
-_CLASSIFIER_EXECUTOR: concurrent.futures.ThreadPoolExecutor = (
-    concurrent.futures.ThreadPoolExecutor(
-        max_workers=4,
-        thread_name_prefix="hermes-classifier",
-    )
-)
-_pool_starvation_count: int = 0
-
-
-def _classify_with_timeout(payload: "Any") -> "Any":
-    """Submit classify_content to bounded executor; fall back to TEXT on timeout."""
-    global _pool_starvation_count
-    from hermes_cli.tui.content_classifier import classify_content
-    fut = _CLASSIFIER_EXECUTOR.submit(classify_content, payload)
-    try:
-        return fut.result(timeout=_CLASSIFIER_TIMEOUT_S)
-    except concurrent.futures.TimeoutError:
-        # Concept §perception-budgets: classifier ≤50ms; on overrun treat as TEXT.
-        # Worker thread keeps running until classify returns; output discarded.
-        # Acceptable: classifier holds no locks, payload data is read-only.
-        fut.cancel()  # best-effort; running threads cannot be cancelled
-        _pool_starvation_count += 1
-        logger.warning(
-            "classifier exceeded 50ms budget; falling back to TEXT (starvation_count=%d)",
-            _pool_starvation_count, exc_info=True,
-        )
-        from hermes_cli.tui.content_classifier import ClassificationResult
-        from hermes_cli.tui.tool_payload import ResultKind
-        return ClassificationResult(kind=ResultKind.TEXT, confidence=0.0)
-
-
-# ---------------------------------------------------------------------------
-# SM-01: Tool-call unified state machine model
-# ---------------------------------------------------------------------------
-
-class ToolCallState(str, Enum):
-    """Lifecycle states for a single tool call."""
-    PENDING    = "pending"     # allocated but not yet materialised by the service
-    GENERATED  = "generated"   # model is still generating tool args
-    STARTED    = "started"     # tool handler has started
-    STREAMING  = "streaming"   # output body is receiving lines
-    COMPLETING = "completing"  # result parsing / diff merge in progress
-    DONE       = "done"
-    ERROR      = "error"
-    CANCELLED  = "cancelled"
-    REMOVED    = "removed"
-
-
-_TERMINAL_STATES = (
-    ToolCallState.DONE,
-    ToolCallState.ERROR,
-    ToolCallState.CANCELLED,
-    ToolCallState.REMOVED,
-)
-
-# TBM-2: cap streaming sniff-buffer growth. Tools emitting megabytes of leading
-# whitespace would otherwise grow the buffer unbounded; lstrip() on a multi-MB
-# string is O(n) per chunk.
-_SNIFF_BUFFER_CAP: int = 512
-
-# TBM-4: thread-local recursion guard for _set_view_state. RLock allows
-# re-entry on the same thread; this rejects watcher-driven recursion that
-# would double-fire hint clears and broker plan-state writes.
-_set_view_state_local = threading.local()
-
-
-@dataclass
-class ToolCallViewState:
-    """Per-tool-call view state owned by ToolRenderingService."""
-    tool_call_id: "str | None"
-    gen_index: "int | None"
-    tool_name: str
-    label: str
-    args: "dict[str, Any]"
-    state: ToolCallState
-    block: "Any | None"
-    panel: "Any | None"
-    parent_tool_call_id: "str | None"
-    category: str
-    depth: int
-    start_s: float
-    started_at: float = _field(default_factory=_time.monotonic)
-    gen_created_at: "float | None" = None   # set once at GENERATED creation; never reset
-    dur_ms: "int | None" = None
-    is_error: bool = False
-    error_kind: "str | None" = None
-    children: "list[str]" = _field(default_factory=list)
-    # AXIS-2: KIND axis — stamped once at COMPLETING by the classifier.
-    kind: "ClassificationResult | None" = None
-    # KO-1: user override on resolved KIND. Set via `t` keybind, consumed by
-    # pick_renderer ahead of `kind`. None = use classifier result.
-    user_kind_override: "ResultKind | None" = None
-    # AXIS-2: DENSITY axis — Move 1 replaces this mirror with the resolver.
-    density: DensityTier = _field(default=DensityTier.DEFAULT)
-    # AXIS-3: per-instance watcher list.
-    _watchers: "list[_AxisWatcher]" = _field(default_factory=list, repr=False, compare=False)
-    # LL-2: set by service at COMPLETING entry; cleared at DONE/ERROR/CANCELLED.
-    completing_started_at: "float | None" = None
-    # LL-1/LL-3: density reason mirror written by panel after every resolve() call.
-    density_reason: "Literal['auto', 'user', 'error_override', 'initial'] | None" = None
-    # P-5: set by _terminalize_tool_view alongside is_error; None until terminal.
-    exit_code: "int | None" = None
-    # SLR-3: glyph-only signal during STREAMING; cleared on COMPLETING/ERROR/CANCELLED/DONE.
-    streaming_kind_hint: "ResultKind | None" = None
-    # SLR-3: sniff buffer — accumulates raw chunks until threshold; None after sniff fires.
-    _sniff_buffer: "str | None" = ""
-    # ER-1: closed-enum category + last-N stderr lines — set before ERROR state write.
-    error_category: "Any | None" = None       # ErrorCategory | None (lazy import avoids cycle)
-    stderr_tail: "tuple[str, ...]" = ()
-    # ER-3: fallback raw payload for error body when stderr_tail is empty.
-    payload: str = ""
-    # TBC-2: per-block set of renderer classes that failed build_widget(); skipped on retry.
-    failed_renderer_classes: "set[type]" = _field(default_factory=set)
-
-    @property
-    def is_error_for_ui(self) -> bool:
-        """Single source of truth for 'should this block be styled as errored?'
-
-        True when:
-          - state == ERROR, OR
-          - exit_code is set and non-zero (DONE with non-zero exit)
-        False when:
-          - state == CANCELLED
-          - state in {GENERATED, STARTED, STREAMING, COMPLETING, DONE} with no non-zero exit
-        """
-        if self.state == ToolCallState.ERROR:
-            return True
-        if self.state == ToolCallState.CANCELLED:
-            return False
-        return self.exit_code not in (None, 0)
-
-
-# ---------------------------------------------------------------------------
-# AXIS-3: Observer hook
-# ---------------------------------------------------------------------------
-
-AxisName = Literal["state", "kind", "density", "streaming_kind_hint"]
-_AxisWatcher = Callable[["ToolCallViewState", AxisName, Any, Any], None]
-
-
-def add_axis_watcher(view: "ToolCallViewState", watcher: "_AxisWatcher") -> None:
-    """Register a watcher. Called as watcher(view, axis, old, new) after each set_axis."""
-    view._watchers.append(watcher)
-
-
-def remove_axis_watcher(view: "ToolCallViewState", watcher: "_AxisWatcher") -> None:
-    """Best-effort remove; silent if absent."""
-    try:
-        view._watchers.remove(watcher)
-    except ValueError:  # il-ex-1-exempt: swallow
-        pass  # already gone — safe
-
-
-def set_axis(view: "ToolCallViewState", axis: "AxisName", value: Any) -> None:
-    """Single mutation entry point that fires watchers.
-
-    Direct field assignment still works (existing call sites unchanged); only
-    callers that want change notifications must route through set_axis.
-    """
-    old = getattr(view, axis)
-    if old == value:
-        return
-    setattr(view, axis, value)
-    for w in list(view._watchers):
-        try:
-            w(view, axis, old, value)
-        except Exception:
-            logger.exception("axis watcher failed (axis=%s); continuing", axis)
-
-
-def set_user_kind_override(
-    view: "ToolCallViewState",
-    value: "Any",
-    *,
-    source_widget: "Any | None" = None,
-) -> None:
-    """Single write site for user_kind_override. Refreshes the live header
-    directly via parent-walk from the calling widget — no pub/sub list, no
-    new view-state field, no new axis.
-
-    value must be ResultKind | None (matching view.user_kind_override type).
-    """
-    if view.user_kind_override == value:
-        return
-    view.user_kind_override = value
-    if source_widget is None:
-        return
-    # Find the live header via parent-walk from the source widget. Mirrors
-    # the existing parent-walk pattern at _streaming.py:246.
-    try:
-        panel = getattr(source_widget, "parent", None)
-        panel = getattr(panel, "parent", None) if panel is not None else None
-        header = getattr(panel, "_block", None)
-        header = getattr(header, "_header", None) if header is not None else None
-        if header is not None:
-            header.refresh()
-    except Exception:
-        logger.exception("set_user_kind_override: header refresh failed")
-
-
-def _parse_duration_ms(s: "str | None") -> int:
-    """Parse duration string like '1.2s', '450ms', '900us' into integer milliseconds.
-
-    Returns 0 on parse failure / empty / None; never raises.
-    """
-    if not s:
-        return 0
-    try:
-        s = s.strip()
-        if s.endswith("µs") or s.endswith("us"):
-            return max(0, int(float(s[:-2]) / 1000))
-        if s.endswith("ms"):
-            return max(0, int(float(s[:-2])))
-        if s.endswith("s"):
-            return max(0, int(float(s[:-1]) * 1000))
-        return max(0, int(float(s)))
-    except (ValueError, TypeError):  # il-ex-1-exempt: swallow
-        logger.debug("could not parse duration %r", s)
-        return 0
 
 
 @dataclass
@@ -266,12 +36,6 @@ class _ToolCallRecord:
 class ToolRenderingService(AppService):
     """Tool block mounting, streaming, reasoning, plan-call tracking."""
 
-    # Tools whose gen-start block creation is intentionally deferred to tool-start
-    # (we know the skill name only after the call starts).
-    _SKILL_TOOL_NAMES: frozenset = frozenset({"skill_view", "skill_manage"})
-
-    _HISTORY_CAP_PER_ID: int = 10  # cap per tool-call id; prevents unbounded growth on rapid retry loops
-
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
         self._streaming_map: dict = {}
@@ -279,118 +43,6 @@ class ToolRenderingService(AppService):
         self._agent_stack: list = []
         self._subagent_panels: dict = {}
         self._open_tool_count: int = 0  # A1: tracks concurrent open tool blocks
-        # SM-01: unified state-machine indexes
-        self._tool_views_by_id: "dict[str, ToolCallViewState]" = {}
-        self._tool_views_by_gen_index: "dict[int, ToolCallViewState]" = {}
-        # TB-H2: append-only history per concept §View-state lookup contract.
-        # Bounded at HISTORY_CAP_PER_ID to prevent runaway growth on tight retry loops.
-        self._tool_views_history_by_id: "dict[str, list[ToolCallViewState]]" = {}
-        # SM-HIGH-02: buffered arg deltas keyed by gen_index
-        self._pending_gen_arg_deltas: "dict[int, list[tuple[str, str]]]" = {}
-        # PG-1/PG-2: plan sync broker + atomicity lock
-        from hermes_cli.tui.services.plan_sync import PlanSyncBroker
-        self._plan_broker: "PlanSyncBroker | None" = PlanSyncBroker(self)
-        # H8: Held during any mutation of _tool_views_by_id, _tool_views_by_gen_index,
-        # _turn_tool_calls, or any view-state field. Worker threads MUST acquire
-        # this lock before reading these maps. Event-loop code does NOT need to hold
-        # the lock for reads (the event loop is sequential; no concurrent mutation is
-        # possible from the same thread). RLock allows re-entrant acquisition from
-        # within _set_view_state callbacks on the event-loop side.
-        self._state_lock = threading.RLock()
-
-    # ------------------------------------------------------------------
-    # TB-H2: public read helpers for the two-index view-state contract
-    # ------------------------------------------------------------------
-
-    def live_by_id(self, tool_call_id: str) -> "ToolCallViewState | None":
-        """Return the current non-terminal view-state for `tool_call_id`, or None
-        if the call is terminal or unknown. See concept §View-state lookup contract."""
-        return self._tool_views_by_id.get(tool_call_id)
-
-    def history_by_id(self, tool_call_id: str) -> "list[ToolCallViewState]":
-        """Return prior terminal view-states for `tool_call_id` (chronological order,
-        most recent last). Capped at _HISTORY_CAP_PER_ID entries; oldest are evicted
-        when the cap is exceeded. Returns [] if no history exists.
-        See docs/concept.md §"View-state lookup contract" routing rule 2."""
-        return list(self._tool_views_history_by_id.get(tool_call_id, ()))
-
-    # ------------------------------------------------------------------
-    # R3-H1: FeedbackService channel rename helper (adoption path)
-    # ------------------------------------------------------------------
-
-    def _move_panel_channel(self, panel: "Any", old_id: "str | None", new_id: str) -> None:
-        """Move the FeedbackService header channel from old_id to new_id.
-
-        Called after a panel DOM id rename during adoption. deregister_channel is
-        safe on missing keys (pop(name, None) at feedback.py:245).
-        """
-        try:
-            self.app.feedback.deregister_channel(f"tool-header::{old_id}")
-        except Exception:
-            logger.debug(
-                "channel deregister failed for %r during adoption rename",
-                f"tool-header::{old_id}", exc_info=True,
-            )
-        try:
-            from hermes_cli.tui.services.feedback import ToolHeaderAdapter
-            header = getattr(getattr(panel, "_block", None), "_header", None)
-            if header is not None:
-                self.app.feedback.register_channel(
-                    f"tool-header::{new_id}", ToolHeaderAdapter(header)
-                )
-            else:
-                logger.warning(
-                    "adoption rename: panel %r has no _header; header channel not registered",
-                    new_id,
-                )
-        except Exception:
-            logger.debug(
-                "channel register failed for %r during adoption rename",
-                f"tool-header::{new_id}", exc_info=True,
-            )
-
-    # ------------------------------------------------------------------
-    # PG-1/PG-2: single choke-point for view state changes
-    # ------------------------------------------------------------------
-
-    def _set_view_state(self, view: "ToolCallViewState", new: "ToolCallState") -> None:
-        """Single choke-point for all view state changes.  Thread-safe via RLock.
-
-        TBM-4: watchers must not call _set_view_state re-entrantly. Recursive
-        entry on the same thread is rejected with a WARNING log so plan-broker
-        and hint-clear effects fire exactly once per state change.
-        """
-        depth = getattr(_set_view_state_local, "depth", 0)
-        if depth >= 1:
-            logger.warning(
-                "_set_view_state: recursive entry detected; rejecting write to %s",
-                new,
-            )
-            return
-        _set_view_state_local.depth = depth + 1
-        try:
-            with self._state_lock:
-                old = view.state
-                if old == new:
-                    return
-                # SLR-3: clear streaming_kind_hint on resolving/terminal state transitions.
-                if new in (
-                    ToolCallState.COMPLETING,
-                    ToolCallState.ERROR,
-                    ToolCallState.CANCELLED,
-                    ToolCallState.DONE,
-                ) and view.streaming_kind_hint is not None:
-                    set_axis(view, "streaming_kind_hint", None)
-                set_axis(view, "state", new)
-                if self._plan_broker is not None:
-                    self._plan_broker.on_view_state(view, old, new)
-        finally:
-            _set_view_state_local.depth = depth
-
-    def _snapshot_turn_tool_calls(self) -> "list[Any]":
-        """Return an immutable snapshot of _turn_tool_calls records. Safe to call from worker threads."""
-        with self._state_lock:
-            return list(self._turn_tool_calls.values())
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -406,60 +58,8 @@ class ToolRenderingService(AppService):
             panel = self.app.query_one(OutputPanel)
             self.app._cached_output_panel = panel
             return panel
-        except NoMatches:  # il-ex-1-exempt: swallow
+        except NoMatches:
             return None
-
-    def _drain_output_before_tool_mount(self) -> None:
-        """Drain pending output queue items so pre-tool prose renders before the block.
-
-        Called synchronously on the event loop at the start of open_tool_generation.
-        Consuming the queue here races ahead of consume_output's next iteration and
-        ensures any text the agent sent before the tool call is written to the current
-        message's prose log before the ToolBlock is mounted into the DOM.
-        """
-        import asyncio as _asyncio
-        queue = self.app._output_queue
-        if queue.empty():
-            return
-        output = self._get_output_panel()
-        if output is None:
-            return
-        while not queue.empty():
-            try:
-                chunk = queue.get_nowait()
-            except _asyncio.QueueEmpty:  # il-ex-1-exempt: swallow
-                break  # queue drained between empty() check and get_nowait(); expected TOCTOU, not an error
-            except Exception:
-                logger.debug("_drain_output_before_tool_mount: get_nowait failed", exc_info=True)
-                break
-            if chunk is None:
-                # Sentinel arrived early — respect it by flushing live line
-                try:
-                    output.flush_live()
-                except Exception:
-                    logger.debug("_drain_output_before_tool_mount: flush_live on sentinel failed", exc_info=True)
-                continue
-            try:
-                output.live_line.feed(chunk)
-                msg = output.current_message
-                if msg is not None:
-                    engine = getattr(msg, "_response_engine", None)
-                    if engine is not None:
-                        engine.feed(chunk)
-            except Exception:
-                logger.debug("_drain_output_before_tool_mount: chunk feed failed", exc_info=True)
-        # Commit any partially-buffered line to prose so it's in the DOM
-        try:
-            live = output.live_line
-            if live._buf:
-                msg = output.current_message
-                if msg is not None:
-                    engine = getattr(msg, "_response_engine", None)
-                    if engine is not None:
-                        engine.process_line(live._buf)
-                        live._buf = ""
-        except Exception:
-            logger.debug("_drain_output_before_tool_mount: partial-buf flush failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Reasoning
@@ -481,7 +81,7 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
             self.app.query_one(_DO).signal("reasoning")
         except Exception:
-            logger.debug("DrawbrailleOverlay.signal('reasoning') failed", exc_info=True)
+            pass
 
     def append_reasoning(self, delta: str) -> None:
         """Append reasoning delta. Safe to call from any thread via call_from_thread."""
@@ -499,7 +99,7 @@ class ToolRenderingService(AppService):
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("thinking")
             except Exception:
-                logger.debug("DrawbrailleOverlay.signal('thinking') failed", exc_info=True)
+                pass
 
     # ------------------------------------------------------------------
     # ToolBlock mounting
@@ -535,7 +135,8 @@ class ToolRenderingService(AppService):
         )
         msg.refresh(layout=True)
         self.app._browse_total += 1
-        output.scroll_end_if_pinned()
+        if not output._user_scrolled_up:
+            self.app.call_after_refresh(output.scroll_end, animate=False)
         return result
 
     # ------------------------------------------------------------------
@@ -550,7 +151,8 @@ class ToolRenderingService(AppService):
         msg = output.current_message or output.new_message()
         block = msg.open_streaming_tool_block(label=get_display_name(tool_name), tool_name=tool_name)
         self.app._browse_total += 1
-        output.scroll_end_if_pinned()
+        if not output._user_scrolled_up:
+            self.app.call_after_refresh(output.scroll_end, animate=False)
         return block
 
     def open_execute_code_block(self, idx: int) -> "Any | None":
@@ -566,9 +168,10 @@ class ToolRenderingService(AppService):
             panel = _ToolPanel(block, tool_name="execute_code")
             msg._mount_nonprose_block(panel)
             self.app._browse_total += 1
-            output.scroll_end_if_pinned()
+            if not output._user_scrolled_up:
+                self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
-        except Exception as e:  # il-ex-1-exempt: noqa: bare-except
+        except Exception as e:
             logger.warning("open_execute_code_block failed for idx=%d: %s", idx, e)
             return None
 
@@ -586,9 +189,10 @@ class ToolRenderingService(AppService):
             msg._mount_nonprose_block(panel)
             msg._last_file_tool_block = block
             self.app._browse_total += 1
-            output.scroll_end_if_pinned()
+            if not output._user_scrolled_up:
+                self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
-        except Exception as e:  # il-ex-1-exempt: noqa: bare-except
+        except Exception as e:
             logger.warning("open_write_file_block failed idx=%d: %s", idx, e)
             return None
 
@@ -607,8 +211,8 @@ class ToolRenderingService(AppService):
             base_panel_id = f"tool-{tool_call_id}"
             try:
                 self.app.query_one(f"#{base_panel_id}")
-                panel_id: "str | None" = None  # collision: caller will skip suffix
-            except NoMatches:  # il-ex-1-exempt: vocab-2: ID free → use base
+                panel_id: "str | None" = None
+            except Exception:
                 panel_id = base_panel_id
             _turn_count = getattr(self.app, "_current_turn_tool_count", 0) + 1
             self.app._current_turn_tool_count = _turn_count
@@ -621,8 +225,12 @@ class ToolRenderingService(AppService):
 
             # Depth computation
             from hermes_cli.tui.tool_category import classify_tool, ToolCategory
-            cat_enum = classify_tool(tool_name or "")
-            cat = cat_enum.value
+            try:
+                cat_enum = classify_tool(tool_name or "")
+                cat = cat_enum.value
+            except Exception:
+                cat_enum = None
+                cat = "unknown"
 
             parent_rec = self._turn_tool_calls.get(parent_tool_call_id) if parent_tool_call_id else None
             computed_depth = (parent_rec.depth + 1) if parent_rec else 0
@@ -664,7 +272,7 @@ class ToolRenderingService(AppService):
                             _Static("… further nesting suppressed (depth limit reached)", classes="--depth-warning")
                         )
                     except Exception:
-                        logger.debug("depth-warning _Static mount on ancestor panel failed", exc_info=True)
+                        pass
 
             block = msg.open_streaming_tool_block(
                 label=label, tool_name=tool_name, panel_id=panel_id,
@@ -676,24 +284,12 @@ class ToolRenderingService(AppService):
             self.app._active_streaming_blocks[tool_call_id] = block
             self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
             self.app._active_tool_name = tool_name or ""
-            # Ensure _live_block_for_streaming can find the block by seeding a minimal view
-            if tool_call_id not in self._tool_views_by_id:
-                panel_ref = getattr(block, "_tool_panel", None)
-                view = ToolCallViewState(
-                    tool_call_id=tool_call_id, gen_index=None,
-                    tool_name=tool_name or "", label=label,
-                    args={}, state=ToolCallState.STREAMING,
-                    block=block, panel=panel_ref,
-                    parent_tool_call_id=parent_tool_call_id,
-                    category=cat, depth=depth, start_s=0.0,
-                )
-                self._tool_views_by_id[tool_call_id] = view
             try:
                 panel = getattr(block, "_tool_panel", None)
                 if panel is not None:
                     panel.add_class("--streaming")
             except Exception:
-                logger.debug("panel.add_class('--streaming') failed", exc_info=True)
+                pass
             # A1: increment open tool count and set TOOL_EXEC phase
             self._open_tool_count += 1
             from hermes_cli.tui.agent_phase import Phase as _Phase
@@ -702,37 +298,24 @@ class ToolRenderingService(AppService):
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("tool")
             except Exception:
-                logger.debug("DrawbrailleOverlay.signal('tool') failed", exc_info=True)
+                pass
             self.app._svc_commands.update_anim_hint()
             msg.refresh(layout=True)
             self.app._browse_total += 1
-            output.scroll_end_if_pinned()
-        except NoMatches:  # il-ex-1-exempt: swallow
+            if not output._user_scrolled_up:
+                self.app.call_after_refresh(output.scroll_end, animate=False)
+        except NoMatches:
             pass
-
-    def _live_block_for_streaming(self, tool_call_id: str):
-        """Return the live StreamingToolBlock if the view is non-terminal, else None.
-
-        Terminal set matches append_tool_output gate exactly: DONE, ERROR,
-        CANCELLED, REMOVED.
-        """
-        view = self._tool_views_by_id.get(tool_call_id)
-        block = self.app._active_streaming_blocks.get(tool_call_id)
-        if view is None or block is None:
-            return None
-        if view.state in _TERMINAL_STATES:
-            return None
-        return block
 
     def append_streaming_line(self, tool_call_id: str, line: str) -> None:
         """Append a line to the named streaming block. Event-loop only."""
-        block = self._live_block_for_streaming(tool_call_id)
+        block = self.app._active_streaming_blocks.get(tool_call_id)
         if block is None:
             return
         block.append_line(line)
         panel = self._get_output_panel()
-        if panel is not None:
-            panel.scroll_end_if_pinned()
+        if panel is not None and not panel._user_scrolled_up:
+            self.app.call_after_refresh(panel.scroll_end, animate=False)
 
     def close_streaming_tool_block(
         self,
@@ -748,58 +331,45 @@ class ToolRenderingService(AppService):
             return
         self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
         if result_lines:
-            # Store untruncated raw BEFORE append_line() which caps lines at
-            # _LINE_BYTE_CAP (2000 bytes). Single-blob results (web search JSON)
-            # are one long line; truncation produces invalid JSON that the
-            # classifier can't parse, breaking renderer swap.
-            block._renderer_output_raw = "\n".join(result_lines)
             for _line in result_lines:
                 block.append_line(_line)
-        elif not getattr(block, "_renderer_output_raw", None):
-            # Fallback: stitch from the streaming accumulator so the classifier
-            # receives untruncated text when the caller omitted result_lines.
-            for attr in ("_plain_lines", "_all_plain", "_content_lines"):
-                lines = getattr(block, attr, None)
-                if isinstance(lines, list) and lines:
-                    block._renderer_output_raw = "\n".join(lines)
-                    break
         block.complete(duration, is_error=is_error)
-        panel = getattr(block, "_tool_panel", None)
         if summary is not None:
+            panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                from hermes_cli.tui.tool_result_parse import inject_recovery_actions
-                panel.set_result_summary_v4(inject_recovery_actions(summary))
-        elif panel is not None:
-            # No summary — fire classifier so renderer swap (e.g. TEXT→SEARCH) still
-            # happens. Must run even for 0-result tools (empty result_lines): without
-            # this, a grep/search that finds nothing stays frozen at "0 matches so far…"
-            # because the streaming microcopy is never replaced.
-            try:
-                panel._update_kind_from_classifier(len(result_lines) if result_lines else 0)
-            except Exception:
-                logger.debug("post-completion classifier failed (no summary path)", exc_info=True)
-        # R2-HIGH-01: route counters/phase/active-name/agent-stack/record-update
-        # through the unified helper. mark_plan=False — complete_tool_call calls
-        # mark_plan_done explicitly after this method returns.
-        self._terminalize_tool_view(
-            tool_call_id,
-            terminal_state=ToolCallState.ERROR if is_error else ToolCallState.DONE,
-            is_error=is_error,
-            mark_plan=False,
-            remove_visual=False,
-            delete_view=False,
-            dur_ms=_parse_duration_ms(duration),
-        )
+                panel.set_result_summary_v4(summary)
+        if tool_call_id in self._agent_stack:
+            self._agent_stack.remove(tool_call_id)
+        self.app._active_tool_name = ""
+        # A1: decrement open tool count; revert phase when last tool closes
+        self._open_tool_count = max(0, self._open_tool_count - 1)
+        if self._open_tool_count == 0:
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            if getattr(self.app, "agent_running", False):
+                self.app.status_phase = _Phase.REASONING
+            else:
+                self.app.status_phase = _Phase.IDLE
         self.app._svc_commands.update_anim_hint()
+        rec = self._turn_tool_calls.get(tool_call_id)
+        if rec is not None:
+            try:
+                ds = str(duration)
+                if ds.endswith("ms"):
+                    rec.dur_ms = int(float(ds[:-2]))
+                elif ds.endswith("s"):
+                    rec.dur_ms = int(float(ds[:-1]) * 1000)
+            except Exception:
+                pass
+            rec.is_error = is_error
         panel = self._get_output_panel()
-        if panel is not None:
-            panel.scroll_end_if_pinned()
+        if panel is not None and not panel._user_scrolled_up:
+            self.app.call_after_refresh(panel.scroll_end, animate=False)
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
         except Exception:
-            logger.debug("draw overlay signal failed", exc_info=True)
+            pass
 
     def close_streaming_tool_block_with_diff(
         self,
@@ -820,37 +390,54 @@ class ToolRenderingService(AppService):
         if summary is not None:
             panel = getattr(block, "_tool_panel", None)
             if panel is not None:
-                from hermes_cli.tui.tool_result_parse import inject_recovery_actions
-                panel.set_result_summary_v4(inject_recovery_actions(summary))
-        # R2-HIGH-01: unified cleanup; symmetric with non-diff path.
-        self._terminalize_tool_view(
-            tool_call_id,
-            terminal_state=ToolCallState.ERROR if is_error else ToolCallState.DONE,
-            is_error=is_error,
-            mark_plan=False,
-            remove_visual=False,
-            delete_view=False,
-            dur_ms=_parse_duration_ms(duration),
-        )
+                panel.set_result_summary_v4(summary)
+        if tool_call_id in self._agent_stack:
+            self._agent_stack.remove(tool_call_id)
+        # A1: decrement open tool count; revert phase when last tool closes
+        self._open_tool_count = max(0, self._open_tool_count - 1)
+        if self._open_tool_count == 0:
+            from hermes_cli.tui.agent_phase import Phase as _Phase
+            if getattr(self.app, "agent_running", False):
+                self.app.status_phase = _Phase.REASONING
+            else:
+                self.app.status_phase = _Phase.IDLE
+        rec = self._turn_tool_calls.get(tool_call_id)
+        if rec is not None:
+            try:
+                ds = str(duration)
+                if ds.endswith("ms"):
+                    rec.dur_ms = int(float(ds[:-2]))
+                elif ds.endswith("s"):
+                    rec.dur_ms = int(float(ds[:-1]) * 1000)
+            except Exception:
+                pass
+            rec.is_error = is_error
         panel = self._get_output_panel()
-        if panel is not None:
-            panel.scroll_end_if_pinned()
+        if panel is not None and not panel._user_scrolled_up:
+            self.app.call_after_refresh(panel.scroll_end, animate=False)
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
         except Exception:
-            logger.debug("draw overlay signal failed", exc_info=True)
+            pass
 
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
         """Remove a streaming block from the DOM entirely. Event-loop only."""
-        self._terminalize_tool_view(
-            tool_call_id,
-            terminal_state=ToolCallState.REMOVED,
-            mark_plan=False,
-            remove_visual=True,
-            delete_view=True,
-        )
+        block = self.app._active_streaming_blocks.pop(tool_call_id, None)
+        if block is None:
+            return
+        self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
+        try:
+            from hermes_cli.tui.tool_panel import ToolPanel as _TP
+            body_pane = block.parent
+            tool_panel = body_pane.parent if body_pane is not None else None
+            if isinstance(tool_panel, _TP):
+                tool_panel.remove()
+            else:
+                block.remove()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # PlanPanel mutations — event-loop only
@@ -862,15 +449,18 @@ class ToolRenderingService(AppService):
         current: list = list(getattr(self.app, "planned_calls", []))
         kept = [c for c in current if c.state in (PlanState.DONE, PlanState.ERROR, PlanState.CANCELLED, PlanState.SKIPPED)]
         new_entries = []
-        import json as _json
-        from hermes_cli.tui.tool_category import classify_tool
         for tool_call_id, tool_name, label, args in batch:
             try:
+                import json as _json
                 raw = _json.dumps(args, ensure_ascii=False)
                 preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except (TypeError, ValueError):  # il-ex-1-exempt: vocab-2: non-serializable args → empty preview — # noqa: bare-except
+            except Exception:
                 preview = ""
-            cat = classify_tool(tool_name).value
+            try:
+                from hermes_cli.tui.tool_category import classify_tool
+                cat = classify_tool(tool_name).value
+            except Exception:
+                cat = "unknown"
             new_entries.append(PlannedCall(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
@@ -896,928 +486,19 @@ class ToolRenderingService(AppService):
         self.app.planned_calls = items
 
     def mark_plan_done(self, tool_call_id: str, is_error: bool, dur_ms: int) -> None:
-        """Transition a PENDING or RUNNING PlannedCall to DONE or ERROR. Event-loop only.
-
-        Accepts PENDING in addition to RUNNING so that completion is idempotent
-        even when the start callback was skipped or raced with completion (SM-05).
-        """
+        """Transition a RUNNING PlannedCall to DONE or ERROR. Event-loop only."""
         from hermes_cli.tui.plan_types import PlanState
         items = list(getattr(self.app, "planned_calls", []))
         for i, call in enumerate(items):
-            if call.tool_call_id == tool_call_id:
-                # R2-HIGH-01: cross-path cancel-vs-complete race — preserve a CANCELLED
-                # or already-DONE row even when complete_tool_call arrives later.
-                if call.state in (PlanState.DONE, PlanState.CANCELLED):
-                    return
-                if call.state in (PlanState.PENDING, PlanState.RUNNING):
-                    items[i] = call.as_done(is_error=is_error)
-                    break
-        self.app.planned_calls = items
-
-    def mark_plan_cancelled(self, tool_call_id: str) -> None:
-        """Transition a PENDING or RUNNING PlannedCall to CANCELLED. Event-loop only."""
-        from hermes_cli.tui.plan_types import PlanState
-        items = list(getattr(self.app, "planned_calls", []))
-        for i, call in enumerate(items):
-            if call.tool_call_id == tool_call_id and call.state in (PlanState.PENDING, PlanState.RUNNING):
-                items[i] = call.as_cancelled()
+            if call.tool_call_id == tool_call_id and call.state == PlanState.RUNNING:
+                items[i] = call.as_done(is_error=is_error)
                 break
         self.app.planned_calls = items
-
-    # ------------------------------------------------------------------
-    # R2-HIGH-01: unified terminal cleanup helper
-    # ------------------------------------------------------------------
-
-    def _terminalize_tool_view(
-        self,
-        tool_call_id: "str | None",
-        *,
-        terminal_state: ToolCallState,
-        is_error: bool = False,
-        mark_plan: bool = True,
-        remove_visual: bool = False,
-        delete_view: bool = False,
-        dur_ms: "int | None" = None,
-        view: "ToolCallViewState | None" = None,
-        gen_index: "int | None" = None,
-    ) -> "ToolCallViewState | None":
-        """Single terminal cleanup path for remove / cancel / close.
-
-        Resolves the view, captures `prev_state` BEFORE any mutation, then
-        decrements counters / clears active fields / updates phase / writes
-        the terminal state via the axis bus / removes the visual / pops
-        index entries — in that order. See spec R2-HIGH-01.
-        """
-        # Step 1: resolve view
-        if view is None and tool_call_id:
-            view = self._tool_views_by_id.get(tool_call_id)
-        if view is None and gen_index is not None:
-            view = self._tool_views_by_gen_index.get(gen_index)
-
-        if view is None and (
-            not tool_call_id or tool_call_id not in self.app._active_streaming_blocks
-        ):
-            return None
-
-        prev_state = view.state if view is not None else None
-
-        if view is not None and prev_state in _TERMINAL_STATES:
-            if prev_state != terminal_state:
-                logger.debug(
-                    "terminalize race: view already %s, ignoring %s",
-                    prev_state, terminal_state,
-                )
-                if terminal_state == ToolCallState.CANCELLED and prev_state in (
-                    ToolCallState.DONE, ToolCallState.ERROR
-                ):
-                    panel = (
-                        self._panel_for_block(view.block)
-                        if view.block is not None else None
-                    )
-                    if panel is not None and getattr(panel, "is_mounted", False):
-                        panel._flash_header(
-                            f"cancel ignored: tool already {prev_state.value}",
-                            tone="warning",
-                        )
-            return view
-
-        # Step 2: pop active streaming block + refresh count
-        if tool_call_id:
-            self.app._active_streaming_blocks.pop(tool_call_id, None)
-            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
-
-        # Step 3: decrement open tool count for non-terminal in-flight states
-        _inflight = (ToolCallState.STARTED, ToolCallState.STREAMING,
-                     ToolCallState.COMPLETING)
-        if prev_state in _inflight:
-            self._open_tool_count = max(0, self._open_tool_count - 1)
-
-        # Step 4: remove from agent stack
-        if tool_call_id and tool_call_id in self._agent_stack:
-            try:
-                self._agent_stack.remove(tool_call_id)
-            except ValueError:  # il-ex-1-exempt: swallow
-                pass  # already removed; concurrent cleanup — safe
-
-        # Step 5: clear _active_tool_name only when this view owns it
-        # OR when no tools remain open
-        active_name = getattr(self.app, "_active_tool_name", "")
-        if view is not None and active_name and active_name == view.tool_name:
-            self.app._active_tool_name = ""
-        elif self._open_tool_count == 0:
-            self.app._active_tool_name = ""
-
-        # Step 6: update status_phase
-        if self._open_tool_count == 0:
-            from hermes_cli.tui.agent_phase import Phase as _Phase
-            if getattr(self.app, "agent_running", False):
-                self.app.status_phase = _Phase.REASONING
-            else:
-                self.app.status_phase = _Phase.IDLE
-
-        # Step 7: plan transitions now handled by PlanSyncBroker via _set_view_state
-        # (PG-1: explicit mark_plan_* calls deleted; broker fires atomically at Step 9)
-
-        # Step 8: update _ToolCallRecord
-        if tool_call_id:
-            rec = self._turn_tool_calls.get(tool_call_id)
-            if rec is not None:
-                rec.is_error = is_error
-                if dur_ms is not None:
-                    rec.dur_ms = dur_ms
-
-        # Step 9: write terminal state via axis bus (fires watchers + PlanSyncBroker).
-        # Mirror is_error and dur_ms onto view BEFORE the state write so the broker
-        # reads the final values when dispatching mark_plan_done/cancelled (R3-AXIS-03).
-        # NOTE: no post-state mutations on `view`. Subscribers must see final
-        # values on first watcher notification (R3-AXIS-03).
-        if view is not None:
-            view.is_error = is_error
-            if dur_ms is not None:
-                view.dur_ms = dur_ms
-            # P-5: populate exit_code from the panel's result summary if available.
-            panel = (
-                self._panel_for_block(view.block)
-                if view.block is not None else None
-            )
-            rs = getattr(panel, "_result_summary_v4", None) if panel is not None else None
-            view.exit_code = getattr(rs, "exit_code", None) if rs is not None else None
-            # ER-1: classify error and populate view fields BEFORE state write so
-            # any phase watcher reads the final values on first notification.
-            if is_error:
-                try:
-                    from hermes_cli.tui.services.error_taxonomy import (
-                        classify_error, split_stderr_tail,
-                    )
-                    _stderr_text = (getattr(rs, "stderr_tail", "") or "") if rs is not None else ""
-                    view.error_category = classify_error(_stderr_text, view.exit_code)
-                    view.stderr_tail = tuple(split_stderr_tail(_stderr_text))
-                except Exception:
-                    logger.debug("ER-1 classification failed", exc_info=True)
-            self._set_view_state(view, terminal_state)
-
-        # Step 10: remove visual
-        if remove_visual and view is not None and view.block is not None:
-            try:
-                panel = self._panel_for_block(view.block)
-                if panel is not None:
-                    panel.remove()
-                else:
-                    view.block.remove()
-            except Exception:
-                logger.debug("terminalize visual remove failed", exc_info=True)
-
-        # Step 11: pop view from index maps; preserve to history first (TB-H2).
-        # The history append precedes the live-pop to satisfy docs/concept.md
-        # §"View-state lookup contract" preemption rule 2 step (b): "move prior
-        # into history_by_id[X]" before step (c): "del live_by_id[X]".
-        # Routing (b) inside _terminalize_tool_view is intentional: the concept's
-        # steps (a)→(b)→(c) map to: (a) entering this helper with CANCEL state,
-        # (b) the append block below, (c) the pop below — the ordering invariant
-        # is satisfied within one atomic helper call under _state_lock.
-        #
-        # _state_lock strategy (RLock, re-entrant): wrap the entire step-11 block.
-        # If the caller already holds _state_lock, re-entrant acquisition is safe.
-        state_lock = getattr(self, "_state_lock", None)
-        with (state_lock if state_lock is not None else nullcontext()):
-            if tool_call_id and view is not None:
-                hist = self._tool_views_history_by_id.setdefault(tool_call_id, [])
-                hist.append(view)
-                # Bound memory: drop oldest entries beyond cap.
-                history_cap = int(
-                    getattr(self, "_HISTORY_CAP_PER_ID", ToolRenderingService._HISTORY_CAP_PER_ID)
-                )
-                if len(hist) > history_cap:
-                    del hist[: len(hist) - history_cap]
-            if tool_call_id:
-                self._tool_views_by_id.pop(tool_call_id, None)
-            if view is not None and view.gen_index is not None:
-                # H7: adopted views have gen_index=None after adoption; this branch
-                # fires only for never-adopted GENERATED records cancelled directly.
-                self._tool_views_by_gen_index.pop(view.gen_index, None)
-
-        # Step 12: optional _turn_tool_calls deletion
-        if delete_view and tool_call_id:
-            self._turn_tool_calls.pop(tool_call_id, None)
-
-        return view
-
-    # ------------------------------------------------------------------
-    # SM-01/02/03/05/06: Unified state-machine lifecycle methods
-    # ------------------------------------------------------------------
-
-    _PANEL_CLASS_NAMES = frozenset({"ToolPanel", "ChildPanel", "SubAgentPanel"})
-
-    def _panel_for_block(self, block: "Any | None") -> "Any | None":
-        """TCL-MED-01: Return the enclosing panel for a block.
-
-        Checks _tool_panel attr first, then walks block.parent and
-        block.parent.parent for a ToolPanel/ChildPanel/SubAgentPanel.
-        Returns None without logging if block is unmounted.
-        """
-        if block is None:
-            return None
-        attr = getattr(block, "_tool_panel", None)
-        if attr is not None:
-            return attr
-        parent = getattr(block, "parent", None)
-        if parent is None:
-            return None
-        if type(parent).__name__ in self._PANEL_CLASS_NAMES:
-            return parent
-        grandparent = getattr(parent, "parent", None)
-        if grandparent is not None and type(grandparent).__name__ in self._PANEL_CLASS_NAMES:
-            return grandparent
-        return None
-
-    def _make_view_category(self, tool_name: str) -> str:
-        from hermes_cli.tui.tool_category import classify_tool
-        return classify_tool(tool_name).value
-
-    def _wire_args(self, view: ToolCallViewState, args: "dict[str, Any]") -> None:
-        """SM-03: attach invocation args to block and panel."""
-        args_copy = dict(args or {})
-        view.args = args_copy
-        if view.block is not None and hasattr(view.block, "_tool_input"):
-            view.block._tool_input = args_copy
-        if view.panel is not None and hasattr(view.panel, "set_tool_args"):
-            view.panel.set_tool_args(args_copy)
-            header = getattr(view.block, "_header", None) if view.block is not None else None
-            if header is not None:
-                try:
-                    header.refresh()
-                except Exception:
-                    logger.debug("header.refresh() post-arg-wire failed", exc_info=True)
-
-    def _pop_pending_gen_for(self, tool_name: str) -> "ToolCallViewState | None":
-        """Pop the newest GENERATED record matching tool_name, or any GENERATED if none match.
-
-        H6: LIFO (newest-first) order matches provider semantics — when multiple
-        gen-start events arrive before the first start_tool_call, the newest
-        generation is the one whose args were just completed.
-
-        NOTE: _cancel_first_pending_gen (below) intentionally stays FIFO (oldest-
-        first) for background-terminal cleanup. Do NOT flip that method when
-        updating this one.
-        """
-        if not self._tool_views_by_gen_index:
-            return None
-        # First pass: match by tool_name, newest first (LIFO)
-        for gen_idx in sorted(self._tool_views_by_gen_index, reverse=True):
-            v = self._tool_views_by_gen_index[gen_idx]
-            if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
-                del self._tool_views_by_gen_index[gen_idx]
-                return v
-        # Second pass: any GENERATED, newest first (LIFO fallback — handles provider skipping gen-start)
-        for gen_idx in sorted(self._tool_views_by_gen_index, reverse=True):
-            v = self._tool_views_by_gen_index[gen_idx]
-            if v.state == ToolCallState.GENERATED:
-                del self._tool_views_by_gen_index[gen_idx]
-                return v
-        return None
-
-    def _cancel_first_pending_gen(self, tool_name: str) -> None:
-        """Cancel the oldest GENERATED record for tool_name (e.g. background terminal).
-
-        R3-AXIS-02: routes through _terminalize_tool_view so the GENERATED→
-        CANCELLED transition fires axis watchers and visual-remove failures
-        log instead of being silently swallowed. mark_plan=False because a
-        GENERATED view never produced an active Plan row.
-        """
-        for gen_idx in sorted(self._tool_views_by_gen_index):
-            v = self._tool_views_by_gen_index[gen_idx]
-            if v.state == ToolCallState.GENERATED and v.tool_name == tool_name:
-                self._terminalize_tool_view(
-                    tool_call_id=v.tool_call_id,
-                    terminal_state=ToolCallState.CANCELLED,
-                    is_error=False,
-                    mark_plan=False,
-                    remove_visual=True,
-                    delete_view=False,
-                    view=v,
-                    gen_index=gen_idx,
-                )
-                return
-
-    def _compute_parent_depth(self, tool_call_id: str) -> "tuple[str | None, int]":
-        """Return (parent_tool_call_id, depth) for a new tool call."""
-        parent_id: "str | None" = getattr(self.app, "_explicit_parent_map", {}).pop(tool_call_id, None)
-        if parent_id is None and self._agent_stack:
-            parent_id = self._agent_stack[-1]
-        parent_rec = self._turn_tool_calls.get(parent_id) if parent_id else None
-        computed = (parent_rec.depth + 1) if parent_rec else 0
-        return parent_id, min(computed, 3)
-
-    def open_tool_generation(self, gen_index: int, tool_name: str) -> None:
-        """SM-02: Create a GENERATED view state record and open the visual block.
-
-        Called from the event loop via call_from_thread. Returns None — callers
-        must not capture a block reference; all block access goes through the
-        state machine.
-        """
-        # Drain any output-queue items queued before this tool call so pre-tool
-        # prose is written to the DOM before the ToolBlock mounts.
-        self._drain_output_before_tool_mount()
-
-        cat = self._make_view_category(tool_name)
-        now = _time.monotonic()
-        turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
-
-        # M21: derive depth from agent stack at gen-open time.
-        # tool_call_id is unknown at this point; parent comes from _agent_stack only
-        # (no _explicit_parent_map lookup — that map is keyed by tool_call_id).
-        # Adoption in start_tool_call re-runs _compute_parent_depth with the real
-        # tool_call_id and overwrites view.depth, so any racy gap is corrected.
-        gen_parent_id: "str | None" = None
-        gen_depth = 0
-        if self._agent_stack:
-            gen_parent_id = self._agent_stack[-1]
-            parent_rec = self._turn_tool_calls.get(gen_parent_id)
-            gen_depth = min((parent_rec.depth + 1) if parent_rec else 0, 3)
-
-        view = ToolCallViewState(
-            tool_call_id=None,
-            gen_index=gen_index,
-            tool_name=tool_name,
-            label=get_display_name(tool_name),
-            args={},
-            state=ToolCallState.GENERATED,
-            block=None,
-            panel=None,
-            parent_tool_call_id=gen_parent_id,
-            category=cat,
-            depth=gen_depth,
-            start_s=round(now - turn_start, 4),
-            started_at=now,
-            gen_created_at=now,
-        )
-
-        # Route to appropriate block creator
-        block: "Any | None" = None
-        if tool_name == "execute_code":
-            block = self.open_execute_code_block(gen_index)
-        elif tool_name in ("write_file", "create_file"):
-            block = self.open_write_file_block(gen_index, "")
-        elif tool_name not in self._SKILL_TOOL_NAMES:
-            block = self.open_gen_block(tool_name)
-        # Skill tools intentionally get no gen block — deferred to start_tool_call
-
-        view.block = block
-        # TCL-MED-01: capture panel back-reference via helper (attr or parent walk)
-        view.panel = self._panel_for_block(block)
-        self._tool_views_by_gen_index[gen_index] = view
-
-        # SM-HIGH-02: drain any buffered arg deltas that arrived before the view
-        self._drain_gen_arg_deltas(gen_index, view)
-
-    def append_generation_args_delta(
-        self,
-        gen_index: int,
-        tool_name: str,
-        delta: str,
-        accumulated: str,
-    ) -> None:
-        """SM-HIGH-02: Apply or buffer a generation arg delta. Event-loop only.
-
-        If the view exists and has a block, applies the delta immediately.
-        Otherwise buffers (delta, accumulated) for drain when the view opens.
-        """
-        view = self._tool_views_by_gen_index.get(gen_index)
-        if view is not None and view.block is not None:
-            self._apply_gen_arg_delta(view.block, tool_name, delta, accumulated)
-        else:
-            self._pending_gen_arg_deltas.setdefault(gen_index, []).append((delta, accumulated))
-
-    def _apply_gen_arg_delta(
-        self,
-        block: "Any",
-        tool_name: str,
-        delta: str,
-        accumulated: str,
-    ) -> None:
-        """Apply one arg delta to a block. No-op if block has no feed_delta."""
-        if not hasattr(block, "feed_delta"):
-            return
-        try:
-            block.feed_delta(delta)
-        except Exception:
-            logger.debug("feed_delta failed for %s", tool_name, exc_info=True)
-        if tool_name in ("write_file", "create_file", "str_replace_editor"):
-            if hasattr(block, "update_progress"):
-                try:
-                    written = len(accumulated.encode("utf-8", errors="replace"))
-                    total = 0
-                    import json as _json
-                    try:
-                        parsed = _json.loads(accumulated)
-                    except _json.JSONDecodeError:  # vocab-2: partial JSON during stream → skip total
-                        logger.debug("partial JSON during stream — skipping total update", exc_info=True)
-                    else:
-                        if isinstance(parsed, dict):
-                            try:
-                                total = int(parsed.get("total_size") or parsed.get("bytes_written") or 0)
-                            except (TypeError, ValueError):  # vocab-2: non-numeric total → skip
-                                logger.debug("non-numeric total in stream payload — skipping total update", exc_info=True)
-                    block.update_progress(written, total)
-                except Exception:
-                    logger.debug("update_progress failed for %s", tool_name, exc_info=True)
-
-    def _drain_gen_arg_deltas(self, gen_index: int, view: "ToolCallViewState") -> None:
-        """SM-HIGH-02: Drain buffered deltas for gen_index into view.block."""
-        buffered = self._pending_gen_arg_deltas.pop(gen_index, None)
-        if not buffered or view.block is None:
-            return
-        for delta, accumulated in buffered:
-            self._apply_gen_arg_delta(view.block, view.tool_name, delta, accumulated)
-
-    def start_tool_call(
-        self,
-        tool_call_id: str,
-        tool_name: str,
-        args: "dict[str, Any] | None",
-    ) -> None:
-        """SM-02: Adopt a GENERATED record or create a new STARTED record.
-
-        If a GENERATED record exists, adopts it (assigns tool_call_id, args,
-        parent, depth) and transitions to STARTED.  If no GENERATED record
-        exists, creates a new record directly in STARTED (non-streaming or
-        provider paths that skip gen-start).
-
-        All DOM creation and active-block indexing happens here; the CLI
-        callback layer only forwards parsed provider events.
-        """
-        args_clean = dict(args or {})
-
-        # Background terminal: cancel the pending gen block and skip start
-        if tool_name == "terminal" and args_clean.get("background"):
-            self._cancel_first_pending_gen("terminal")
-            return
-
-        parent_id, depth = self._compute_parent_depth(tool_call_id)
-        now = _time.monotonic()
-        turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
-
-        # TB-H2: preemption — if a prior non-terminal view exists for this id,
-        # route it through _terminalize_tool_view (CANCEL) so it lands in history.
-        # Satisfies concept §"View-state lookup contract" preemption sequence rule 2.
-        prior_view = self._tool_views_by_id.get(tool_call_id)
-        if prior_view is not None:
-            logger.debug(
-                "[PREEMPT] tool_call_id=%s prior_state=%s — terminalizing before new start",
-                tool_call_id, prior_view.state,
-            )
-            self._terminalize_tool_view(
-                tool_call_id=tool_call_id,
-                terminal_state=ToolCallState.CANCELLED,
-                is_error=False,
-                mark_plan=False,
-                remove_visual=False,
-                delete_view=False,
-                view=prior_view,
-                gen_index=None,
-            )
-
-        view = self._pop_pending_gen_for(tool_name)
-
-        if view is not None:
-            # ── Adopted path ──────────────────────────────────────────────
-            view.tool_call_id = tool_call_id
-            # PG-1: route through _set_view_state so broker fires for GENERATED→STARTED
-            self._set_view_state(view, ToolCallState.STARTED)
-            view.parent_tool_call_id = parent_id
-            view.depth = depth
-            _gen_at = view.gen_created_at
-            view.started_at = now  # reuse already-captured now; reset from gen-block creation time to actual tool start
-            if _gen_at is not None:
-                _gap_ms = (now - _gen_at) * 1000.0
-                logger.debug("[TOOL-ADOPT] %s gap_ms=%.1f", view.tool_name, _gap_ms)
-                if _gap_ms > 500:
-                    logger.warning("[TOOL-ADOPT-WARN] %s slow adoption gap_ms=%.1f", view.tool_name, _gap_ms)
-            self._tool_views_by_id[tool_call_id] = view
-            view.gen_index = None  # H7: invariant — gen_index is set iff view ∈ _tool_views_by_gen_index
-
-            # Register the pre-created block in the active map
-            if view.block is not None:
-                self.app._active_streaming_blocks[tool_call_id] = view.block
-                self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
-
-            # Handle tool-specific finalization on the adopted block
-            if tool_name == "execute_code":
-                code = args_clean.get("code", "")
-                if not isinstance(code, str):
-                    code = ""
-                if view.block is not None and hasattr(view.block, "finalize_code"):
-                    try:
-                        self.app.call_after_refresh(lambda _b=view.block, _c=code: _b.finalize_code(_c))
-                    except Exception:
-                        logger.debug("finalize_code scheduling failed", exc_info=True)
-            elif tool_name in ("write_file", "create_file"):
-                path = args_clean.get("path", "")
-                if not isinstance(path, str):
-                    path = ""
-                if view.block is not None and path and hasattr(view.block, "set_final_path"):
-                    try:
-                        view.block.set_final_path(path)
-                    except Exception:
-                        logger.debug("set_final_path failed", exc_info=True)
-
-            # Update parent children list
-            parent_rec = self._turn_tool_calls.get(parent_id) if parent_id else None
-            if parent_rec is not None:
-                parent_rec.children.append(tool_call_id)
-
-            # Backward-compat _ToolCallRecord
-            from hermes_cli.tui.tool_category import classify_tool as _ct
-            cat = _ct(tool_name).value
-            rec = _ToolCallRecord(
-                tool_call_id=tool_call_id,
-                parent_tool_call_id=parent_id,
-                label=view.label,
-                tool_name=tool_name,
-                category=cat,
-                depth=depth,
-                start_s=round(now - turn_start, 4),
-                dur_ms=None,
-                is_error=False,
-                error_kind=None,
-                mcp_server=None,
-            )
-            self._turn_tool_calls[tool_call_id] = rec
-
-            # TCL-MED-01: populate view.panel via helper now that ID is known
-            if view.panel is None and view.block is not None:
-                view.panel = self._panel_for_block(view.block)
-            if view.panel is not None and hasattr(view.panel, "_plan_tool_call_id"):
-                view.panel._plan_tool_call_id = tool_call_id
-
-            # R2-HIGH-02: backfill block + DOM panel id for adopted generated panels
-            if view.block is not None:
-                try:
-                    view.block._tool_call_id = tool_call_id
-                except AttributeError:  # il-ex-1-exempt: swallow
-                    logger.debug("block %r does not accept _tool_call_id", type(view.block).__name__)
-
-            if view.panel is not None:
-                new_id = f"tool-{tool_call_id}"
-                current_id = getattr(view.panel, "id", None)
-                if current_id != new_id:
-                    # M19: check for DOM collision before renaming
-                    try:
-                        collision = bool(list(self.app.query(f"#{new_id}")))
-                    except Exception:  # il-ex-1-exempt: swallow
-                        # query() may fail before app is fully mounted; treat as no collision
-                        collision = False
-                    if not collision:
-                        try:
-                            view.panel.id = new_id
-                            self._move_panel_channel(view.panel, current_id, new_id)
-                        except Exception:
-                            logger.debug(
-                                "M19: rename failed for id %s; keeping panel id=%s",
-                                new_id, current_id, exc_info=True,
-                            )
-                    else:
-                        logger.debug(
-                            "M19: id %s collision during adoption; keeping panel id=%s",
-                            new_id, current_id,
-                        )
-
-            # L13: clear any partial-stream state captured during gen so _wire_args
-            # starts from a clean slate. Called unconditionally for all adoptions;
-            # no-op for blocks without buffered state (default ToolBlock.reset_partial_state).
-            if view.block is not None and hasattr(view.block, "reset_partial_state"):
-                try:
-                    view.block.reset_partial_state()
-                except Exception:
-                    logger.debug("L13: reset_partial_state failed", exc_info=True)
-
-            # Wire args (SM-03)
-            self._wire_args(view, args_clean)
-            if view.panel is not None:
-                try:
-                    view.panel.refresh()
-                except Exception:
-                    logger.debug("panel.refresh after _wire_args failed", exc_info=True)
-
-            # SM-HIGH-02: discard any stale buffered deltas for the adopted gen slot
-            if view.gen_index is not None:
-                self._pending_gen_arg_deltas.pop(view.gen_index, None)
-
-            # A1: increment open tool count and set phase (gen-start didn't do this)
-            self._open_tool_count += 1
-            from hermes_cli.tui.agent_phase import Phase as _Phase
-            self.app.status_phase = _Phase.TOOL_EXEC
-
-        else:
-            # ── Direct-start path (no GENERATED record) ───────────────────
-            if tool_name in ("write_file", "create_file", "str_replace_editor"):
-                # SM-06: create write-tool fallback block
-                block, panel = self._create_write_fallback(tool_call_id, tool_name, args_clean)
-            else:
-                # For all other tools, use the existing method which handles
-                # DOM mounting, record creation, phase, agent stack, etc.
-                label = get_display_name(tool_name)
-                self.open_streaming_tool_block(tool_call_id, label, tool_name=tool_name)
-                block = self.app._active_streaming_blocks.get(tool_call_id)
-                # TCL-MED-01: capture panel back-ref via helper
-                panel = self._panel_for_block(block)
-
-            cat = self._make_view_category(tool_name)
-            view = ToolCallViewState(
-                tool_call_id=tool_call_id,
-                gen_index=None,
-                tool_name=tool_name,
-                label=get_display_name(tool_name),
-                args=args_clean,
-                state=ToolCallState.STARTED,
-                block=block,
-                panel=panel,
-                parent_tool_call_id=parent_id,
-                category=cat,
-                depth=depth,
-                start_s=round(now - turn_start, 4),
-            )
-            self._tool_views_by_id[tool_call_id] = view
-            # Wire args (SM-03) — for the existing open_streaming_tool_block path,
-            # _wire_args also stores on the block.
-            self._wire_args(view, args_clean)
-            # PG-1 Step C: fresh-start view was constructed with state=STARTED; fire broker
-            # manually (constructor bypass — cannot use _set_view_state pre-construction).
-            if self._plan_broker is not None:
-                self._plan_broker.on_view_state(view, ToolCallState.GENERATED, ToolCallState.STARTED)
-
-        # PG-1: mark_plan_running now handled by PlanSyncBroker via _set_view_state / broker fire
-
-    def _create_write_fallback(
-        self, tool_call_id: str, tool_name: str, args: "dict[str, Any]"
-    ) -> "tuple[Any, Any]":
-        """SM-06: Create a WriteFileBlock fallback when no gen block exists."""
-        path = args.get("path", "")
-        if not isinstance(path, str):
-            path = ""
-        output = self._get_output_panel()
-        block: "Any | None" = None
-        panel: "Any | None" = None
-        # classify_tool is total; hoist out of the outer try so the AST sweep
-        # can verify no try/except Exception wraps it (R3-VOCAB-2 invariant).
-        from hermes_cli.tui.tool_category import classify_tool as _ct
-        cat = _ct(tool_name).value
-        try:
-            from hermes_cli.tui.write_file_block import WriteFileBlock
-            from hermes_cli.tui.tool_panel import ToolPanel as _ToolPanel
-            block = WriteFileBlock(path=path)
-            panel = _ToolPanel(block, tool_name=tool_name, id=f"tool-{tool_call_id}")
-            panel._plan_tool_call_id = tool_call_id
-            if output is not None:
-                msg = output.current_message or output.new_message()
-                msg._mount_nonprose_block(panel)
-                self.app._browse_total += 1
-                output.scroll_end_if_pinned()
-            self.app._active_streaming_blocks[tool_call_id] = block
-            self.app._streaming_tool_count = len(self.app._active_streaming_blocks)
-            # A1: count this as an open tool block
-            self._open_tool_count += 1
-            from hermes_cli.tui.agent_phase import Phase as _Phase
-            self.app.status_phase = _Phase.TOOL_EXEC
-            # Backward-compat record
-            now = _time.monotonic()
-            turn_start = getattr(self.app, "_turn_start_monotonic", None) or now
-            rec = _ToolCallRecord(
-                tool_call_id=tool_call_id,
-                parent_tool_call_id=None,
-                label=get_display_name(tool_name),
-                tool_name=tool_name,
-                category=cat,
-                depth=0,
-                start_s=round(now - turn_start, 4),
-                dur_ms=None,
-                is_error=False,
-                error_kind=None,
-                mcp_server=None,
-            )
-            self._turn_tool_calls[tool_call_id] = rec
-        except Exception:
-            logger.warning("_create_write_fallback failed for %s id=%s", tool_name, tool_call_id, exc_info=True)
-        return block, panel
-
-    def append_tool_output(self, tool_call_id: str, line: str) -> None:
-        """SM-02: Transition STARTED→STREAMING on first call; append line to block.
-
-        Idempotent on terminal states; logs warning for unknown IDs.
-        """
-        if not line:
-            return
-        view = self._tool_views_by_id.get(tool_call_id)
-        if view is None:
-            logger.warning("append_tool_output: unknown tool_call_id=%s", tool_call_id)
-            return
-        state = view.state  # M17: single read; branch deterministically to close re-entry risk
-        if state in _TERMINAL_STATES:
-            return
-        # R3-AXIS-01 / PG-1: route STARTED→STREAMING through _set_view_state so the
-        # broker fires.  _set_view_state is a no-op when old == new, so re-entry
-        # from STREAMING is safe.
-        if state == ToolCallState.STARTED:
-            self._set_view_state(view, ToolCallState.STREAMING)
-            # SLR-3: register header axis watcher exactly once, at STREAMING entry.
-            self._register_header_hint_watcher(view)
-        if self._live_block_for_streaming(tool_call_id) is None:
-            logger.debug("append_tool_output: block gone post-axis for id=%s", tool_call_id)
-            return
-        self.append_streaming_line(tool_call_id, line)
-        # SLR-3: accumulate sniff buffer and fire hint once at threshold.
-        self._run_sniff_buffer(view, line)
-
-    # SLR-3: sniff buffer helpers
-    # SLR-3: streaming_kind_hint sniff window. 8 bytes is the smallest prefix
-    # at which the strongest format markers can be detected unambiguously
-    # (e.g. `diff --` for diff, `{` plus 1+ whitespace+key char for json,
-    # `def `/`class `/`function ` for code). Smaller windows produce
-    # false-positive hints on leading whitespace or shebang lines; larger
-    # windows delay the hint past the 100ms perceived-hang threshold on slow
-    # tools. The full classification window is 256 bytes (concept §KIND
-    # implementation map); the *hint* window is deliberately smaller to
-    # surface the icon swap before the classifier runs at COMPLETING.
-    _MIN_HINT_PREFIX_BYTES: int = 8
-
-    def _register_header_hint_watcher(self, view: "ToolCallViewState") -> None:
-        """Wire ToolHeader axis watcher for streaming_kind_hint. Called once at STREAMING entry."""
-        try:
-            header = getattr(getattr(view, "block", None), "_header", None)
-            if header is not None and hasattr(header, "attach_stream_axis_watcher"):
-                header.attach_stream_axis_watcher(view)
-            elif header is not None:
-                # TBM-9 LOW-4: surface header type-mismatches loudly so misrouted
-                # widgets are not silently bypassed.
-                logger.warning(
-                    "_register_header_hint_watcher: header %r missing attach_stream_axis_watcher",
-                    type(header).__name__,
-                )
-        except Exception:
-            logger.debug("_register_header_hint_watcher: failed for id=%s", view.tool_call_id, exc_info=True)
-
-    def _run_sniff_buffer(self, view: "ToolCallViewState", chunk: str) -> None:
-        """Accumulate sniff buffer; fire streaming_kind_hint once at threshold."""
-        if view._sniff_buffer is None:
-            return  # already fired or cleared
-        # TBM-2: hard cap on sniff buffer. If we hit the cap without the lstrip
-        # threshold being reached, give up on the hint (same effect as the
-        # already-fired sentinel) so unbounded whitespace cannot grow memory.
-        if len(view._sniff_buffer) >= _SNIFF_BUFFER_CAP:
-            view._sniff_buffer = None
-            return
-        view._sniff_buffer += chunk
-        if len(view._sniff_buffer) > _SNIFF_BUFFER_CAP:
-            view._sniff_buffer = view._sniff_buffer[:_SNIFF_BUFFER_CAP]
-        if len(view._sniff_buffer.lstrip()) < self._MIN_HINT_PREFIX_BYTES:
-            return
-        # Lstrip before passing to renderers — threshold check uses lstripped length;
-        # renderers expect content to start at the first non-whitespace char.
-        buf = view._sniff_buffer.lstrip()[:256]
-        view._sniff_buffer = None  # discard buffer — hint fires at most once
-        from hermes_cli.tui.body_renderers import REGISTRY
-        for renderer_cls in REGISTRY:
-            if not hasattr(renderer_cls, "streaming_kind_hint"):
-                continue
-            try:
-                hint = renderer_cls.streaming_kind_hint(buf)
-            except Exception:
-                logger.exception("streaming_kind_hint raised in %s", renderer_cls.__name__)
-                hint = None
-            if hint is not None:
-                set_axis(view, "streaming_kind_hint", hint)
-                return
-
-    def complete_tool_call(
-        self,
-        tool_call_id: str,
-        tool_name: str,
-        args: "dict[str, Any]",
-        raw_result: str,
-        *,
-        is_error: bool,
-        summary: "Any | None",
-        diff_lines: "list[str] | None" = None,
-        header_stats: "Any | None" = None,
-        result_lines: "list[str] | None" = None,
-        duration: "str | None" = None,
-    ) -> None:
-        """SM-02: Complete a tool call. Idempotent on terminal states.
-
-        Enters COMPLETING (transient), closes the streaming block, marks the
-        PlanPanel done (SM-05: always, regardless of display.tool_progress),
-        then exits to DONE or ERROR.
-
-        If `duration` is supplied, it takes precedence over the inferred value
-        from the block's start time (SM-HIGH-01: CLI passes its own timer).
-        """
-        view = self._tool_views_by_id.get(tool_call_id)
-
-        # Idempotent if already terminal (or unknown — still complete plan)
-        if view is not None and view.state in _TERMINAL_STATES:
-            return
-
-        if view is not None:
-            # H9: stamp kind BEFORE COMPLETING transition so phase-axis watchers
-            # see the final kind on first notification.
-            self._stamp_kind_on_completing(view, result_lines)
-            # PG-1: COMPLETING is a no-op in broker (falls through to pass case)
-            self._set_view_state(view, ToolCallState.COMPLETING)
-
-        # Compute duration string for UI display
-        dur_ms_float: float = 0.0
-        block = self.app._active_streaming_blocks.get(tool_call_id)
-        if duration is not None:
-            # Caller supplied duration (e.g. CLI's _stream_start_times timer)
-            pass
-        else:
-            if view is not None:
-                dur_ms_float = (_time.monotonic() - view.started_at) * 1000.0
-                if dur_ms_float >= 1000:
-                    duration = f"{dur_ms_float/1000:.1f}s"
-                else:
-                    duration = f"{dur_ms_float:.0f}ms"
-            elif block is not None:
-                started = getattr(block, "_stream_started_at", None)
-                if started is not None:
-                    elapsed_ms = (_time.monotonic() - started) * 1000.0
-                    dur_ms_float = elapsed_ms
-                    if elapsed_ms >= 1000:
-                        duration = f"{elapsed_ms/1000:.1f}s"
-                    else:
-                        duration = f"{elapsed_ms:.0f}ms"
-            if duration is None:
-                duration = ""
-
-        # Close the streaming block
-        if diff_lines is not None:
-            self.close_streaming_tool_block_with_diff(
-                tool_call_id, duration, is_error, diff_lines, header_stats, summary
-            )
-        else:
-            self.close_streaming_tool_block(
-                tool_call_id, duration, is_error, summary, result_lines
-            )
-
-        # PG-1: mark_plan_done now fired by PlanSyncBroker when _set_view_state(DONE/ERROR)
-        # is called inside _terminalize_tool_view (Step 9) via close_streaming_tool_block.
-        # Fallback: if there was no view at all, _terminalize_tool_view was never reached,
-        # so fire mark_plan_done directly to keep the PlanPanel consistent.
-        if view is None:
-            self.mark_plan_done(tool_call_id, is_error=is_error, dur_ms=int(dur_ms_float))
-
-        # Record tool call latency into perf probe
-        dur_ms_int = int(dur_ms_float)
-        from hermes_cli.tui.perf import _tool_probe
-        _tool_probe.record(tool_name, tool_call_id, dur_ms_float, is_error=is_error)
-
-        # R3-AXIS-03: terminal write + index pop already done by
-        # _terminalize_tool_view inside close_streaming_tool_block (Step 9 + Step 11).
-
-    def cancel_tool_call(
-        self,
-        tool_call_id: "str | None" = None,
-        gen_index: "int | None" = None,
-    ) -> None:
-        """SM-02: Cancel a tool call (GENERATED, STARTED, or STREAMING).
-
-        Lookup order: tool_call_id takes precedence over gen_index.
-        Raises ValueError if both are None.
-        No-op with warning if no matching record exists.
-        """
-        if tool_call_id is None and gen_index is None:
-            raise ValueError("cancel_tool_call requires tool_call_id or gen_index")
-
-        view: "ToolCallViewState | None" = None
-        if tool_call_id is not None:
-            view = self._tool_views_by_id.get(tool_call_id)
-        if view is None and gen_index is not None:
-            view = self._tool_views_by_gen_index.get(gen_index)
-
-        if view is None:
-            logger.warning("cancel_tool_call: no record for tool_call_id=%s gen_index=%s",
-                           tool_call_id, gen_index)
-            return
-
-        # Helper handles terminal-state short-circuit, counter decrement, plan
-        # cancel, visual removal, and index pops in the correct order.
-        self._terminalize_tool_view(
-            view.tool_call_id if view.tool_call_id else None,
-            terminal_state=ToolCallState.CANCELLED,
-            is_error=False,
-            mark_plan=True,
-            remove_visual=True,
-            delete_view=False,  # keep _turn_tool_calls record for /tools overlay history
-            view=view,
-            gen_index=gen_index if view.tool_call_id is None else None,
-        )
 
     def current_turn_tool_calls(self) -> list[dict]:
         """Return a list of per-turn tool call records (P7 /tools overlay).
 
-        Thread-safe: uses _snapshot_turn_tool_calls to avoid RuntimeError from
-        concurrent dict mutation (H8 — worker threads may call this via the
-        /tools overlay reload path).
+        Thread-safe: builds a fresh list of dicts from _ToolCallRecord values.
         """
         return [
             {
@@ -1833,7 +514,7 @@ class ToolRenderingService(AppService):
                 "error_kind": r.error_kind,
                 "mcp_server": r.mcp_server,
             }
-            for r in self._snapshot_turn_tool_calls()
+            for r in self._turn_tool_calls.values()
         ]
 
     def get_reasoning_panel(self) -> "Any | None":
@@ -1842,31 +523,3 @@ class ToolRenderingService(AppService):
         if msg is None:
             return None
         return getattr(msg, "_reasoning_panel", None)
-
-    def _stamp_kind_on_completing(
-        self,
-        view: "ToolCallViewState",
-        result_lines: "list[str] | None",
-    ) -> None:
-        """AXIS-4: classify once at COMPLETING and stamp onto view-state.
-
-        Idempotent: only writes when view.kind is None. Exceptions are logged
-        and swallowed — classifier failure must never break completion.
-        """
-        if view.kind is not None:
-            return  # already stamped (defensive — shouldn't happen)
-        try:
-            from hermes_cli.tui.tool_payload import ToolPayload
-            output_raw = "\n".join(result_lines) if result_lines else ""
-            payload = ToolPayload(
-                tool_name=view.tool_name,
-                category=view.category,
-                args=view.args or {},
-                input_display=None,
-                output_raw=output_raw,
-            )
-            result = _classify_with_timeout(payload)
-        except Exception:
-            logger.exception("AXIS-4: classifier failed during COMPLETING; leaving kind=None")
-            return
-        set_axis(view, "kind", result)

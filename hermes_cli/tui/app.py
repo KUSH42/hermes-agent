@@ -138,6 +138,7 @@ from hermes_cli.tui.perf import (
     measure,
 )
 from hermes_cli.tui.theme_manager import ThemeManager
+from hermes_cli.tui.services import feedback as _fb
 from wcwidth import wcswidth
 
 
@@ -2278,7 +2279,7 @@ class HermesApp(App):
         if new == ScrollState.PINNED:
             self._scroll_hint_shown = False
         elif not self._scroll_hint_shown:
-            self._flash_hint("End → latest", 2.0)
+            self._flash_hint("End → latest", 2.0, key=_fb.HINT_KEY_SCROLL_CATCHUP)
             self._scroll_hint_shown = True
 
     def action_focus_input_from_output(self) -> None:
@@ -2305,11 +2306,11 @@ class HermesApp(App):
         if self._compact_manual is None or not self.compact:
             self._compact_manual = True
             self.compact = True
-            self._flash_hint("Compact ON  (/density to toggle)", 1.5)
+            self._flash_hint("Compact ON  (/density to toggle)", 1.5, key=_fb.HINT_KEY_DENSITY_TOGGLE)
         else:
             self._compact_manual = None  # restore auto
             self._recompute_auto_compact()
-            self._flash_hint("Compact auto", 1.5)
+            self._flash_hint("Compact auto", 1.5, key=_fb.HINT_KEY_DENSITY_TOGGLE)
 
     def action_enable_auto_mini(self) -> None:
         """E2: /density auto-mini — enable opt-in mini-mode (height:1 stub for trivial SHELL calls)."""
@@ -2881,8 +2882,16 @@ class HermesApp(App):
             )
             return True
 
-    def _flash_hint(self, text: str, duration: float = 1.5) -> None:
-        self.feedback.flash("hint-bar", text, duration=duration)
+    def _flash_hint(
+        self,
+        text: str,
+        duration: float = 1.5,
+        *,
+        key: "str | None" = None,
+        priority: int = 10,  # feedback.NORMAL = 10
+    ) -> "Any":
+        """Flash a hint in the HintBar. Returns a FlashHandle (displayed=True/False)."""
+        return self.feedback.flash("hint-bar", text, duration=duration, priority=priority, key=key)
 
     def set_status_error(self, msg: str, auto_clear_s: float = 0.0) -> None:
         return self._svc_theme.set_status_error(msg, auto_clear_s)

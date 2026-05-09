@@ -38,6 +38,25 @@ WARN: int = 20
 ERROR: int = 30
 CRITICAL: int = 40
 
+# ---------------------------------------------------------------------------
+# Hint-bar key catalogue
+# Convention: every long-lived hint-bar flash must use one of these keys
+# (or a unique caller-defined key) so cancel() can target it precisely.
+# IL-HB-1 lint gate enforces: cancel("hint-bar") without key= is a violation.
+# ---------------------------------------------------------------------------
+
+HINT_KEY_REV_SEARCH      = "rev-search"
+HINT_KEY_BASH_MODE       = "bash-mode"
+HINT_KEY_STATUS_ERROR    = "status-error"
+HINT_KEY_COMPACTION_WARN = "compaction-warn"
+HINT_KEY_COMPACTION_CRIT = "compaction-crit"
+HINT_KEY_PANE_FOCUS      = "pane-focus"
+HINT_KEY_DENSITY_CHANGE  = "density-change"   # tool_panel density-change toasts
+HINT_KEY_DENSITY_TOGGLE  = "density-toggle"   # app.py compact-toggle toasts (HB1-H4)
+HINT_KEY_HISTORY_WRITE_ERR = "history-write-err"
+HINT_KEY_TOOL_DISCOVERY  = "tool-discovery"
+HINT_KEY_SCROLL_CATCHUP  = "scroll-catchup"
+
 
 # ---------------------------------------------------------------------------
 # ExpireReason

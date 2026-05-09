@@ -198,14 +198,6 @@ _BAR_WIDTH = 10
 # LL-spec messages
 # ---------------------------------------------------------------------------
 
-class FlashMessage(Message):
-    """Post to flash a text string in the HintBar for a given duration (LL-1/LL-5)."""
-    def __init__(self, text: str, duration: float = 1.0) -> None:
-        super().__init__()
-        self.text = text
-        self.duration = duration
-
-
 class KindOverrideChanged(Message):
     """Bubbles from StreamingToolBlock to HintBar to show/hide kind chip (LL-4)."""
     def __init__(
@@ -267,9 +259,6 @@ class HintBar(Widget):
         # LL-4: kind override chip state
         self._cycle_kind: "Callable[[], None] | None" = None
         self._kind_chip: "KindOverrideChip | None" = None
-        # LL-1/LL-5: flash timer
-        self._flash_timer: object | None = None
-        self._flash_text: str = ""
         # C2: compact ghost-text affordance
         self._density_tier: str = DensityTier.DEFAULT.value
         self._has_ghost_suggestion: bool = False
@@ -324,27 +313,8 @@ class HintBar(Widget):
         if self._kind_chip is not None:
             self._kind_chip.display = False
 
-    def on_flash_message(self, event: FlashMessage) -> None:
-        """LL-1/LL-5: flash text in hint bar for duration seconds."""
-        self._flash_text = event.text
-        self.hint = event.text
-        if self._flash_timer is not None:
-            self._flash_timer.stop()
-        self._flash_timer = self.set_timer(event.duration, self._clear_flash)
-
-    def _clear_flash(self) -> None:
-        self._flash_text = ""
-        self.hint = ""
-        self._flash_timer = None
-
     def on_unmount(self) -> None:
         self._shimmer_stop()
-        if self._flash_timer is not None:
-            try:
-                self._flash_timer.stop()
-            except Exception:
-                _log.debug("HintBar.on_unmount: _flash_timer stop failed", exc_info=True)
-            self._flash_timer = None
 
     def _on_streaming_change(self, streaming: bool = False) -> None:
         """S0-C: suppress shimmer while streaming; restore when done."""
@@ -757,23 +727,17 @@ class StatusBar(PulseMixin, Widget):
         _cwd_age = _time.monotonic() - getattr(self, "_cwd_changed_at", 0.0)
         _cwd_style = "bold" if _cwd_age < 2.0 else "dim"
 
-        # S1-E: check whether HintBar is actively flashing (suppress idle tips if so)
-        _feedback = getattr(app, "feedback", None)
+        # S1-E: check whether HintBar is actively flashing (suppress idle tips if so).
+        # All writes go through FeedbackService now (HB1-H1/H2), so peek is authoritative.
         _flash_state = None
-        _feedback_explicit = "feedback" in getattr(app, "__dict__", {})
-        if (
-            _feedback is not None
-            and (not _mockish(_feedback) or _feedback_explicit)
-            and hasattr(_feedback, "peek")
-        ):
+        _feedback = getattr(app, "feedback", None)
+        if _feedback is not None and hasattr(_feedback, "peek"):
             try:
                 _flash_state = _feedback.peek("hint-bar")
             except Exception:
-                # flash state query failed; treat as no active flash
+                _log.debug("peek failed", exc_info=True)
                 _flash_state = None
-        _hintbar_flashing = _flash_state is not None and (
-            not _mockish(_flash_state) or _feedback_explicit
-        )
+        _hintbar_flashing = _flash_state is not None
 
         # S1-F: track whether fields were dropped in the minimal branch
         _fields_dropped = False

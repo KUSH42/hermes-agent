@@ -889,11 +889,15 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Chevron/legend owned by watch__mode. Placeholder via _refresh_placeholder()."""
         self._refresh_placeholder()
         try:
+            from hermes_cli.tui.services import feedback as _fb
             if is_bash and not self._bash_hint_shown:
                 self._bash_hint_shown = True
-                self.app._flash_hint("shell mode  ·  Ctrl+C to exit", 1.5)
+                self.app._flash_hint(
+                    "shell mode  ·  Ctrl+C to exit", 1.5,
+                    key=_fb.HINT_KEY_BASH_MODE,
+                )
             if not is_bash:
-                self.app.feedback.cancel("hint-bar")
+                self.app.feedback.cancel("hint-bar", key=_fb.HINT_KEY_BASH_MODE)
         except Exception as exc:  # app._flash_hint / feedback unavailable — hint sync skipped
             _log.debug("bash mode hint sync failed: %s", exc, exc_info=True)
 

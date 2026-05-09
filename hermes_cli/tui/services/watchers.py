@@ -13,6 +13,7 @@ from textual.css.query import NoMatches
 from hermes_cli.file_drop import classify_dropped_file, format_link_token
 from hermes_cli.tui.state import ChoiceOverlayState, SecretOverlayState, UndoOverlayState
 from .base import AppService
+from . import feedback as _fb
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -169,6 +170,7 @@ class WatchersService(AppService):
                     f"Context {int(_warn * 100)}% full — /compact available",
                     duration=8.0,
                     priority=5,
+                    key=_fb.HINT_KEY_COMPACTION_WARN,
                 )
             except Exception as exc:
                 _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
@@ -182,6 +184,7 @@ class WatchersService(AppService):
                     f"Context {int(_crit * 100)}% full — /compact or clear conversation",
                     duration=8.0,
                     priority=8,
+                    key=_fb.HINT_KEY_COMPACTION_CRIT,
                 )
             except Exception as exc:
                 _log.warning("on_status_compaction_progress: feedback.flash failed: %s", exc, exc_info=True)
@@ -517,9 +520,10 @@ class WatchersService(AppService):
                     f"⚠ {value}",
                     duration=9999,
                     priority=10,
+                    key=_fb.HINT_KEY_STATUS_ERROR,
                 )
             else:
-                self.app.feedback.cancel("hint-bar")
+                self.app.feedback.cancel("hint-bar", key=_fb.HINT_KEY_STATUS_ERROR)
         except Exception as exc:
             _log.warning("on_status_error: feedback flash/cancel failed: %s", exc, exc_info=True)
 

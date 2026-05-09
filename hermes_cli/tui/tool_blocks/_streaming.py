@@ -24,7 +24,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from hermes_cli.tui.body_renderers import RendererKind
-from hermes_cli.tui.widgets import CopyableRichLog, FlashMessage, HintBar, KindOverrideChanged, _strip_ansi
+from hermes_cli.tui.widgets import CopyableRichLog, HintBar, KindOverrideChanged, _strip_ansi
 
 
 from ._shared import (
@@ -811,7 +811,16 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             self._clear_settled()  # FS-3: retry path resets settled
             if self._was_generated:
                 if self.is_attached:
-                    self.post_message(FlashMessage("started", duration=1.2))
+                    try:
+                        from hermes_cli.tui.services import feedback as _fb
+                        self.app.feedback.flash(
+                            "hint-bar", "started",
+                            duration=1.2,
+                            priority=_fb.LOW,
+                            key=_fb.HINT_KEY_DENSITY_CHANGE,
+                        )
+                    except Exception:
+                        logger.debug("adoption flash failed", exc_info=True)
                 try:
                     self.add_class("adopted")
                 except Exception:
@@ -896,13 +905,31 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
     def action_kind_revert(self) -> None:
         if self._kind_override is None:
             if self.is_attached:
-                self.post_message(FlashMessage("no override", duration=1.0))
+                try:
+                    from hermes_cli.tui.services import feedback as _fb
+                    self.app.feedback.flash(
+                        "hint-bar", "no override",
+                        duration=1.0,
+                        priority=_fb.LOW,
+                        key=_fb.HINT_KEY_DENSITY_CHANGE,
+                    )
+                except Exception:
+                    logger.debug("kind-revert flash (no override) failed", exc_info=True)
             return
         self._kind_override = None
         auto_kind = self._auto_renderer_kind()
         if self.is_attached:
             self.post_message(KindOverrideChanged(override=None, cycle_callback=None))
-            self.post_message(FlashMessage(f"kind: auto ({auto_kind.value.lower()})", duration=1.2))
+            try:
+                from hermes_cli.tui.services import feedback as _fb
+                self.app.feedback.flash(
+                    "hint-bar", f"kind: auto ({auto_kind.value.lower()})",
+                    duration=1.2,
+                    priority=_fb.LOW,
+                    key=_fb.HINT_KEY_DENSITY_CHANGE,
+                )
+            except Exception:
+                logger.debug("kind-revert flash (auto) failed", exc_info=True)
 
     def _auto_renderer_kind(self) -> RendererKind:
         """Return the renderer kind the classifier would choose without an override."""

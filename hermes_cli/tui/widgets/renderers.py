@@ -114,8 +114,11 @@ class CopyableRichLog(RichLog, can_focus=False):
             self._render_width = self.size.width
 
     def on_resize(self, event: events.Resize) -> None:
-        # Authoritative: always set, always > 0 at this point.
-        self._render_width = event.size.width
+        w = event.size.width
+        if w > 0:
+            self._render_width = w
+        else:
+            _log.debug("CopyableRichLog.on_resize: event.size.width == 0; skipping update")
 
     def render_line(self, y: int) -> Strip:
         """Override to add offset metadata and selection highlighting.

@@ -85,6 +85,8 @@ class OutputPanel(ScrollableContainer):
         self._last_scroll_origin: str | None = None
         self._anchored_pending_count: int = 0
         self._turn_raw_output: str = ""
+        # RZ-OP-H2: cache last seen (w, h) to gate _resolve_layout on layout-relevant change.
+        self._last_resize_geom: tuple[int, int] = (-1, -1)
 
     @property
     def _user_scrolled_up(self) -> bool:
@@ -213,14 +215,15 @@ class OutputPanel(ScrollableContainer):
         # Cache width for the startup banner daemon thread.
         try:
             w = self.size.width
-            if w > 0:
-                # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
-                self.app._startup_output_panel_width = max(1, w - 1)
-                OUTPUT_PANEL_WIDTH_READY.set()
-            # else: on_resize will set it once Textual completes initial layout
         except Exception:
-            # best-effort UI update; widget may not be mounted
-            pass
+            _log.warning("OutputPanel.on_mount: size.width unavailable", exc_info=True)
+            w = 0
+        if w > 0:
+            # Subtract 1 for the vertical scrollbar (scrollbar-size-vertical: 1 in TCSS).
+            self.app._startup_output_panel_width = max(1, w - 1)
+            OUTPUT_PANEL_WIDTH_READY.set()
+        # else: on_resize will set it once Textual completes initial layout
+        self.set_timer(2.0, self._force_width_ready_fallback)
         # W-11: mount the scroll-state badge before the live-output duo so the
         # [LiveLineWidget, ThinkingWidget] suffix invariant is preserved.
         badge = OutputPanelScrollBadge()
@@ -232,6 +235,18 @@ class OutputPanel(ScrollableContainer):
 
     def on_unmount(self) -> None:
         OUTPUT_PANEL_WIDTH_READY.clear()
+
+    def _force_width_ready_fallback(self) -> None:
+        """RZ-OP-L3: 2s deadline fallback — sets OUTPUT_PANEL_WIDTH_READY if no resize delivered width>0."""
+        if OUTPUT_PANEL_WIDTH_READY.is_set():
+            return
+        _log.warning(
+            "OutputPanel: WIDTH_READY fallback fired "
+            "(no resize delivered width>0 within 2s)"
+        )
+        if not getattr(self.app, "_startup_output_panel_width", None):
+            self.app._startup_output_panel_width = 79  # 80-col default minus scrollbar
+        OUTPUT_PANEL_WIDTH_READY.set()
 
     # W-9/W-11: gated scroll_end -----------------------------------------------
 
@@ -521,16 +536,22 @@ class OutputPanel(ScrollableContainer):
 
     def on_resize(self, event: Any) -> None:
         """Anchor scroll position on resize; Textual cascades resize to children automatically."""
-        self._resolve_layout()
+        new_w = getattr(getattr(event, "size", None), "width", 0)
+        new_h = getattr(getattr(event, "size", None), "height", 0)
+        last_w, last_h = self._last_resize_geom
+        if new_w != last_w or new_h != last_h:
+            self._resolve_layout()
+            self._last_resize_geom = (new_w, new_h)
         # Set startup banner width on first resize (size.width is 0 at on_mount in Textual 8.x).
         if not OUTPUT_PANEL_WIDTH_READY.is_set():
             try:
                 w = self.size.width
-                if w > 0:
-                    self.app._startup_output_panel_width = max(1, w - 1)
-                    OUTPUT_PANEL_WIDTH_READY.set()
             except Exception:
-                pass
+                _log.warning("OutputPanel.on_resize: size.width unavailable", exc_info=True)
+                w = 0
+            if w > 0:
+                self.app._startup_output_panel_width = max(1, w - 1)
+                OUTPUT_PANEL_WIDTH_READY.set()
         # R08/R09: scroll anchoring — preserve position after layout recalc.
         # During startup (before any messages), skip scroll_end: it would race
         # with the async banner-set and show the wrong position before the final
@@ -555,8 +576,9 @@ def _clear_thinking_reserve(tw) -> None:
     try:
         tw.clear_reserve()
     except Exception:
-        # best-effort UI update; widget may not be mounted
-        pass
+        # best-effort UI update; widget may have been unmounted between
+        # the turn-completion signal and this call
+        _log.debug("clear_thinking_reserve: tw.clear_reserve() failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

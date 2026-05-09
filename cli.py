@@ -5616,7 +5616,8 @@ class HermesCLI:
                     for _fi in range(_POST_FADE_FRAMES):
                         _t = (_fi + 1) / _POST_FADE_FRAMES
                         _fade = _process_raw_frame(
-                            self._hero_ansi_with_stops_at(plain_hero, _settle_stops, _settle_direction, _t, _settle_bg)
+                            self._hero_ansi_with_stops_at(plain_hero, _settle_stops, _settle_direction, _t, _settle_bg),
+                            _get_logo_frame_at(MAX_FRAMES),
                         )
                         anim_frames.append(_fade)
                 except Exception:

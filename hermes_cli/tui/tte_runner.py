@@ -276,8 +276,8 @@ def _apply_effect_params(
                 except Exception:
                     _log.warning("tte_runner: ignoring invalid final_gradient_stops for %r", effect_name, exc_info=True)
             continue
-        if key == "_frame_rate":
-            continue  # applied to terminal_config in iter_frames, not effect_config
+        if key == "_frame_rate" or key == "_post_fade_frames":
+            continue  # applied to terminal/consumer config in cli.py, not effect_config
         if key == "parser_spec" or key not in known_keys:
             _log.warning("tte_runner: ignoring unknown %r param: %r", effect_name, key)
             continue

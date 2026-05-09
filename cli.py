@@ -5304,7 +5304,14 @@ class HermesCLI:
         MAX_WALL_S = cfg.max_wall_s
         DISPLAY_FPS = min(_tc.MAX_FPS, max(1, cfg.fps))
         # max(2, ...) guarantees at least a start frame + full-brightness frame on any FPS.
-        _POST_FADE_FRAMES = max(2, round(DISPLAY_FPS * 0.42))
+        # _post_fade_frames=0 in skin params skips the ramp for effects (e.g. matrix)
+        # that include their own native resolve/settle phase.
+        _pfr_override = int((cfg.params or {}).get("_post_fade_frames", -1))
+        _POST_FADE_FRAMES = (
+            max(0, _pfr_override)
+            if _pfr_override >= 0
+            else max(2, round(DISPLAY_FPS * 0.42))
+        )
 
         # template_cell[0] starts as None; populated after _ensure_startup_banner_artefacts
         # returns so that _produce() (started earlier on cache miss) sees the resolved

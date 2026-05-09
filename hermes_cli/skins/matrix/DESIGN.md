@@ -42,6 +42,7 @@ x-hermes:
     fps: 90
     params:
       _frame_rate: 90
+      _post_fade_frames: 0
       rain_time: 2
       resolve_delay: 1
       symbol_swap_chance: 0.05
@@ -70,6 +71,7 @@ x-hermes:
     fps: 60
     params:
       _frame_rate: 60
+      _post_fade_frames: 0
       rain_time: 1
       resolve_delay: 1
       symbol_swap_chance: 0.05

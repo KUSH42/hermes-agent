@@ -59,6 +59,7 @@ HINT_KEY_SCROLL_CATCHUP  = "scroll-catchup"
 HINT_KEY_COPY_OK           = "copy-ok"
 HINT_KEY_COPY_TRUNCATED    = "copy-truncated"
 HINT_KEY_IMAGE_NOT_IN_VIEW = "image-not-in-view"
+HINT_KEY_ATTACHMENT_DETACH = "attachment-detach"
 
 
 # ---------------------------------------------------------------------------

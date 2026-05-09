@@ -74,6 +74,7 @@ from hermes_cli.tui.state import (
     UndoOverlayState,
 )
 from hermes_cli.tui.widgets import (
+    AttachmentChip,
     CopyableRichLog,
     FPSCounter,
     HistorySearchOverlay,
@@ -381,6 +382,9 @@ class HermesApp(App):
 
     # Image attachments — reactive(list) uses factory form to avoid shared mutable default
     attached_images: reactive[list] = reactive(list)
+    # Hidden-attachment chip count: non-zero when images are attached but ImageBar is
+    # forced hidden by short terminal height (h < 10); drives StatusBar 📎N chip.
+    status_attachment_count_hidden: reactive[int] = reactive(0)
 
     # --- PlanPanel (R1) ---
     # planned_calls: list of PlannedCall (frozen dataclass); factory form avoids shared mutable.
@@ -656,6 +660,8 @@ class HermesApp(App):
             BrowseService, SessionsService, ContextMenuService, CommandsService,
             WatchersService, KeyDispatchService, BashService,
         )
+        from hermes_cli.services.clipboard import TextualClipboardService
+        self._clipboard_svc = TextualClipboardService(self)
         self._svc_theme    = ThemeService(self)
         self._svc_spinner  = SpinnerService(self)
         self._svc_io       = IOService(self)
@@ -2974,6 +2980,17 @@ class HermesApp(App):
     def watch_attached_images(self, value: list) -> None:
         self._svc_watchers.on_attached_images(value)
 
+    def on_attachment_chip_removed(self, event: AttachmentChip.Removed) -> None:
+        images = [p for p in list(self.attached_images) if p != event.path]
+        self.attached_images = images
+        self.feedback.flash(
+            "hint-bar",
+            f"detached {event.path.name}",
+            duration=1.2,
+            priority=3,
+            key=_fb.HINT_KEY_ATTACHMENT_DETACH,
+        )
+
     def handle_file_drop(self, paths: "list[Path]") -> None:
         """Route terminal drag-and-drop pasted paths into input bar."""
         self._svc_watchers.handle_file_drop(paths)
@@ -3044,7 +3061,12 @@ class HermesApp(App):
         self._svc_keys.dispatch_input_submitted(event)
 
     def on_hermes_input_files_dropped(self, event: Any) -> None:
-        self._svc_watchers.handle_file_drop(event.paths)
+        remainder = getattr(event, "remainder_text", "")
+        try:
+            self._svc_watchers.handle_file_drop_inner(event.paths, remainder)
+        except Exception:
+            logger.exception("on_hermes_input_files_dropped: inner handler raised")
+            self._flash_hint("file drop failed — see log for details", 2.0)
 
     async def on_paste(self, event: events.Paste) -> None:
         """Route drag-and-drop pastes to the input regardless of which widget has focus.

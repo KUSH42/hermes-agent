@@ -10,16 +10,19 @@ import logging
 import os
 import sys
 import time as _time  # S1-C: module top — not inside render() or callbacks
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 _log = logging.getLogger(__name__)
 
 from rich.style import Style
 from rich.text import Text
+from textual import events, work
 from textual.app import ComposeResult, RenderResult
+from textual.binding import Binding
 from textual.css.query import NoMatches
-from textual.reactive import reactive
 from textual.message import Message
+from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Label, Static
 
@@ -619,6 +622,10 @@ class StatusBar(PulseMixin, Widget):
     # SS-9: full (non-truncated) session ID for copy action
     _full_session_id: str = ""
 
+    # IB-VIS-RESOLVER-2: hidden-attachment chip count; updated via watch on
+    # app.status_attachment_count_hidden
+    _attachment_count_hidden: int = 0
+
     def __getattr__(self, name: str) -> Any:
         raise AttributeError(name)
 
@@ -681,6 +688,8 @@ class StatusBar(PulseMixin, Widget):
         # CWD-4: track CWD change time for flash-then-dim behaviour
         self._cwd_changed_at: float = 0.0
         self.watch(app, "status_cwd", self._on_cwd_change)
+        # IB-VIS-RESOLVER-2: watch hidden-attachment count for 📎N chip
+        self.watch(app, "status_attachment_count_hidden", self._on_attachment_count_hidden_change)
 
     def _on_status_change(self, _value: object = None) -> None:
         self.refresh()
@@ -738,6 +747,11 @@ class StatusBar(PulseMixin, Widget):
         self._cwd_changed_at = _time.monotonic()
         self.refresh()
         self.set_timer(2.1, self.refresh)  # re-dim after 2s
+
+    def _on_attachment_count_hidden_change(self, count: int = 0) -> None:
+        """IB-VIS-RESOLVER-2: refresh when hidden-attachment count changes."""
+        self._attachment_count_hidden = count
+        self.refresh()
 
     def render(self) -> RenderResult:
         app = self.app
@@ -1004,6 +1018,12 @@ class StatusBar(PulseMixin, Widget):
         if dropped:
             state_t = Text(f" \u26a0 output truncated", style=_err_color) + state_t
 
+        # IB-VIS-RESOLVER-2: \ud83d\udcceN chip when images are attached but bar is hidden by short height
+        _hidden_count = getattr(self, "_attachment_count_hidden", 0)
+        if _hidden_count:
+            chip = Text(f"\ud83d\udcce{_hidden_count} ", style="bold")
+            state_t = chip + state_t
+
         # S1-F: append collapse indicator before padding if fields were dropped
         if _fields_dropped:
             spare = width - t.cell_len - state_t.cell_len
@@ -1139,6 +1159,134 @@ def _check_attachment_tokens(skin_vars: dict[str, str], widget_name: str) -> Non
         )
 
 
+class AttachmentChip(Static, can_focus=True):
+    """A focusable chip representing a single attached file in ImageBar.
+
+    Introduced by SPEC-IB-INTERACTIVE (IB-INT-1).
+    Enhanced with halfblock thumbnails by SPEC-IB-VISUAL (IB-VIS-1/2/3).
+    """
+
+    DEFAULT_CSS = """
+    AttachmentChip {
+        height: 1;
+        padding: 0 1;
+        color: $attachment-chip-fg;
+        background: $attachment-chip-bg;
+    }
+    AttachmentChip:focus {
+        text-style: bold reverse;
+    }
+    """
+    BINDINGS = [
+        Binding("delete,backspace", "remove", "Remove attachment"),
+        Binding("left", "focus_prev_chip", "Previous chip"),
+        Binding("right", "focus_next_chip", "Next chip"),
+        Binding("escape", "blur_back", "Back to input"),
+    ]
+
+    class Removed(Message):
+        def __init__(self, path: Path, index: int) -> None:
+            super().__init__()
+            self.path = path
+            self.index = index
+
+    def __init__(self, path: Path, index: int) -> None:
+        super().__init__()
+        self._path = path
+        self._index = index
+        # IB-VIS-1: thumbnail state (populated by worker after mount)
+        self._thumb_strips: list = []   # list[Strip]
+        self._name_row: int = 0
+        # Truncate display name to 24 chars (IB-INT-1)
+        self._display_name: str = _truncate(path.name, 24)
+
+    def on_mount(self) -> None:
+        # IB-VIS-3: Set tooltip unconditionally (full path + size).
+        # Done in on_mount (not __init__) so that tooltip setter can access
+        # the screen — the tooltip property setter requires a mounted widget.
+        from hermes_cli.tui.widgets.inline_media import _size_str_for_path
+        size_str = _size_str_for_path(self._path)
+        self.tooltip = (
+            f"{self._path.as_posix()} ({size_str})" if size_str else self._path.as_posix()
+        )
+        # IB-VIS-1: Load thumbnail strips if config flag is enabled
+        try:
+            from hermes_cli.config import read_raw_config
+            thumbnails_enabled = (
+                read_raw_config().get("display", {}).get("image_bar_thumbnails", True)
+            )
+        except Exception:
+            _log.debug("AttachmentChip.on_mount: failed to read config", exc_info=True)
+            thumbnails_enabled = True
+        if thumbnails_enabled:
+            self._load_thumb_strips()
+
+    @work(thread=True)
+    def _load_thumb_strips(self) -> None:
+        """Decode thumbnail strips off the event loop (IB-VIS-1 worker pattern)."""
+        try:
+            from hermes_cli.tui.widgets.inline_media import _render_attachment_thumb
+            strips = _render_attachment_thumb(self._path, cols=6, rows=3)
+            self.app.call_from_thread(self._apply_thumb_strips, strips)
+        except Exception:
+            _log.exception("AttachmentChip._load_thumb_strips: image decode failed")
+
+    def _apply_thumb_strips(self, strips: list) -> None:
+        """Apply decoded strips and update chip height (IB-VIS-1 height contract)."""
+        if not self.is_mounted:
+            return
+        self._thumb_strips = strips
+        if strips:
+            self._name_row = len(strips) // 2
+            self.styles.height = len(strips)
+        else:
+            self._name_row = 0
+            self.styles.height = 1
+        self.refresh()
+
+    def render_line(self, y: int) -> "Strip":
+        from rich.segment import Segment as _Segment
+        from textual.strip import Strip as _Strip
+        if self._thumb_strips and 0 <= y < len(self._thumb_strips):
+            thumb = self._thumb_strips[y]
+            if y == self._name_row:
+                # Strip.join() is the correct Textual 8.x API for concatenating
+                # two Strip objects; the + operator is not defined on Strip.
+                return _Strip.join([thumb, _Strip([_Segment(f"  {self._display_name}  ✕")])])
+            return thumb
+        # Fallback: 1-row text mode (thumbnails disabled, loading, or decode failed).
+        # Only y==0 is meaningful here; chip height is 1 in this mode.
+        return _Strip([_Segment(f"📎 {self._display_name}  ✕")])
+
+    def render(self) -> RenderResult:
+        # render() is used by Textual when render_line() is not sufficient,
+        # and as a fallback for non-line rendering. Provide the basic text representation.
+        return Text.assemble(("📎 ", "dim"), (_truncate(self._path.name, 24), ""), ("  ✕", "dim"))
+
+    def on_click(self, event: events.Click) -> None:
+        # Hit-test ✕ tail: last 3 cells of the chip.
+        if event.x >= self.region.width - 3:
+            self.action_remove()
+        # Body click: no action in this spec (IB-INT-1 scope only).
+
+    def action_remove(self) -> None:
+        self.post_message(self.Removed(self._path, self._index))
+
+    def action_focus_prev_chip(self) -> None:
+        self.screen.focus_previous(AttachmentChip)
+
+    def action_focus_next_chip(self) -> None:
+        self.screen.focus_next(AttachmentChip)
+
+    def action_blur_back(self) -> None:
+        try:
+            self.app.query_one("#input-area").focus()
+        except NoMatches:
+            # #input-area may not be mounted yet during startup; focus loss is
+            # acceptable in that edge case.
+            pass
+
+
 class ImageBar(Widget):
     """Displays attached image filenames; hidden when empty.
 
@@ -1151,6 +1299,9 @@ class ImageBar(Widget):
         display: none;
         height: auto;
     }
+    ImageBar.--visible {
+        display: block;
+    }
     """
 
     _shimmer_tick: reactive[int] = reactive(0, repaint=True)
@@ -1162,6 +1313,15 @@ class ImageBar(Widget):
         self._shimmer_skip: list[tuple[int, int]] = []
         self._static_content: "Text" = Text()
         self._tokens_checked: bool = False
+
+    def recompute_visibility(self) -> None:
+        """Single authority for --visible class. Call after any state change."""
+        h = self.app.size.height
+        count = len(self.app.attached_images)
+        if count == 0 or h < 10:
+            self.remove_class("--visible")
+        else:
+            self.add_class("--visible")
 
     def _shimmer_stop(self) -> None:
         """Stop shimmer. Idempotent."""
@@ -1220,24 +1380,34 @@ class ImageBar(Widget):
         return self._static_content
 
     def update_images(self, images: list) -> None:
-        """Update the displayed image list and toggle visibility."""
-        if images:
-            self.display = True
-            names = ", ".join(getattr(img, "name", str(img)) for img in images)
-            try:
-                _av = _get_attachment_css_vars(self.app.get_css_variables())
-            except Exception:
-                _log.debug("get_css_variables failed in ImageBar.update_images", exc_info=True)
-                _av = dict(_ATTACHMENT_CSS_DEFAULTS)
-            fg = _av["attachment-chip-fg"]
-            base_text = Text(f"📎 {names}", style=fg)
-            self._static_content = base_text
-            self._shimmer_once(base_text)
-        else:
-            self.display = False
-            self._shimmer_stop()
-            self._static_content = Text()
-            self.refresh()
+        """Diff-mount AttachmentChips for each path; remove stale chips."""
+        # Snapshot before any mutation so the mount loop can detect existing chips.
+        current = {chip._path: chip for chip in self.query(AttachmentChip)}
+        desired = list(images)
+        desired_set = set(desired)
+
+        # Remove chips no longer present.
+        for path, chip in current.items():
+            if path not in desired_set:
+                chip.remove()
+
+        # Mount new chips, preserving order via mount(before=...).
+        for i, path in enumerate(desired):
+            if path in current:
+                current[path]._index = i
+                continue
+            live = self.query(AttachmentChip)
+            anchor = live[i] if i < len(live) else None
+            chip = AttachmentChip(path=path, index=i)
+            if anchor:
+                self.mount(chip, before=anchor)
+            else:
+                self.mount(chip)
+        self._recompute_visibility()
+
+    def _recompute_visibility(self) -> None:
+        """Show ImageBar when any chip is mounted; hide when empty."""
+        self.display = bool(self.query(AttachmentChip))
 
 
 # ---------------------------------------------------------------------------

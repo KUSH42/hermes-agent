@@ -16,7 +16,7 @@ This module is now a re-export shim: the actual implementations live in:
   - message_panel.py  — MessagePanel, ThinkingWidget, _EchoBullet,
                         UserMessagePanel, ReasoningPanel
   - status_bar.py     — HintBar, StatusBar, AnimatedCounter,
-                        VoiceStatusBar, ImageBar (+ hint helpers)
+                        VoiceStatusBar, ImageBar, AttachmentChip (+ hint helpers)
   - overlays.py       — TurnCandidate, TurnResultItem, KeymapOverlay,
                         HistorySearchOverlay (+ search helpers)
 
@@ -79,9 +79,15 @@ from .code_blocks import (  # noqa: F401
 )
 
 from .inline_media import (  # noqa: F401
+    ChipPlan,
     InlineImage,
     InlineImageBar,
     InlineThumbnail,
+    OverflowChip,
+    _layout_chips,
+    _render_attachment_thumb,
+    _size_str_for_path,
+    _size_suffix,
 )
 
 from .prose import (  # noqa: F401
@@ -110,6 +116,7 @@ def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
 
 from .status_bar import (  # noqa: F401
     AnimatedCounter,
+    AttachmentChip,
     HintBar,
     ImageBar,
     KindOverrideChanged,

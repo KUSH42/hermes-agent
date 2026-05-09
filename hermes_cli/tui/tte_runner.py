@@ -164,7 +164,11 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
             _apply_skin_gradient(cfg, gradient, color_cls)
         tc = getattr(effect, "terminal_config", None)
         if tc:
-            tc.frame_rate = 0  # disable TTE's internal sleep; producer in cli.py paces via deadline loop
+            # _frame_rate > 0 causes TTE to skip identical ticks, yielding only
+            # visually distinct frames.  Required for effects like matrix whose
+            # frame_rate=0 path emits 100k+ near-identical ticks.
+            _tc_fr = int(params.get("_frame_rate", 0)) if params else 0
+            tc.frame_rate = max(0, _tc_fr)
     except Exception:
         _log.debug("tte_runner: skin/gradient apply failed", exc_info=True)
 
@@ -272,6 +276,8 @@ def _apply_effect_params(
                 except Exception:
                     _log.warning("tte_runner: ignoring invalid final_gradient_stops for %r", effect_name, exc_info=True)
             continue
+        if key == "_frame_rate":
+            continue  # applied to terminal_config in iter_frames, not effect_config
         if key == "parser_spec" or key not in known_keys:
             _log.warning("tte_runner: ignoring unknown %r param: %r", effect_name, key)
             continue

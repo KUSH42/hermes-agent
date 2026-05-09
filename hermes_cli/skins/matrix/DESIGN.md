@@ -36,10 +36,18 @@ colors:
   ui-warn: '#ffb000'
 x-hermes:
   startup_tte:
-    effect: rain
-    max_wall_s: 7.0
-    max_frames: 360
+    effect: matrix
+    max_wall_s: 10.0
+    max_frames: 250
+    fps: 25
     params:
+      _frame_rate: 25
+      rain_time: 3
+      resolve_delay: 2
+      rain_color_gradient:
+        - '#aaffc8'
+        - '#00ff41'
+        - '#185318'
       final_gradient_stops:
         - '#aaffc8'
         - '#66ff7e'
@@ -48,7 +56,25 @@ x-hermes:
         - '#00a839'
         - '#006622'
   logo_startup_tte:
-    effect: rain
+    effect: matrix
+    max_wall_s: 8.0
+    max_frames: 150
+    fps: 25
+    params:
+      _frame_rate: 25
+      rain_time: 2
+      resolve_delay: 2
+      rain_color_gradient:
+        - '#aaffc8'
+        - '#00ff41'
+        - '#185318'
+      final_gradient_stops:
+        - '#aaffc8'
+        - '#66ff7e'
+        - '#00ff41'
+        - '#00d849'
+        - '#00a839'
+        - '#006622'
   schema: 1
   branding:
     agent_name: Morpheus

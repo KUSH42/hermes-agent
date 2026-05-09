@@ -29,7 +29,6 @@ class FallbackRenderer(BodyRenderer):
     def build(self):
         """Build CopyableRichLog-compatible output from raw text."""
         from rich.text import Text
-        from hermes_cli.tui.body_renderers._grammar import build_rule
 
         raw = self.payload.output_raw or ""
         result = Text()
@@ -37,12 +36,26 @@ class FallbackRenderer(BodyRenderer):
             result.append_text(Text.from_ansi(line))
             result.append("\n")
 
-        if self._should_show_footer():
-            footer = build_rule("unclassified · plain text", colors=self.colors)
-            result.append_text(footer)
-            result.append("\n")
-
         return result
+
+    def build_widget(self, density=None, clamp_rows=None):
+        """Wrap the plain-text body in a BodyFrame with the unclassified rule
+        on the header (concept §161 normalisation — rule moves out of body)."""
+        from hermes_cli.tui.body_renderers._grammar import build_rule
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+        from hermes_cli.tui.widgets import CopyableRichLog
+        rl = CopyableRichLog(highlight=False, markup=True)
+        rl.write(self.build())
+        header = (
+            build_rule("unclassified · plain text", colors=self.colors)
+            if self._should_show_footer() else None
+        )
+        return BodyFrame(
+            header=header,
+            body=rl,
+            footer=None,
+            density=density,
+        )
 
 
 def _set_kind() -> None:

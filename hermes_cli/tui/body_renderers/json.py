@@ -139,7 +139,7 @@ class JsonRenderer(BodyRenderer):
             pretty, "json",
             theme=self.colors.syntax_theme,
             background_color="default",
-            word_wrap=False,
+            word_wrap=True,
         )
 
     def _json_top_keys(self) -> str:
@@ -157,7 +157,7 @@ class JsonRenderer(BodyRenderer):
 
     def build_widget(self, density=None, clamp_rows=None) -> "object":
         from rich.syntax import Syntax
-        from hermes_cli.tui.body_renderers._grammar import build_rule, build_parse_failure, BodyFooter
+        from hermes_cli.tui.body_renderers._grammar import build_rule, build_parse_failure
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         raw = self.payload.output_raw or ""
@@ -168,7 +168,7 @@ class JsonRenderer(BodyRenderer):
             return BodyFrame(
                 header=build_rule("json", colors=self.colors),
                 body=body,
-                footer=BodyFooter(("y", "copy")),
+                footer=None,
                 density=density,
             )
 
@@ -179,7 +179,7 @@ class JsonRenderer(BodyRenderer):
                 pretty, "json",
                 theme=self.colors.syntax_theme,
                 background_color="default",
-                word_wrap=False,
+                word_wrap=True,
             )
             body = _JsonCollapseWidget(summary_text, syntax, pretty)
         else:
@@ -187,13 +187,13 @@ class JsonRenderer(BodyRenderer):
                 pretty, "json",
                 theme=self.colors.syntax_theme,
                 background_color="default",
-                word_wrap=False,
+                word_wrap=True,
             )
 
         return BodyFrame(
             header=build_rule("json", colors=self.colors),
             body=body,
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=density,
         )
 

@@ -192,20 +192,20 @@ class LogRenderer(BodyRenderer):
         return f"… {last}" if last else "(no output)"
 
     def build_widget(self, density=None, clamp_rows=None):
-        from hermes_cli.tui.body_renderers._grammar import build_rule, BodyFooter
+        from hermes_cli.tui.body_renderers._grammar import build_rule
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         raw = self.payload.output_raw or ""
         renderable, counts = self._build_body_with_counts(raw)
         n_info, n_warn, n_err = counts
+        header = build_rule(
+            f"log · INFO {n_info} · WARN {n_warn} · ERROR {n_err}",
+            colors=self.colors,
+        )
         return BodyFrame(
-            header=build_rule("log", colors=self.colors),
+            header=header,
             body=renderable,
-            footer=BodyFooter(
-                f"INFO {n_info}",
-                f"WARN {n_warn}",
-                f"ERROR {n_err}",
-            ),
+            footer=None,
             density=density,
         )
 

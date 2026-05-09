@@ -73,7 +73,6 @@ class BrowserSnapshotRenderer(BodyRenderer):
     kind: ClassVar  # set at module level below
     kind_icon: ClassVar[str] = "📸"
     supports_streaming: ClassVar[bool] = False
-    footer_entries: ClassVar[tuple] = (("y", "copy"),)
     truncation_bias: ClassVar[str] = "priority"
 
     @classmethod

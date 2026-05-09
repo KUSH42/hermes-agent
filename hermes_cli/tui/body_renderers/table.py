@@ -188,7 +188,7 @@ class TableRenderer(BodyRenderer):
         return f"{self.row_count()} rows × {self.col_count()} cols"
 
     def build_widget(self, density=None, clamp_rows=None):
-        from hermes_cli.tui.body_renderers._grammar import build_rule, BodyFooter
+        from hermes_cli.tui.body_renderers._grammar import build_rule
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         renderable = self.build()
@@ -197,7 +197,7 @@ class TableRenderer(BodyRenderer):
         return BodyFrame(
             header=build_rule(f"{rows} rows · {cols} cols", colors=self.colors),
             body=renderable,
-            footer=BodyFooter(("y", "copy"), ("c", "csv")),
+            footer=None,
             density=density,
         )
 

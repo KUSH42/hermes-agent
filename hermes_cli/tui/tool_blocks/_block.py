@@ -352,18 +352,13 @@ class ToolBlock(Widget):
         Called by _swap_renderer after post-completion classification so that
         the ToolBlock chrome (header, collapse, copy surface) is retained.
         """
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter  # deferred — avoids circular import
         prev = getattr(self, "_rendered_body_widget", None)
         if prev is not None and getattr(prev, "is_attached", False):
             prev.remove()
         for old_log in list(self._body.query(CopyableRichLog)):
             old_log.remove()
-        for old_footer in list(self._body.query(BodyFooter)):
-            old_footer.remove()
         self._body.mount(widget)
         self._rendered_body_widget = widget
-        if plain_text:
-            self._body.mount(BodyFooter())
         self._rendered_plain_text = plain_text
         line_count = len(plain_text.splitlines())
         self._header._line_count = line_count

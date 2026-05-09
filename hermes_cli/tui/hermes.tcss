@@ -1243,16 +1243,6 @@ HintBar.--streaming {
     color: $text-muted 55%;
 }
 
-/* BodyFooter — sticky per-panel affordance footer */
-BodyFooter {
-    dock: bottom;
-    height: 1;
-    color: $text-muted 70%;
-    padding: 0 1;
-}
-HermesApp.density-compact BodyFooter { display: none; }
-ToolPanel.--streaming BodyFooter { display: none; }
-
 /* SK-1: pre-first-chunk skeleton row in StreamingToolBlock.
    .tool-skeleton--dim is toggled by a 400ms set_interval on the block;
    reduced-motion path leaves the class permanently set so the row stays dim. */

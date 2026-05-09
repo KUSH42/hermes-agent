@@ -121,7 +121,7 @@ class CodeRenderer(BodyRenderer):
 
     def build_widget(self, density=None, clamp_rows=None):
         from rich.syntax import Syntax
-        from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
+        from hermes_cli.tui.body_renderers._grammar import build_path_header
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         code, lexer, origin_path, start_line, show_line_numbers = self._parse_code()
@@ -144,7 +144,7 @@ class CodeRenderer(BodyRenderer):
         return BodyFrame(
             header=header,
             body=syntax,
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=density,
         )
 

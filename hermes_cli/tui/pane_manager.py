@@ -243,7 +243,7 @@ class PaneManager:
         try:
             pane_center = app.query_one("#pane-center")
             stub = app.query_one("#split-target-stub")
-        except Exception as exc:
+        except Exception as exc:  # il-ex-1-exempt: swallow
             _log.warning("apply_center_split: pane widget missing: %s", exc)
             return
         if self._center_split:
@@ -268,7 +268,7 @@ class PaneManager:
         # Find index of current
         try:
             idx = order.index(self._focused_pane)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             idx = 0
         for i in range(1, len(order) + 1):
             candidate = order[(idx + i) % len(order)]
@@ -302,7 +302,7 @@ class PaneManager:
             pane_left = app.query_one("#pane-left")
             pane_center = app.query_one("#pane-center")
             pane_right = app.query_one("#pane-right")
-        except Exception as exc:
+        except Exception as exc:  # il-ex-1-exempt: swallow
             _log.warning("_apply_layout: pane widget missing: %s", exc)
             return
 

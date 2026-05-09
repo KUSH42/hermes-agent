@@ -48,7 +48,7 @@ class KeyDispatchService(AppService):
         from hermes_cli.tui.overlays import InterruptOverlay
         try:
             return self.app.query_one(InterruptOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return None
         except Exception:
             _log.debug("_get_interrupt_overlay: query failed", exc_info=True)
@@ -84,7 +84,7 @@ class KeyDispatchService(AppService):
                 inp = self.app.query_one(_HI)
                 inp.focus()
                 inp.insert_text("@")
-            except (NoMatches, Exception):
+            except (NoMatches, Exception):  # il-ex-1-exempt: swallow
                 pass
             event.prevent_default()
             return
@@ -101,7 +101,7 @@ class KeyDispatchService(AppService):
                     # BASH mode: Alt+$ has no meaning; do NOT stop the event
                     # so that Textual's Input widget can ignore it naturally.
                     return
-            except (NoMatches, Exception):
+            except (NoMatches, Exception):  # il-ex-1-exempt: swallow
                 pass
             event.stop()  # swallow — $ must NOT land in the input buffer
             self.app._open_skill_picker(seed_filter="", trigger_source="chord")
@@ -143,7 +143,7 @@ class KeyDispatchService(AppService):
                     self.app.action_dismiss_all_error_banners()
                     event.prevent_default()
                     return
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
 
         # --- w: toggle workspace overlay (only when input not focused) ---
@@ -161,7 +161,7 @@ class KeyDispatchService(AppService):
                     inp.can_focus,
                     getattr(self.app, "_modal_stack", []),
                 )
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             self.app.action_toggle_workspace()
             event.prevent_default()
@@ -178,7 +178,7 @@ class KeyDispatchService(AppService):
             # Bash mode: SIGINT running command, or clear input
             try:
                 inp = self.app.query_one("#input-area")
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 inp = None
             if inp is not None and inp.has_class("--bash-mode"):
                 if self.app._svc_bash.is_running:
@@ -216,7 +216,7 @@ class KeyDispatchService(AppService):
                         inp.clear()
                     else:
                         self.app.exit()
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     self.app.exit()
             event.prevent_default()
             return
@@ -236,7 +236,7 @@ class KeyDispatchService(AppService):
                 try:
                     _out = self.app.query_one(OutputPanel)
                     _out.flush_live()
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 try:
                     panel = self.app.query_one(OutputPanel)
@@ -248,7 +248,7 @@ class KeyDispatchService(AppService):
                         )
                         if rl._deferred_renders:
                             self.app.call_after_refresh(msg.refresh, layout=True)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     self.app.log.warning("interrupt feedback: OutputPanel not available")
                 except Exception as exc:
                     self.app.log.warning("interrupt feedback failed: %s", exc, exc_info=True)
@@ -265,7 +265,7 @@ class KeyDispatchService(AppService):
                         _ov.action_dismiss() if hasattr(_ov, "action_dismiss") else _ov.remove_class("--visible")
                         event.prevent_default()
                         return
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
 
             try:
@@ -274,7 +274,7 @@ class KeyDispatchService(AppService):
                     hs.action_dismiss()
                     event.prevent_default()
                     return
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -285,7 +285,7 @@ class KeyDispatchService(AppService):
                     _co.remove_class("--slash-only")
                     event.prevent_default()
                     return
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
             # R2 pane layout: Esc returns focus to input when a side pane is active.
@@ -300,7 +300,7 @@ class KeyDispatchService(AppService):
                         _pm.focus_pane(PaneId.CENTER)
                         event.prevent_default()
                         return
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         # Widget not found — skip navigation (expected mid-animation)
                         pass
                     except Exception:
@@ -327,7 +327,7 @@ class KeyDispatchService(AppService):
                 try:
                     _out = self.app.query_one(OutputPanel)
                     _out.flush_live()
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 try:
                     panel = self.app.query_one(OutputPanel)
@@ -339,7 +339,7 @@ class KeyDispatchService(AppService):
                         )
                         if rl._deferred_renders:
                             self.app.call_after_refresh(msg.refresh, layout=True)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     self.app.log.warning("interrupt feedback: OutputPanel not available")
                 except Exception as exc:
                     self.app.log.warning("interrupt feedback failed: %s", exc, exc_info=True)
@@ -355,7 +355,7 @@ class KeyDispatchService(AppService):
                 try:
                     _inp = self.app.query_one("#input-area")
                     _inp_value = getattr(_inp, "value", "") or ""
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 if not _inp_value:
                     self.app.browse_mode = True
@@ -370,7 +370,7 @@ class KeyDispatchService(AppService):
                     _uov._do_copy()
                     event.prevent_default()
                     return
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
         # --- J/K: focus next/prev ToolPanel (Phase 3 panel nav) ---
@@ -404,7 +404,7 @@ class KeyDispatchService(AppService):
                     ov.position = new_pos
                     self.app._svc_commands.persist_anim_config({"position": new_pos})
                     self.app._flash_hint(f"Overlay → {new_pos}", 1.5)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
             event.stop()
             return
@@ -434,7 +434,7 @@ class KeyDispatchService(AppService):
                                 focused.focus_first_child()
                             event.prevent_default()
                             return
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         # Widget not found — skip navigation (expected mid-animation)
                         pass
                     except Exception:
@@ -482,7 +482,7 @@ class KeyDispatchService(AppService):
                                 grandparent.focus()
                                 event.prevent_default()
                                 return
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         # Widget not found — skip navigation (expected mid-animation)
                         pass
                     except Exception:
@@ -536,7 +536,7 @@ class KeyDispatchService(AppService):
                     inp = self.app.query_one("#input-area")
                     if hasattr(inp, "insert_text"):
                         inp.insert_text(event.character)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 event.prevent_default()
                 return
@@ -552,7 +552,7 @@ class KeyDispatchService(AppService):
         from hermes_cli.tui.overlays import InterruptKind, InterruptOverlay
         try:
             io = self.app.query_one(InterruptOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             io = None
         if io is not None and io._current_payload is not None \
                 and io._current_payload.kind in (InterruptKind.CLARIFY, InterruptKind.APPROVAL):
@@ -579,7 +579,7 @@ class KeyDispatchService(AppService):
                             diff_log.focus()
                         event.stop()
                         return
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
 
             if key == "up":
@@ -658,7 +658,7 @@ class KeyDispatchService(AppService):
                 return
             try:
                 self.app.query_one(ThinkingWidget).activate()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             if hasattr(self.app.cli, "agent") and self.app.cli.agent:
                 self.app._interrupt_source = "resubmit"
@@ -669,7 +669,7 @@ class KeyDispatchService(AppService):
 
         try:
             self.app.query_one(ThinkingWidget).activate()
-        except (NoMatches, Exception):
+        except (NoMatches, Exception):  # il-ex-1-exempt: swallow
             pass
         # Reset per-turn plan/budget state before starting a new agent turn.
         if hasattr(self.app, "cli") and self.app.cli is not None:

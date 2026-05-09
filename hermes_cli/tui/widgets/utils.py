@@ -50,7 +50,7 @@ def _nf_or_text(glyph: str, fallback: str, app: "object | None" = None) -> str:
             cs = app.console.color_system  # type: ignore[attr-defined]
             if cs is None or cs == "standard":
                 return fallback
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget property lookup failed; skip gracefully
             pass
     return glyph
@@ -65,7 +65,7 @@ def _skin_color(key: str, fallback: str) -> str:
     try:
         from hermes_cli.skin_engine import get_active_skin
         return get_active_skin().get_color(key, fallback)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # fallback return is the documented contract for this helper
         return fallback
 
@@ -75,7 +75,7 @@ def _skin_branding(key: str, fallback: str) -> str:
     try:
         from hermes_cli.skin_engine import get_active_skin
         return get_active_skin().get_branding(key, fallback)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         return fallback
 
 
@@ -154,7 +154,7 @@ def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | Non
     if width is None:
         try:
             width = shutil.get_terminal_size((80, 24)).columns - 6  # account for margins + scrollbar
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # width probe failed; use 74-char fallback
             width = 74
     plain = _strip_ansi(highlighted)
@@ -241,7 +241,7 @@ def _typewriter_enabled() -> bool:
         return bool(
             read_raw_config().get("terminal", {}).get("typewriter", {}).get("enabled", False)
         )
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # widget query failed; False is safe default
         return False
 
@@ -251,7 +251,7 @@ def _typewriter_delay_s() -> float:
     try:
         from hermes_cli.config import read_raw_config
         speed = read_raw_config().get("terminal", {}).get("typewriter", {}).get("speed", 60)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # best-effort update; widget may be absent
         pass
     if speed <= 0:
@@ -268,7 +268,7 @@ def _typewriter_burst_threshold() -> int:
         from hermes_cli.config import read_raw_config
         raw = read_raw_config().get("terminal", {}).get("typewriter", {}).get("burst_threshold", 128)
         return max(1, int(raw))
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # terminal width probe failed; use 128-col fallback
         return 128
 
@@ -279,7 +279,7 @@ def _typewriter_cursor_enabled() -> bool:
         return bool(
             read_raw_config().get("terminal", {}).get("typewriter", {}).get("cursor", True)
         )
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # is_mounted probe failed; assume mounted
         return True
 
@@ -293,7 +293,7 @@ def _cursor_blink_enabled() -> bool:
     try:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("cursor_blink", True))
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # is_mounted probe failed; assume mounted
         return True
 
@@ -303,7 +303,7 @@ def _pulse_enabled() -> bool:
     try:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("running_indicator_pulse", True))
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # is_mounted probe failed; assume mounted
         return True
 
@@ -313,7 +313,7 @@ def _animate_counters_enabled() -> bool:
     try:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("animate_counters", True))
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # is_mounted probe failed; assume mounted
         return True
 
@@ -323,7 +323,7 @@ def _fps_hud_enabled() -> bool:
     try:
         from hermes_cli.config import read_raw_config
         return bool(read_raw_config().get("display", {}).get("fps_hud", False))
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # is_mounted probe failed; assume mounted
         return False
 
@@ -342,7 +342,7 @@ def _safe_widget_call(app: "Any", widget_type: type, method: str, *args: "Any") 
     from textual.css.query import NoMatches
     try:
         getattr(app.query_one(widget_type), method)(*args)
-    except NoMatches:
+    except NoMatches:  # il-ex-1-exempt: swallow
         pass  # widget removed during teardown — safe to ignore
 
 

@@ -215,16 +215,16 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             display_cfg = self.app.cfg.get("display", {})  # type: ignore[attr-defined]
             self._visible_cap: int = int(display_cfg.get("tool_visible_cap", _VISIBLE_CAP))
             self._line_byte_cap: int = int(display_cfg.get("tool_line_byte_cap", _LINE_BYTE_CAP))
-        except Exception:  # config unavailable on test mount; safe default used
+        except Exception:  # il-ex-1-exempt: config unavailable on test mount; safe default used
             self._visible_cap = _VISIBLE_CAP
             self._line_byte_cap = _LINE_BYTE_CAP
         try:
             self._microcopy_widget = self._body.query_one(".--microcopy", Static)
-        except Exception:  # microcopy widget not yet mounted; None is documented contract
+        except Exception:  # il-ex-1-exempt: microcopy widget not yet mounted; None is documented contract
             self._microcopy_widget = None
         try:
             self._cached_body_log = self._body.query_one(CopyableRichLog)
-        except Exception:  # body log widget not yet mounted; cached ref simply absent
+        except Exception:  # il-ex-1-exempt: body log widget not yet mounted; cached ref simply absent
             pass
         if self._omission_bar_top is not None:
             self._omission_bar_top.display = False
@@ -240,14 +240,14 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             if _sec:
                 self._body.update_secondary_args(_sec)
                 self._secondary_args_snapshot = _sec
-        except Exception:  # spec_for/secondary_args_text optional; header still renders
+        except Exception:  # il-ex-1-exempt: spec_for/secondary_args_text optional; header still renders
             pass
         if self._is_first_in_turn:
             try:
                 panel = self.parent.parent
                 if panel is not None:
                     panel.add_class("first-in-turn")
-            except Exception:  # noqa: bare-except
+            except Exception:  # il-ex-1-exempt: noqa: bare-except
                 pass
         # SK-1: arm pre-first-chunk skeleton timer. Registered with
         # ManagedTimerMixin so unmount/_stop_all_managed cancel it.
@@ -410,7 +410,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         # LL-4: clear kind chip directly — post_message unavailable after message loop closes
         try:
             self.app.query_one(HintBar).clear_kind_override()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("clear_kind_override on unmount failed", exc_info=True)
@@ -459,7 +459,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 from hermes_cli.tui.widgets import CopyableRichLog as _CRL
                 log = self._body.query_one(_CRL)
                 log.write(_RichText(f"  cwd: {self._detected_cwd}", style="dim"))
-            except Exception:  # block may be completed before mount; cwd label is decorative
+            except Exception:  # il-ex-1-exempt: block may be completed before mount; cwd label is decorative
                 pass
         if is_error:
             self._header.flash_error()
@@ -472,7 +472,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             _args_text = _build_args_row_text(_spec, self._tool_input)
             if _args_text:
                 self._body.set_args_row(_args_text)
-        except Exception:  # spec_for unavailable; args row is optional decoration
+        except Exception:  # il-ex-1-exempt: spec_for unavailable; args row is optional decoration
             pass
 
     def _clear_microcopy_on_complete(self) -> None:
@@ -564,7 +564,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         try:
             from hermes_cli.tui.tool_category import spec_for
             from hermes_cli.tui.streaming_microcopy import StreamingState, microcopy_line
-        except Exception:  # optional import; microcopy silently suppressed
+        except Exception:  # il-ex-1-exempt: optional import; microcopy silently suppressed
             return
         spec = spec_for(self._tool_name or "")
         state = StreamingState(
@@ -579,7 +579,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             if spec.category == _TC.AGENT:
                 self._shimmer_phase = (self._shimmer_phase + 0.05) % 2.0
-        except Exception:  # ToolCategory import optional; shimmer phase best-effort
+        except Exception:  # il-ex-1-exempt: ToolCategory import optional; shimmer phase best-effort
             pass
         stalled = (
             not self._completed
@@ -675,13 +675,13 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         if lines_written:
             try:
                 scrolled_up = getattr(self.app.query_one("#output-panel"), "_user_scrolled_up", False)
-            except Exception:  # panel may not be mounted; scrolled_up defaults to False
+            except Exception:  # il-ex-1-exempt: panel may not be mounted; scrolled_up defaults to False
                 scrolled_up = False
             if scrolled_up:
                 new_total = self._tail._new_line_count + lines_written
                 try:
                     self._tail.update_count(new_total)
-                except Exception:  # tail widget may not be mounted; chip update best-effort
+                except Exception:  # il-ex-1-exempt: tail widget may not be mounted; chip update best-effort
                     pass
 
         if self._follow_tail_dirty:
@@ -703,7 +703,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 log = self._body.query_one(CopyableRichLog)
                 self._cached_body_log = log
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 return
         log.clear()
         for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
@@ -717,7 +717,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         try:
             log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         for rich_line, plain in zip(self._all_rich[start:end], self._all_plain[start:end]):
             log.write_with_source(rich_line, plain, link=_first_link(plain))
@@ -729,7 +729,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             return
         try:
             log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         log.clear()
         for rich_line, plain in zip(self._all_rich[:new_end], self._all_plain[:new_end]):
@@ -757,7 +757,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 from hermes_cli.tui.streaming_microcopy import _human_size
                 line_cap_str = _human_size(getattr(self, "_line_byte_cap", _LINE_BYTE_CAP))
-            except Exception:  # noqa: bare-except
+            except Exception:  # il-ex-1-exempt: noqa: bare-except
                 line_cap_str = f"{getattr(self, '_line_byte_cap', _LINE_BYTE_CAP)}b"
             cap_msg = f"⚠ {self._truncated_line_count} lines truncated ({line_cap_str} cap)"
 
@@ -1018,7 +1018,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             try:
                 mc = self._body.query_one(".--microcopy", Static)
                 self._microcopy_widget = mc
-            except Exception:  # widget not mounted; None return is documented contract
+            except Exception:  # il-ex-1-exempt: widget not mounted; None return is documented contract
                 return
         styled = _T(text, style="dim")
         mc.update(styled)

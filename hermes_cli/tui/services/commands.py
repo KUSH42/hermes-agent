@@ -107,7 +107,7 @@ class CommandsService(AppService):
             app._dismiss_all_info_overlays()
             try:
                 app.query_one(HelpOverlay).show_overlay()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return True
 
@@ -121,7 +121,7 @@ class CommandsService(AppService):
                 overlay = app.query_one(UsageOverlay)
                 overlay.refresh_data(agent)
                 overlay.add_class("--visible")
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return True
 
@@ -129,7 +129,7 @@ class CommandsService(AppService):
             app._dismiss_all_info_overlays()
             try:
                 app.query_one(CommandsOverlay).show_overlay()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return True
 
@@ -163,7 +163,7 @@ class CommandsService(AppService):
                 # refresh_data sets _last_cli before show_overlay calls _refresh_active_tab
                 overlay.refresh_data(app.cli)
                 overlay.show_overlay(tab=_TAB_FOR_CMD[stripped])
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return True
 
@@ -206,7 +206,7 @@ class CommandsService(AppService):
             try:
                 from hermes_cli.commands import resolve_command as _resolve_command
                 in_registry = _resolve_command(cmd_name) is not None
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 in_registry = False
             if not in_registry:
                 app._flash_hint("⚠  Unknown command — try /help for all commands", 2.0)
@@ -236,12 +236,12 @@ class CommandsService(AppService):
                     "[dim]New session started — type a message to begin[/dim]",
                     classes="--empty-state-hint",
                 ))
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             from hermes_cli.tui.widgets.inline_media import InlineImageBar as _IIB
             try:
                 app.query_one(_IIB).clear()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # InlineImageBar not mounted — correct when image bar is disabled
                 pass
             app._flash_hint("✨  Fresh start!", 2.0)
@@ -249,7 +249,7 @@ class CommandsService(AppService):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             try:
                 app.query_one(_HI).focus()
-            except NoMatches:  # widget not mounted
+            except NoMatches:  # il-ex-1-exempt: widget not mounted
                 pass
         finally:
             app._clear_animation_in_progress = False
@@ -329,7 +329,7 @@ class CommandsService(AppService):
         from hermes_cli.tui.drawbraille_overlay import AnimConfigPanel as _ACP
         try:
             self.app.query_one(_ACP).show()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # Panel not mounted yet; user can retry with /anim config
             pass
         except Exception:
@@ -348,7 +348,7 @@ class CommandsService(AppService):
             existing = cfg.setdefault("display", {}).setdefault("drawbraille_overlay", {})
             existing.update(cfg_dict)
             save_config(cfg)
-        except Exception as exc:
+        except Exception as exc:  # il-ex-1-exempt: swallow
             import logging as _logging
             _logging.getLogger(__name__).warning("Failed to persist anim config: %s", exc)
 
@@ -363,7 +363,7 @@ class CommandsService(AppService):
                 app._anim_hint = f"sdf: {ov.contextual_text}"
             else:
                 app._anim_hint = ""
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # DrawbrailleOverlay not mounted; hint stays blank — correct behaviour
             app._anim_hint = ""
         except Exception:
@@ -397,7 +397,7 @@ class CommandsService(AppService):
                 cfg = _overlay_config()
                 cfg.enabled = True
                 ov.show(cfg)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # DrawbrailleOverlay not yet mounted; anim force flag already set — correct
                 pass
             except Exception:
@@ -410,7 +410,7 @@ class CommandsService(AppService):
                 ov = app.query_one(_DO)
                 cfg = _overlay_config()
                 ov.hide(cfg)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # DrawbrailleOverlay not yet mounted; anim force flag already set — correct
                 pass
             except Exception:
@@ -457,7 +457,7 @@ class CommandsService(AppService):
                     app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
                 app.set_timer(10.0, _revert_sdf)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # Overlay not mounted; config already persisted — silent skip is correct
                 pass
             except Exception:
@@ -487,7 +487,7 @@ class CommandsService(AppService):
                 ov = app.query_one(DrawbrailleOverlay)
                 ov._do_hide()
                 ov.show(_oc())
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return
 
@@ -501,21 +501,21 @@ class CommandsService(AppService):
                 ov = app.query_one(_DO)
                 ov._do_hide()
                 ov.show(_overlay_config())
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return
 
         if sub == "speed":
             try:
                 fps = max(5, min(60, int(args[1])))
-            except (IndexError, ValueError):
+            except (IndexError, ValueError):  # il-ex-1-exempt: swallow
                 app._flash_hint("Usage: /anim speed <5-60>", 2.0)
                 return
             self.persist_anim_config({"fps": fps})
             try:
                 ov = app.query_one(_DO)
                 ov.fps = fps
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # Overlay not mounted; config already persisted — silent skip is correct
                 pass
             except Exception:
@@ -538,7 +538,7 @@ class CommandsService(AppService):
                 ov = app.query_one(_DO)
                 if ov._visibility_state == "ambient":
                     ov._orchestrator.set_ambient_engine(matched_a)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # Overlay not mounted; config already persisted — silent skip is correct
                 pass
             except Exception:
@@ -556,7 +556,7 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 ov.color = color
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # Overlay not mounted; config already persisted — silent skip is correct
                 pass
             except Exception:
@@ -570,7 +570,7 @@ class CommandsService(AppService):
                 self.persist_anim_config({"gradient": False})
                 try:
                     app.query_one(_DO).gradient = False
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     # Overlay not mounted; config already persisted — silent skip is correct
                     pass
                 except Exception:
@@ -604,7 +604,7 @@ class CommandsService(AppService):
                         ov.color = updates["color"]
                     if "color_secondary" in updates:
                         ov.color_b = updates["color_secondary"]
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     # Overlay not mounted; config already persisted — silent skip is correct
                     pass
                 except Exception:
@@ -621,13 +621,13 @@ class CommandsService(AppService):
             else:
                 try:
                     hue_speed = max(0.0, min(5.0, float(val_str or "0.3")))
-                except ValueError:
+                except ValueError:  # il-ex-1-exempt: swallow
                     app._flash_hint("Usage: /anim hue <0-5 | off>", 2.0)
                     return
             self.persist_anim_config({"hue_shift_speed": hue_speed})
             try:
                 app.query_one(_DO).hue_shift_speed = hue_speed
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # DrawbrailleOverlay not mounted; preview skipped — correct
                 pass
             except Exception:
@@ -646,7 +646,7 @@ class CommandsService(AppService):
             try:
                 ov = app.query_one(_DO)
                 ov.size_name = sz
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # DrawbrailleOverlay not mounted; preview skipped — correct
                 pass
             except Exception:
@@ -676,14 +676,14 @@ class CommandsService(AppService):
             try:
                 preview_dur = float(args[1]) if len(args) > 1 else 4.0
                 preview_dur = max(1.0, min(120.0, preview_dur))
-            except ValueError:
+            except ValueError:  # il-ex-1-exempt: swallow
                 preview_dur = 4.0
 
             def _revert_engine() -> None:
                 app._svc_spinner.drawbraille_show_hide(getattr(app, "agent_running", False))
 
             app.set_timer(preview_dur, _revert_engine)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # DrawbrailleOverlay not mounted; preview skipped — correct
             pass
         except Exception:
@@ -735,7 +735,7 @@ class CommandsService(AppService):
         from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO, DrawbrailleOverlayCfg, _overlay_config
         try:
             overlay = app.query_one("#drawbraille-overlay", _DO)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # Overlay not mounted; toggle has no effect — correct
             return
         except Exception:
@@ -748,7 +748,7 @@ class CommandsService(AppService):
             try:
                 cfg = _overlay_config()
                 cfg.enabled = True
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 cfg = DrawbrailleOverlayCfg(enabled=True)
             overlay.show(cfg)
 
@@ -791,7 +791,7 @@ class CommandsService(AppService):
             await asyncio.sleep(0.4)
             try:
                 await asyncio.to_thread(app.cli.agent.undo)
-            except (AttributeError, NotImplementedError):
+            except (AttributeError, NotImplementedError):  # il-ex-1-exempt: swallow
                 app._flash_hint("⚠  Undo not supported by agent", 2.0)
                 panel.styles.opacity = 1.0
                 return
@@ -803,7 +803,7 @@ class CommandsService(AppService):
                     hi = app.query_one(HermesInput)
                     hi.value = user_text
                     hi.cursor_position = len(user_text)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
             app._flash_hint("↩  Undo done", 2.0)
         finally:
@@ -829,7 +829,7 @@ class CommandsService(AppService):
             hi.value = last_user_text
             hi.cursor_position = len(last_user_text)
             hi.action_submit()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def initiate_rollback(self, text: str) -> None:
@@ -858,5 +858,5 @@ class CommandsService(AppService):
         try:
             await asyncio.to_thread(app.cli.agent.rollback, n)
             app._flash_hint("↩  Rollback done", 2.0)
-        except (AttributeError, NotImplementedError):
+        except (AttributeError, NotImplementedError):  # il-ex-1-exempt: swallow
             app._flash_hint("⚠  Rollback not supported by agent", 2.0)

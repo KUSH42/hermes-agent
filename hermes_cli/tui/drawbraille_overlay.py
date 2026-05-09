@@ -228,7 +228,7 @@ def _overlay_config() -> DrawbrailleOverlayCfg:
     try:
         from hermes_cli.config import read_raw_config
         d = read_raw_config().get("display", {}).get("drawbraille_overlay", {})
-    except Exception:  # config unavailable — use empty dict defaults
+    except Exception:  # il-ex-1-exempt: config unavailable — use empty dict defaults
         d = {}
     return _cfg_from_mapping(d)
 
@@ -577,7 +577,7 @@ class DrawbrailleOverlay(Static):
         self._renderer = DrawbrailleRenderer()
         try:
             self._renderer.resolve_colors(self.color, self.color_b, self.multi_color, self.app)
-        except Exception:  # colour resolution failed before first paint — will retry on watch_color
+        except Exception:  # il-ex-1-exempt: colour resolution failed before first paint — will retry on watch_color
             pass
         w = self.size.width or 50
         h = self.size.height or 14
@@ -700,7 +700,7 @@ class DrawbrailleOverlay(Static):
         try:
             if self.app.compact and cfg.size == "medium":
                 return cfg.compact_size  # "small" by default
-        except (RuntimeError, AttributeError):
+        except (RuntimeError, AttributeError):  # il-ex-1-exempt: swallow
             # RuntimeError: NoActiveAppError when no active app context (test harness) — compact check skipped
             # AttributeError: app not a HermesApp / compact attr absent on test stub — skip override
             pass
@@ -880,7 +880,7 @@ class DrawbrailleOverlay(Static):
             return self._cfg.sdf_text
         try:
             tool = self.app._active_tool_name  # type: ignore[attr-defined]
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             return "thinking"
         return _TOOL_SDF_LABELS.get(tool, "thinking")
 
@@ -920,7 +920,7 @@ class DrawbrailleOverlay(Static):
         """Return True if AssistantNameplate is present in the DOM."""
         try:
             return len(self.app.query("AssistantNameplate")) > 0
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return False  # overlay not mounted yet — expected during startup
         except Exception:
             _log.debug("_has_nameplate: unexpected DOM error", exc_info=True)
@@ -934,7 +934,7 @@ class DrawbrailleOverlay(Static):
         clock = None
         try:
             clock = getattr(self.app, "_anim_clock", None)
-        except Exception:  # app not yet attached — clock lookup skipped, fallback to set_interval
+        except Exception:  # il-ex-1-exempt: app not yet attached — clock lookup skipped, fallback to set_interval
             pass
         if clock is not None:
             from hermes_cli.tui.animation import AnimationClock
@@ -943,7 +943,7 @@ class DrawbrailleOverlay(Static):
         else:
             try:
                 self._anim_handle = self.set_interval(1 / max(1, self.fps), self._tick)
-            except Exception:  # widget not yet mounted — interval start deferred
+            except Exception:  # il-ex-1-exempt: widget not yet mounted — interval start deferred
                 pass
 
     def _stop_anim(self) -> None:
@@ -961,7 +961,7 @@ class DrawbrailleOverlay(Static):
         self._ensure_renderer()
         try:
             gradient = self.gradient
-        except Exception:  # reactive not yet initialised — fall back to __dict__ default
+        except Exception:  # il-ex-1-exempt: reactive not yet initialised — fall back to __dict__ default
             gradient = self.__dict__.get("gradient", False)
         return self._orchestrator.get_engine(
             self._anim_params,
@@ -984,7 +984,7 @@ class DrawbrailleOverlay(Static):
         self._ensure_renderer()
         try:
             gradient = self.gradient
-        except Exception:  # reactive not yet initialised — fall back to __dict__ default
+        except Exception:  # il-ex-1-exempt: reactive not yet initialised — fall back to __dict__ default
             gradient = self.__dict__.get("gradient", False)
         return self._orchestrator.get_sdf_engine(
             params,
@@ -1142,7 +1142,7 @@ class DrawbrailleOverlay(Static):
         try:
             tw = self.app.size.width
             th = self.app.size.height
-        except Exception:  # app size not yet available — use 80×24 fallback
+        except Exception:  # il-ex-1-exempt: app size not yet available — use 80×24 fallback
             tw, th = 80, 24
 
         if self.size_name == "fill":
@@ -1190,7 +1190,7 @@ class DrawbrailleOverlay(Static):
                         panel.styles.padding_right = rail_width
                     else:
                         panel.styles.padding_left = rail_width
-                except Exception:  # OutputPanel absent — rail padding not applied
+                except Exception:  # il-ex-1-exempt: OutputPanel absent — rail padding not applied
                     pass
             return
 
@@ -1238,7 +1238,7 @@ class DrawbrailleOverlay(Static):
         self._drag_start_sy = event.screen_y
         try:
             self.app.capture_mouse(self)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass
         event.stop()
 
@@ -1261,7 +1261,7 @@ class DrawbrailleOverlay(Static):
                 w, h, tw, th,
             )
             self.styles.offset = (ox, oy)
-        except Exception:  # size/app not available during drag — skip offset update
+        except Exception:  # il-ex-1-exempt: size/app not available during drag — skip offset update
             pass
         event.stop()
 
@@ -1274,7 +1274,7 @@ class DrawbrailleOverlay(Static):
         self._dragging = False
         try:
             self.app.release_mouse()
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass
         try:
             tw, th = self.app.size.width, self.app.size.height

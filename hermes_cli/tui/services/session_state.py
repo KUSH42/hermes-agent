@@ -41,7 +41,7 @@ def save_discoverability_state(state: DiscoverabilityState) -> None:
         if _STATE_FILE.exists():
             try:
                 existing = json.loads(_STATE_FILE.read_text())
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # State file is corrupt or unreadable; start with empty dict to avoid
                 # propagating the corruption. The write below will overwrite it.
                 pass

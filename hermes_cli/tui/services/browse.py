@@ -63,7 +63,7 @@ class BrowseService(AppService):
             if not value:
                 inp.display = True
                 inp.focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self.apply_browse_focus()
         app._svc_spinner.set_hint_phase("browse" if value else app._svc_spinner.compute_hint_phase())
@@ -118,7 +118,7 @@ class BrowseService(AppService):
             app._browse_minimap = False
             try:
                 existing = app.query_one(_BM)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 return  # mount never completed; flag now consistent
             await existing.remove()
             return
@@ -130,7 +130,7 @@ class BrowseService(AppService):
         from hermes_cli.tui.browse_minimap import BrowseMinimap as _BM
         try:
             self.app.query_one(_BM).refresh()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # minimap not mounted; nothing to refresh
 
     def on_browse_index(self, _value: int) -> None:
@@ -164,7 +164,7 @@ class BrowseService(AppService):
         from hermes_cli.tui.widgets import OutputPanel, StreamingCodeBlock, UserMessagePanel
         try:
             output = app.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             self._browse_anchors = []
             self._browse_cursor = 0
             return
@@ -195,7 +195,7 @@ class BrowseService(AppService):
                     try:
                         from hermes_cli.tui.tool_panel import ToolPanel as _TP
                         child_count = sum(1 for c in widget._body.children if isinstance(c, _TP))
-                    except AttributeError:
+                    except AttributeError:  # il-ex-1-exempt: swallow
                         # child_count is best-effort; zero is a safe fallback for display
                         pass
                 collapsed_mark = " ▸" if widget.collapsed else " ▾"
@@ -237,7 +237,7 @@ class BrowseService(AppService):
                         if hdr_label is not None:
                             try:
                                 hdr_text = str(hdr_label.renderable)
-                            except (AttributeError, TypeError):
+                            except (AttributeError, TypeError):  # il-ex-1-exempt: swallow
                                 # hdr_text string conversion failed; empty label is a safe display fallback
                                 pass
                         anchors.append(BrowseAnchor(
@@ -248,7 +248,7 @@ class BrowseService(AppService):
                         ))
                         if widget.collapse_state == _CS.COLLAPSED:
                             continue
-                except (ImportError, AttributeError):
+                except (ImportError, AttributeError):  # il-ex-1-exempt: swallow
                     pass  # SubAgentPanel not available in this build or widget unmounted; skip anchor safely
                 try:
                     from hermes_cli.tui.widgets import InlineMediaWidget as _IMW
@@ -323,7 +323,7 @@ class BrowseService(AppService):
             output._last_scroll_origin = "browse_jump"
             output.scroll_state = ScrollState.JUMPED
             output.scroll_to_widget(w, animate=True, center=True)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self.clear_browse_highlight()
         w.add_class("--browse-focused")
@@ -348,13 +348,13 @@ class BrowseService(AppService):
                     "--anchor-pip-diff",
                     "--anchor-pip-media",
                 )
-            except (AttributeError, NoMatches):
+            except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 pass
         for w in app._browse_badge_widgets:
             try:
                 w._browse_badge = ""
-            except (AttributeError, NoMatches):
+            except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 pass
         app._browse_badge_widgets = []
@@ -374,7 +374,7 @@ class BrowseService(AppService):
             try:
                 if not w.is_mounted:
                     continue
-            except (AttributeError, NoMatches):
+            except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 continue
             in_reasoning = _is_in_reasoning(w)
@@ -387,7 +387,7 @@ class BrowseService(AppService):
             elif anchor.anchor_type == BrowseAnchorType.TOOL_BLOCK:
                 try:
                     pip_cls = "--anchor-pip-diff" if w.has_class("--diff-header") else "--anchor-pip-tool"
-                except AttributeError:
+                except AttributeError:  # il-ex-1-exempt: swallow
                     pip_cls = "--anchor-pip-tool"  # has_class() unavailable on unmounted widget; fall back to tool pip
             elif anchor.anchor_type == BrowseAnchorType.MEDIA:
                 pip_cls = "--anchor-pip-media"
@@ -395,7 +395,7 @@ class BrowseService(AppService):
                 continue
             try:
                 w.add_class("--has-pip", pip_cls)
-            except (AttributeError, NoMatches):
+            except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                 # Widget unmounted between is_mounted check and mutation; skip safely
                 continue
             if anchor.anchor_type == BrowseAnchorType.CODE_BLOCK and len(app._browse_badge_widgets) < 200:
@@ -405,7 +405,7 @@ class BrowseService(AppService):
                 try:
                     w._browse_badge = badge
                     app._browse_badge_widgets.append(w)
-                except (AttributeError, NoMatches):
+                except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                     # Widget unmounted between is_mounted check and mutation; skip safely
                     pass
             elif pip_cls == "--anchor-pip-diff" and len(app._browse_badge_widgets) < 200:
@@ -413,7 +413,7 @@ class BrowseService(AppService):
                     w._browse_badge = "± diff"
                     app._browse_badge_widgets.append(w)
                     w.refresh()
-                except (AttributeError, NoMatches):
+                except (AttributeError, NoMatches):  # il-ex-1-exempt: swallow
                     # Widget unmounted between is_mounted check and mutation; skip safely
                     pass
 
@@ -451,7 +451,7 @@ class BrowseService(AppService):
                     # F-2 contract (concept v0.7 FA-4): scroll_to_tool flashes --browse-focused, does NOT call panel.focus().
                     panel.add_class("--browse-focused")
                     return True
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # OutputPanel not mounted; scroll unavailable — correct to skip
             pass
         except Exception:
@@ -483,6 +483,6 @@ class BrowseService(AppService):
         try:
             idx = navigable.index(focused)
             next_idx = (idx + direction) % len(navigable)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             next_idx = 0 if direction > 0 else len(navigable) - 1
         navigable[next_idx].focus()

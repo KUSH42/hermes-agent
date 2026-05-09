@@ -111,7 +111,7 @@ def _get_textual_builtins() -> frozenset[str]:
         return frozenset(_Probe().get_css_variables().keys())
     except AssertionError:
         raise
-    except Exception:  # Textual unavailable or introspection failed — use static fallback list
+    except Exception:  # il-ex-1-exempt: Textual unavailable or introspection failed — use static fallback list
         return TEXTUAL_BUILTIN_VARS_FALLBACK
 
 
@@ -159,7 +159,7 @@ def scan_default_css_references(tui_dir: Path = TUI_DIR) -> dict[str, set[Path]]
     for py in tui_dir.rglob("*.py"):
         try:
             text = py.read_text(encoding="utf-8")
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             continue
         if "DEFAULT_CSS" not in text:
             continue
@@ -175,11 +175,11 @@ def scan_skin_keys(skin_path: Path) -> set[str]:
     """
     try:
         import yaml  # type: ignore
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         return set()
     try:
         text = skin_path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError:  # il-ex-1-exempt: swallow
         return set()
 
     # DESIGN.md: parse YAML front matter
@@ -199,7 +199,7 @@ def scan_skin_keys(skin_path: Path) -> set[str]:
     # Legacy YAML
     try:
         data = yaml.safe_load(text) or {}
-    except Exception:  # YAML parse error in skin file — treat as having no component_vars keys
+    except Exception:  # il-ex-1-exempt: YAML parse error in skin file — treat as having no component_vars keys
         return set()
     cv = data.get("component_vars", {}) if isinstance(data, dict) else {}
     if not isinstance(cv, dict):

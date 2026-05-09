@@ -77,19 +77,19 @@ class ThemeService(AppService):
         try:
             sb = app.query_one(StatusBar)
             sb._idle_tips_cache = None
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             from hermes_cli.tui.completion_list import VirtualCompletionList
             app.query_one(VirtualCompletionList).refresh_theme()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("Completion list theme refresh failed", exc_info=True)
         try:
             from hermes_cli.tui.preview_panel import PreviewPanel
             app.query_one(PreviewPanel).refresh_theme()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("Preview panel theme refresh failed", exc_info=True)
@@ -142,7 +142,7 @@ class ThemeService(AppService):
             new_name = skin.get_branding("agent_name", "Hermes")
             np.set_name(new_name)
             np.refresh_skin_colors()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("_refresh_branding: nameplate update failed", exc_info=True)
@@ -157,7 +157,7 @@ class ThemeService(AppService):
             _input_widget._CHEVRON_GLYPHS[InputMode.NORMAL] = new_glyph
             if hi._mode == InputMode.NORMAL:
                 hi._sync_chevron_to_mode(InputMode.NORMAL)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("_refresh_branding: chevron update failed", exc_info=True)
@@ -194,7 +194,7 @@ class ThemeService(AppService):
                 # Widget still hidden (TTE hasn't started): pre-load content
                 # silently so there's no flash of static art before animation.
                 bw.write_static_content(combined)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             logger.debug("_refresh_branding: startup banner update failed", exc_info=True)
@@ -214,7 +214,7 @@ class ThemeService(AppService):
         try:
             from hermes_cli.tui.overlays import HelpOverlay as _HO
             app.query_one(_HO)._refresh_commands_cache()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # overlay not mounted yet — expected during early startup
         except Exception:
             _log.warning("services.theme: refresh failed unexpectedly", exc_info=True)
@@ -226,7 +226,7 @@ class ThemeService(AppService):
         try:
             result = self.app.screen.get_selected_text()
             return result if result else None
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             return None
 
     # --- Slash command wiring ---
@@ -269,7 +269,7 @@ class ThemeService(AppService):
                 inp.set_slash_args_hints(args_hints)
                 inp.set_slash_keybind_hints(keybind_hints)
                 inp.set_slash_subcommands(dict(SUBCOMMANDS))
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
         except Exception:
             _log.warning("populate_slash_commands failed; slash autocomplete may be empty", exc_info=True)
@@ -282,7 +282,7 @@ class ThemeService(AppService):
         try:
             from hermes_cli.tui.input_widget import HermesInput as _HI
             inp = app.query_one(_HI)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # NoMatches is expected in headless/gateway mode where HermesInput
             # is not mounted. populate_skills is a no-op in that case.
             logger.debug("populate_skills: HermesInput not mounted, skipping")

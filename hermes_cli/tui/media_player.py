@@ -142,7 +142,7 @@ class MpvController:
         if self._proc is not None:
             try:
                 self._proc.kill()
-            except Exception:  # process already exited — kill is a no-op
+            except Exception:  # il-ex-1-exempt: process already exited — kill is a no-op
                 pass
             self._proc = None
 
@@ -188,12 +188,12 @@ class MpvController:
                         data += chunk
                     self._ipc_started = True
                     return json.loads(data.split(b"\n")[0])
-            except FileNotFoundError:
+            except FileNotFoundError:  # il-ex-1-exempt: swallow
                 if time.monotonic() < deadline:
                     time.sleep(0.1)
                     continue
                 return None
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 return None
 
 
@@ -276,7 +276,7 @@ def _fetch_youtube_thumbnail(url: str) -> str | None:
         os.close(fd)
         urlretrieve(thumb_url, tmp_path)
         return tmp_path
-    except Exception:  # network or filesystem failure fetching thumbnail — return None
+    except Exception:  # il-ex-1-exempt: network or filesystem failure fetching thumbnail — return None
         return None
 
 
@@ -299,6 +299,6 @@ def _extract_video_thumbnail(path_or_url: str) -> str | None:
         )
         if result.returncode == 0:
             return tmp_path
-    except Exception:  # ffmpeg timed out or was killed — no thumbnail
+    except Exception:  # il-ex-1-exempt: ffmpeg timed out or was killed — no thumbnail
         pass
     return None

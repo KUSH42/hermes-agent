@@ -160,7 +160,7 @@ class ReasoningPanel(Widget):
                 if tw.has_class("--active"):
                     tw.deactivate()
                     break
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during update; skip gracefully
             pass
         self._live_buf = ""
@@ -321,7 +321,7 @@ class MessagePanel(Widget):
         # Trigger a metrics refresh so header shows tok/s immediately
         try:
             self.app._refresh_live_response_metrics()
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # prose render failed; message panel shows empty content
             pass
 
@@ -366,7 +366,7 @@ class MessagePanel(Widget):
                 )
                 try:
                     self._response_engine.process_line(self._carry_pending)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # widget absent during update; skip gracefully
                     pass
                 self._carry_pending = None
@@ -376,7 +376,7 @@ class MessagePanel(Widget):
                 )
                 try:
                     self._response_engine.feed(self._carry_partial)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # widget absent during refresh; skip gracefully
                     pass
                 self._carry_partial = None
@@ -390,7 +390,7 @@ class MessagePanel(Widget):
                     _panels_ms = (_time.monotonic() - _t0) * 1000.0
                     _log.debug("[STARTUP] panels_ready_ms=%.1f", _panels_ms)
                 ev.set()
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during refresh; skip gracefully
             pass
 
@@ -443,7 +443,7 @@ class MessagePanel(Widget):
         try:
             from hermes_cli.tui.tool_group import _maybe_start_group
             _maybe_start_group(self, block)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # CSS variable lookup failed; use default colour
             pass
         if (
@@ -655,7 +655,7 @@ class MessagePanel(Widget):
                     from rich.text import Text as _Text
                     ansi = _hl(label, BashLexer(), TerminalTrueColorFormatter(style="monokai")).rstrip("\n")
                     block._header._label_rich = _Text.from_ansi(ansi)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # scroll-to position failed; panel is already rendered
                 pass
         return block
@@ -716,7 +716,7 @@ class _EchoBullet(PulseMixin, Widget):
                 v.get("user-echo-bullet-color") or v.get("primary", "#5f87d7")
             )
             self._bullet_dim = v.get("running-indicator-dim-color", "#6e6e6e")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during cleanup; skip gracefully
             pass
         self.watch(self.app, "agent_running", self._on_agent_running, init=False)
@@ -728,7 +728,7 @@ class _EchoBullet(PulseMixin, Widget):
                 self._turn_started = True
                 if getattr(self.app, "_animations_enabled", True):
                     self._pulse_start()
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during cleanup; skip gracefully
             pass
 

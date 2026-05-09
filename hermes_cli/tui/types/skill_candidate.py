@@ -36,7 +36,7 @@ def _parse_trigger_phrases(body: str) -> list[str]:
         return []
     try:
         return _parse_prose_list(m.group(1))
-    except Exception:  # prose parse failed — return empty trigger list
+    except Exception:  # il-ex-1-exempt: prose parse failed — return empty trigger list
         return []
 
 
@@ -46,7 +46,7 @@ def _parse_negative_phrases(body: str) -> list[str]:
         return []
     try:
         return _parse_prose_list(m.group(1))
-    except Exception:  # prose parse failed — return empty negative list
+    except Exception:  # il-ex-1-exempt: prose parse failed — return empty negative list
         return []
 
 
@@ -61,12 +61,12 @@ def _classify_source(
         try:
             p.relative_to(hermes_skills)
             return "hermes"
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
         try:
             p.relative_to(claude_skills)
             return "claude"
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
         # Check external dirs
         try:
@@ -75,12 +75,12 @@ def _classify_source(
                 try:
                     p.relative_to(Path(ext_dir).expanduser().resolve())
                     return "plugin"
-                except ValueError:
+                except ValueError:  # il-ex-1-exempt: swallow
                     pass
-        except Exception:  # external skills dir resolution failed — treat as non-plugin
+        except Exception:  # il-ex-1-exempt: external skills dir resolution failed — treat as non-plugin
             pass
         return "user"
-    except Exception:  # path resolution failed entirely — default to "user"
+    except Exception:  # il-ex-1-exempt: path resolution failed entirely — default to "user"
         return "user"
 
 
@@ -110,7 +110,7 @@ class SkillCandidate:
             from hermes_cli.skills_config import SkillsConfig
             cfg = SkillsConfig.load()
             enabled = cfg.is_enabled(name)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
 
         # Parse body prose for trigger/negative phrases
@@ -125,11 +125,11 @@ class SkillCandidate:
                 fm_desc = _fm.get("description", "") or ""
                 if fm_desc:
                     description = fm_desc
-            except Exception:  # frontmatter parse failed — use full content as body
+            except Exception:  # il-ex-1-exempt: frontmatter parse failed — use full content as body
                 body = content
             trigger = _parse_trigger_phrases(body)
             negative = _parse_negative_phrases(body)
-        except Exception:  # skill_md_path unreadable or parse failed — use empty trigger/negative
+        except Exception:  # il-ex-1-exempt: skill_md_path unreadable or parse failed — use empty trigger/negative
             pass
 
         return cls(

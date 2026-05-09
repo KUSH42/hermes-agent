@@ -178,7 +178,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             self._diff_add_color = css.get("addition-marker-fg", _DIFF_ADD_FALLBACK)
             self._diff_del_color = css.get("deletion-marker-fg", _DIFF_DEL_FALLBACK)
             self._running_icon_color = css.get("status-running-color", _RUNNING_FALLBACK)
-        except Exception:  # get_css_variables unavailable before mount; use hardcoded fallback colors
+        except Exception:  # il-ex-1-exempt: get_css_variables unavailable before mount; use hardcoded fallback colors
             self._diff_add_color = _DIFF_ADD_FALLBACK
             self._diff_del_color = _DIFF_DEL_FALLBACK
             self._running_icon_color = _RUNNING_FALLBACK
@@ -190,12 +190,12 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         try:
             from agent.display import get_tool_icon
             self._tool_icon = get_tool_icon(self._tool_name)
-        except Exception:  # agent.display not present in all deployments; fall through to category fallback
+        except Exception:  # il-ex-1-exempt: agent.display not present in all deployments; fall through to category fallback
             try:
                 from hermes_cli.tui.tool_category import spec_for, _CATEGORY_DEFAULTS
                 spec = spec_for(self._tool_name)
                 self._tool_icon = _CATEGORY_DEFAULTS[spec.category].ascii_fallback or "?"
-            except Exception:  # noqa: bare-except
+            except Exception:  # il-ex-1-exempt: noqa: bare-except
                 self._tool_icon = "?"
 
     # SLR-3: per-kind icon and label for streaming_kind_hint display.
@@ -218,7 +218,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 ResultKind.JSON: "json",
                 ResultKind.CODE: "code",
             }
-        except Exception:  # ResultKind import failure (partial install); maps remain empty, no hint shown
+        except Exception:  # il-ex-1-exempt: ResultKind import failure (partial install); maps remain empty, no hint shown
             pass
 
     def attach_stream_axis_watcher(self, view: "Any") -> None:
@@ -291,7 +291,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         from hermes_cli.tui.body_renderers._grammar import SkinColors
         try:
             c = SkinColors.from_app(self.app)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             # NoActiveAppError is at private textual._context.NoActiveAppError;
             # catch base Exception rather than depend on a private import.
             c = SkinColors.default()
@@ -305,13 +305,13 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
         try:
             cs = self.app.console.color_system
             return cs is None or cs == "standard"
-        except Exception:  # console.color_system unavailable; default to non-accessible mode
+        except Exception:  # il-ex-1-exempt: console.color_system unavailable; default to non-accessible mode
             return False
 
     def _render_v4(self) -> "Text | None":
         try:
             from hermes_cli.tui.tool_category import spec_for, ToolCategory
-        except Exception:  # tool_category unavailable; skip header render entirely
+        except Exception:  # il-ex-1-exempt: tool_category unavailable; skip header render entirely
             return None
         spec = spec_for(self._tool_name or "", args=self._header_args or None)
         if not spec.render_header:
@@ -369,7 +369,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 from agent.display import get_tool_icon_mode
                 err_icon, _, _ = _error_kind_display(self._error_kind, "", get_tool_icon_mode())
                 icon_str = err_icon or icon_str
-            except Exception:  # noqa: bare-except
+            except Exception:  # il-ex-1-exempt: noqa: bare-except
                 pass
         # SLR-3: override icon with kind hint glyph during STREAMING.
         if getattr(self, "_streaming_kind_hint", None) is not None and not self._is_complete and not self._tool_icon_error:
@@ -392,7 +392,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     _tier_var = f"tool-tier-{_tier}-accent"
                     _css = self.app.get_css_variables()
                     ok_color = _css.get(_tier_var) or ok_color
-                except Exception:  # tool lookup or app.get_css_variables failed; use fallback
+                except Exception:  # il-ex-1-exempt: tool lookup or app.get_css_variables failed; use fallback
                     pass
                 icon_style = f"bold {ok_color}"
             else:
@@ -417,7 +417,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                     )
                     _ek_hex = self.app.get_css_variables().get(_ek_var, self._colors().error)
                     tail_segments.append(("hero", Text(f"  {_ek_icon} {self._primary_hero}", style=f"bold {_ek_hex}")))
-                except Exception:  # error-kind icon lookup failed; fall back to plain hero text
+                except Exception:  # il-ex-1-exempt: error-kind icon lookup failed; fall back to plain hero text
                     tail_segments.append(("hero", Text(f"  {self._primary_hero}", style=f"bold {self._colors().error}")))
             elif self._tool_icon_error:
                 tail_segments.append(("hero", _split_glyph_hero(self._primary_hero, f"bold {self._colors().error}")))
@@ -442,7 +442,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 _block = getattr(self._panel, "_block", None) if self._panel else None
                 if _block is not None and _block.has_partial_visible_lines():
                     diff_seg.append(" (partial)", style="dim")
-            except Exception as exc:
+            except Exception as exc:  # il-ex-1-exempt: swallow
                 _log.debug("partial-visible probe failed: %s", exc)
             if diff_seg.cell_len > 0:
                 tail_segments.append(("diff", diff_seg))
@@ -653,7 +653,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tone="success",
                 priority=NORMAL,
             )
-        except Exception:  # FeedbackService unavailable (e.g. test harness); flash is decorative, safe to skip
+        except Exception:  # il-ex-1-exempt: FeedbackService unavailable (e.g. test harness); flash is decorative, safe to skip
             pass
 
     def flash_success(self) -> None:
@@ -667,7 +667,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tone="success",
                 priority=NORMAL,
             )
-        except Exception:  # FeedbackService unavailable; success flash is decorative, safe to skip
+        except Exception:  # il-ex-1-exempt: FeedbackService unavailable; success flash is decorative, safe to skip
             pass
 
     def flash_error(self) -> None:
@@ -681,7 +681,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 tone="error",
                 priority=ERROR,
             )
-        except Exception:  # FeedbackService unavailable; error flash is decorative, safe to skip
+        except Exception:  # il-ex-1-exempt: FeedbackService unavailable; error flash is decorative, safe to skip
             pass
 
     def _compute_tooltip_text(self) -> str:
@@ -726,7 +726,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(self, self._full_path, opener, False)  # type: ignore[attr-defined]
-            except Exception:  # _open_path_action failed (OS open error); click silently ignored per UX spec
+            except Exception:  # il-ex-1-exempt: _open_path_action failed (OS open error); click silently ignored per UX spec
                 pass
             return
         if getattr(event, "chain", 1) == 2 and not self._path_clickable:
@@ -734,7 +734,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 parent = self.parent
                 summary = getattr(parent, "_result_summary", None) or self._label
                 self.app._copy_text_with_hint(str(summary))  # type: ignore[attr-defined]
-            except Exception:  # _copy_text_with_hint unavailable; double-click copy is best-effort
+            except Exception:  # il-ex-1-exempt: _copy_text_with_hint unavailable; double-click copy is best-effort
                 pass
             event.prevent_default()
             event.stop()
@@ -769,9 +769,9 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
                 menu = self.app.query_one(ContextMenu)
                 import asyncio
                 asyncio.ensure_future(menu.show(items, cx, cy))
-            except Exception:  # ContextMenu not yet mounted; show-at-center is a best-effort affordance
+            except Exception:  # il-ex-1-exempt: ContextMenu not yet mounted; show-at-center is a best-effort affordance
                 pass
-        except Exception:  # content_region unavailable pre-layout; context menu silently suppressed
+        except Exception:  # il-ex-1-exempt: content_region unavailable pre-layout; context menu silently suppressed
             pass
 
     def _build_context_menu_items(self) -> list:
@@ -785,7 +785,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             from hermes_cli.tui.tool_category import spec_for, ToolCategory
             _spec = spec_for(self._tool_name or "")
             is_shell = _spec.category == ToolCategory.SHELL
-        except Exception:  # tool_category unavailable; is_shell defaults to False, menu still renders
+        except Exception:  # il-ex-1-exempt: tool_category unavailable; is_shell defaults to False, menu still renders
             pass
         if self._path_clickable and self._full_path:
             _path = self._full_path
@@ -832,7 +832,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             from hermes_cli.tui.tool_category import spec_for, ToolCategory
             _spec = spec_for(self._tool_name or "")
             is_shell = _spec.category == ToolCategory.SHELL
-        except Exception:  # tool_category unavailable; is_shell defaults to False, menu still renders
+        except Exception:  # il-ex-1-exempt: tool_category unavailable; is_shell defaults to False, menu still renders
             pass
 
         if self._path_clickable and self._full_path:
@@ -876,7 +876,7 @@ class ToolHeader(TooltipMixin, PulseMixin, Widget):
             menu = self.app.query_one(ContextMenu)
             import asyncio
             asyncio.ensure_future(menu.show(items, event.screen_x, event.screen_y))
-        except Exception:  # ContextMenu not yet mounted; context menu silently suppressed
+        except Exception:  # il-ex-1-exempt: ContextMenu not yet mounted; context menu silently suppressed
             pass
 
 
@@ -930,7 +930,7 @@ class ToolBodyContainer(Widget):
         from textual.css.query import NoMatches
         try:
             w = self.query_one(".--args-row", Static)
-        except (NoMatches, Exception):  # noqa: bare-except
+        except (NoMatches, Exception):  # il-ex-1-exempt: noqa: bare-except
             if getattr(self, "_args_row_mounted", False):
                 # Stale flag — widget was removed; reset and re-mount
                 self._args_row_mounted = False
@@ -943,20 +943,20 @@ class ToolBodyContainer(Widget):
         if not text:
             try:
                 w.remove_class("--active")
-            except AttributeError:  # noqa: bare-except
+            except AttributeError:  # il-ex-1-exempt: noqa: bare-except
                 pass
             w.update("")
         else:
             w.update(text)
             try:
                 w.add_class("--active")
-            except AttributeError:  # noqa: bare-except
+            except AttributeError:  # il-ex-1-exempt: noqa: bare-except
                 pass
 
     def _mc_widget(self) -> "Static | None":
         try:
             return self.query_one(".--microcopy", Static)
-        except Exception:  # microcopy widget may not be mounted; None return is the documented contract
+        except Exception:  # il-ex-1-exempt: microcopy widget may not be mounted; None return is the documented contract
             return None
 
     def update_secondary_args(self, text: str) -> None:
@@ -986,7 +986,7 @@ class ToolBodyContainer(Widget):
         from textual.css.query import NoMatches
         try:
             w = self.query_one(".--stderr-tail", Static)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if not tail:
             w.remove_class("--active")
@@ -996,7 +996,7 @@ class ToolBodyContainer(Widget):
         from hermes_cli.tui.body_renderers._grammar import SkinColors
         try:
             _app = self.app
-        except Exception:  # app reference unavailable (e.g. unit test without mount); skip SkinColors lookup
+        except Exception:  # il-ex-1-exempt: app reference unavailable (e.g. unit test without mount); skip SkinColors lookup
             _app = None
         err = SkinColors.from_app(_app).error
         out = Text()

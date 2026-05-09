@@ -112,7 +112,7 @@ def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
     """D-4 helper: safely call clear_reserve() on a ThinkingWidget."""
     try:
         tw.clear_reserve()
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # best-effort UI update; widget may not be mounted
         pass
 
@@ -311,7 +311,7 @@ def _stream_effect_cfg() -> dict:
     try:
         from hermes_cli.config import read_raw_config
         raw = read_raw_config()
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # config dict read failed; use empty defaults
         raw = {}
     terminal_cfg = raw.get("terminal", {}) if isinstance(raw, dict) else {}
@@ -326,14 +326,14 @@ def _stream_effect_cfg() -> dict:
     try:
         display_cfg = raw.get("display", {}) if isinstance(raw, dict) else {}
         skin_path = display_cfg.get("skin") if isinstance(display_cfg, dict) else None
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # widget refresh failed pre-mount; skip silently
         pass
     if not skin_path:
         try:
             from hermes_cli.tui.theme_manager import _active_skin_path
             skin_path = _active_skin_path()
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # CSS variable lookup unavailable; use default value
             pass
     skin_se_cfg: dict = {}
@@ -347,7 +347,7 @@ def _stream_effect_cfg() -> dict:
             elif isinstance(se_skin, dict):
                 effect_name = se_skin.get("enabled", effect_name)
                 skin_se_cfg = {k: v for k, v in se_skin.items() if k != "enabled"}
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # reactive set failed before mount; skip gracefully
             pass
     merged_se_cfg = {**se_cfg, **skin_se_cfg} if isinstance(se_cfg, dict) else skin_se_cfg

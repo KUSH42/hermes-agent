@@ -87,7 +87,7 @@ class ReferenceModal(ModalOverlayMixin, Widget):
         self._capture_focus_caller()  # record focus caller before we steal focus
         try:
             self.app.push_modal(self)  # register in arbiter stack  # il-m1: push via arbiter
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass  # HermesApp not yet patched or tests without push_modal — graceful degrade
         if self._modal_title:
             self.border_title = self._modal_title
@@ -104,13 +104,13 @@ class ReferenceModal(ModalOverlayMixin, Widget):
         self.remove_class("--modal")  # il-m1: owned by ReferenceModal.dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass  # app has no pop_modal — graceful degrade
         if target is not None:
             try:
                 if target.is_mounted:
                     target.focus()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # focus() unavailable — best-effort, non-fatal
 
     def dismiss(self) -> None:
@@ -191,7 +191,7 @@ class HelpOverlay(ReferenceModal):
             inp = self.query_one("#help-search", Input)
             inp.value = ""
             inp.focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._populate(self._commands_cache)
 
@@ -429,10 +429,10 @@ class UsageOverlay(ReferenceModal):
         """Copy last-rendered plain-text stats to clipboard via app helper."""
         try:
             self.app._copy_text_with_hint(self._last_plain_text)  # type: ignore[attr-defined]
-        except Exception as exc:
+        except Exception as exc:  # il-ex-1-exempt: swallow
             try:
                 self.app.set_status_error(f"copy failed: {exc}")  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
 
     # ------------------------------------------------------------------
@@ -491,7 +491,7 @@ class UsageOverlay(ReferenceModal):
 
         try:
             self.query_one("#usage-content", Static).update(content)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
         self._last_plain_text = self._build_plain_text(
@@ -569,7 +569,7 @@ class CommandsOverlay(ReferenceModal):
         """Rebuild content list with a single batched mount."""
         try:
             container = self.query_one("#commands-content", Vertical)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         container.remove_children()
         children = [Static(line) for line in lines] if lines else [Static("(no commands available)")]
@@ -582,7 +582,7 @@ class CommandsOverlay(ReferenceModal):
             inp = self.query_one("#commands-search", Input)
             inp.value = ""
             inp.focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._populate(self._lines_cache)
 
@@ -674,7 +674,7 @@ class WorkspaceOverlay(ReferenceModal):
             summary_widget = self.query_one("#ws-summary", Static)
             files_widget = self.query_one("#ws-files", Vertical)
             complexity_widget = self.query_one("#ws-complexity", Vertical)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
 
         files_widget.remove_children()

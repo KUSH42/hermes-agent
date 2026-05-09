@@ -56,7 +56,7 @@ class SubAgentHeader(Widget):
             from rich.text import Text as _Text
             segments = [("calls", _Text(f"  {child_count} calls", style="dim"))]
             if not done and error_count == 0:
-                segments.insert(0, ("running", _Text("● ", style="bold green")))
+                segments.insert(0, ("running", _Text("● ", style="bold green")))  # il-tok-1-exempt: sub-agent running indicator; no SkinColors token for this state
             if error_count > 0:
                 err_word = "error" if error_count == 1 else "errors"
                 try:

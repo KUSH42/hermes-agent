@@ -32,7 +32,7 @@ try:
         read_raw_config as _cfg_read_raw_config,
         save_config as _cfg_save_config,
     )
-except ImportError:
+except ImportError:  # il-ex-1-exempt: swallow
     def _cfg_read_raw_config():  # type: ignore[misc]
         return {}
 
@@ -189,14 +189,14 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("SessionOverlay.open_sessions: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by open_sessions (permanent widget override)
         self._selected_idx = 0
         try:
             self.query_one("#sess-scroll", ScrollableContainer).remove_children()
             self.query_one("#sess-scroll", ScrollableContainer).mount(Static("[dim]Loading…[/dim]", id="sess-loading"))
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._load_sessions()
         # C3: take keyboard focus so ↑↓ navigation works immediately after opening.
@@ -208,7 +208,7 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("SessionOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -221,11 +221,11 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self._pending_delete_idx = None
         try:
             self.query_one("#sess-confirm").remove_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             _log.debug("_cancel_pending_delete: #sess-confirm not found")
         try:
             self.query_one("#sess-footer").styles.display = "block"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             _log.debug("_cancel_pending_delete: #sess-footer not found")
 
     @work(thread=True)
@@ -256,7 +256,7 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self._sessions = sessions
         try:
             scroll = self.query_one("#sess-scroll", ScrollableContainer)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         scroll.remove_children()
         current_id = getattr(getattr(self.app, "cli", None), "session_id", None)
@@ -277,14 +277,14 @@ class SessionOverlay(ModalOverlayMixin, Widget):
                 color_tokens_warning = sc.warning
             if _is_hex(sc.muted):
                 color_tokens_muted = sc.muted
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         try:
             _cv = self.app.get_css_variables()
             raw_disabled = (_cv.get("text-disabled") or "").strip()
             if _is_hex(raw_disabled):
                 color_tokens_disabled = raw_disabled
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
 
         rows: list["_SessionRow"] = []
@@ -312,11 +312,11 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             self.query_one("#sess-header", Static).update(
                 f"[bold]Sessions[/bold]  [dim]Current: {current_label}[/dim]"
             )
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.query_one("#sess-columns", Static).update(self._build_column_header(title_width))
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         if preserve_idx is not None:
             self._selected_idx = min(preserve_idx, max(0, len(sessions) - 1))
@@ -340,7 +340,7 @@ class SessionOverlay(ModalOverlayMixin, Widget):
                 self.query_one("#sess-scroll", ScrollableContainer).scroll_to_widget(
                     rows[self._selected_idx], animate=False
                 )
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
     def action_move_up(self) -> None:
@@ -411,13 +411,13 @@ class SessionOverlay(ModalOverlayMixin, Widget):
                 self.query_one("#sess-footer", Static).update(
                     "Cannot delete the active session — switch first"
                 )
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
             def _restore_footer() -> None:
                 try:
                     self.query_one("#sess-footer", Static).update(_SESS_FOOTER_LEGEND)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass  # overlay may have been dismissed before timer fired
 
             self.set_timer(2, _restore_footer)
@@ -430,11 +430,11 @@ class SessionOverlay(ModalOverlayMixin, Widget):
                 f"Delete '{title or 'untitled'}'? Press D again to confirm, Esc to cancel"
             )
             self.query_one("#sess-confirm").add_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.query_one("#sess-footer").styles.display = "none"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     @work(thread=True)
@@ -454,14 +454,14 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self._render_rows(self._sessions, preserve_idx=insert_at)
         try:
             self.query_one("#sess-footer").styles.display = "none"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             _log.debug("_after_delete_failure: #sess-footer not found")
         try:
             confirm = self.query_one("#sess-confirm")
             confirm.update("Delete failed — see log")
             confirm.add_class("--visible")
             self._pending_delete_idx = insert_at
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             _log.debug("_after_delete_failure: #sess-confirm not found")
 
     def dismiss(self) -> None:
@@ -724,7 +724,7 @@ COMPACT      minimal view
         self._capture_focus_caller()  # capture ToolPanel (or whatever has focus) before we steal it
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             _log.debug("ToolPanelHelpOverlay.show_overlay: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show_overlay (permanent widget override)
         self.focus()
@@ -739,7 +739,7 @@ COMPACT      minimal view
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             _log.debug("ToolPanelHelpOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:

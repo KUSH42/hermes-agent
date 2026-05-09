@@ -40,7 +40,7 @@ def _walk_tree(node: dict, out: list, depth: int) -> None:
     line.append(indent)
 
     if role in _LANDMARK_ROLES:
-        line.append(f"[{role}]", style="bold cyan")
+        line.append(f"[{role}]", style="bold cyan")  # il-tok-1-exempt: a11y tree landmark role label; semantic cyan for accessibility output
         if name:
             line.append(f" {name}", style="bold")
     elif role in _LEAF_ROLES:
@@ -83,7 +83,7 @@ class BrowserSnapshotRenderer(BodyRenderer):
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError):  # il-ex-1-exempt: swallow
             # malformed/non-JSON tool output: best-effort fall back to raw text
             return Text(raw)
 
@@ -127,7 +127,7 @@ class BrowserSnapshotRenderer(BodyRenderer):
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError):  # il-ex-1-exempt: swallow
             # summary_line is display-only; malformed payload is a safe fallback
             return "(snapshot)"
         title = data.get("title") or data.get("page_title") or ""

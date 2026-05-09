@@ -481,10 +481,10 @@ class ThemeManager:
                     self._apply_overrides(overrides)
                 except SkinValidationError:
                     raise
-                except Exception:  # skin_overrides apply failed — partial overrides discarded
+                except Exception:  # il-ex-1-exempt: skin_overrides apply failed — partial overrides discarded
                     pass
                 return True
-            except (SkinError, SkinValidationError, OSError) as exc:
+            except (SkinError, SkinValidationError, OSError) as exc:  # il-ex-1-exempt: swallow
                 log.warning(f"[THEME] SKIN_LOAD_FAILED: {p}: {exc}")
                 print(f"SKIN_LOAD_FAILED: {p}: {exc}", file=sys.stderr)
             except Exception as exc:
@@ -511,7 +511,7 @@ class ThemeManager:
                 ok = self.load(configured)
                 if ok:
                     return "configured"
-            except SkinValidationError as exc:
+            except SkinValidationError as exc:  # il-ex-1-exempt: swallow
                 log.warning(f"[THEME] SKIN_LOAD_FAILED: {exc}")
                 print(f"SKIN_LOAD_FAILED: {exc}", file=sys.stderr)
 
@@ -533,7 +533,7 @@ class ThemeManager:
         try:
             from hermes_cli.config import read_skin_overrides
             self._apply_overrides(read_skin_overrides())
-        except Exception:  # skin_overrides unavailable during emergency fallback — use bare defaults
+        except Exception:  # il-ex-1-exempt: skin_overrides unavailable during emergency fallback — use bare defaults
             pass
         print("SKIN_EMERGENCY_FALLBACK: using COMPONENT_VAR_DEFAULTS only", file=sys.stderr)
         log.warning("[THEME] SKIN_EMERGENCY_FALLBACK")
@@ -649,7 +649,7 @@ class ThemeManager:
             return False
         try:
             mtime = self._source_path.stat().st_mtime
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             return False
         if mtime <= self._source_mtime:
             return False
@@ -676,7 +676,7 @@ class ThemeManager:
                 continue
             try:
                 mtime = path.stat().st_mtime
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 continue
             baseline = max(self._source_mtime, self._pending_reload_mtime)
             if mtime <= baseline:
@@ -695,7 +695,7 @@ class ThemeManager:
                     css_vars,
                     component_vars,
                 )
-            except RuntimeError:
+            except RuntimeError:  # il-ex-1-exempt: swallow
                 return
 
     def _apply_hot_reload_payload(

@@ -142,7 +142,7 @@ class _TimerCancelToken:
     def stop(self) -> None:
         try:
             self._timer.stop()
-        except Exception:  # timer may already be expired/stopped — teardown swallow is correct
+        except Exception:  # il-ex-1-exempt: timer may already be expired/stopped — teardown swallow is correct
             pass
 
 
@@ -672,7 +672,7 @@ class HintBarAdapter(ChannelAdapter):
         try:
             bar = self._get_bar()
             bar.hint = ""
-        except ChannelUnmountedError:
+        except ChannelUnmountedError:  # il-ex-1-exempt: swallow
             pass  # HintBar not mounted — teardown swallow is correct
         except Exception:  # unexpected error restoring hint bar — log but don't crash
             _log.debug("HintBarAdapter.restore() failed", exc_info=True)

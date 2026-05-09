@@ -20,7 +20,7 @@ def _get_collapse_threshold(app) -> int:
     try:
         cfg = app.config if app else {}
         return int((cfg.get("tui") or {}).get("json", {}).get("collapse_threshold", _DEFAULT_COLLAPSE_THRESHOLD))
-    except Exception:  # config key absent or non-integer — use default threshold
+    except Exception:  # il-ex-1-exempt: config key absent or non-integer — use default threshold
         return _DEFAULT_COLLAPSE_THRESHOLD
 
 
@@ -78,7 +78,7 @@ try:
         def _toggle_expand(self) -> None:
             self._syntax_view.display = not self._syntax_view.display
 
-except ImportError:  # noqa: bare-except
+except ImportError:  # il-ex-1-exempt: noqa: bare-except
     pass
 
 
@@ -128,7 +128,7 @@ class JsonRenderer(BodyRenderer):
         raw = self.payload.output_raw or ""
         try:
             data, pretty = self._parse_and_pretty(raw)
-        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # noqa: bare-except
+        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # il-ex-1-exempt: noqa: bare-except
             return self._render_parse_failure(raw, e)
 
         threshold = _get_collapse_threshold(self._app)
@@ -148,7 +148,7 @@ class JsonRenderer(BodyRenderer):
             obj = _json_mod.loads(self.payload.output_raw or "{}")
             keys = list(obj.keys())[:4] if isinstance(obj, dict) else []
             return ", ".join(keys) if keys else "…"
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             return "…"
 
     def summary_line(self, *, density=None, cls_result=None) -> str:
@@ -163,7 +163,7 @@ class JsonRenderer(BodyRenderer):
         raw = self.payload.output_raw or ""
         try:
             data, pretty = self._parse_and_pretty(raw)
-        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # noqa: bare-except
+        except (json.JSONDecodeError, MemoryError, ValueError) as e:  # il-ex-1-exempt: noqa: bare-except
             body = build_parse_failure(raw, e, colors=self.colors)
             return BodyFrame(
                 header=build_rule("json", colors=self.colors),

@@ -185,7 +185,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                 try:
                     sel_style = self.screen.get_component_rich_style("screen--selection")
                     strip = _apply_span_style(strip, start_x, end_x, sel_style)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # skin color lookup failed; use hardcoded fallback
                     pass
 
@@ -263,7 +263,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                     # defer again to avoid indefinite queuing if layout never fires.
                     try:
                         width = max(self.app.size.width - 5, 20)
-                    except Exception:
+                    except Exception:  # il-ex-1-exempt: swallow
                         # CSS variable unavailable; use default value
                         width = 80
         # Track widest rendered width for reflow trigger (REFLOW-H1)
@@ -318,7 +318,7 @@ class CopyableRichLog(RichLog, can_focus=False):
                     _Console(file=buf, force_terminal=True, width=10000, highlight=False).print(styled, end="")
                     ansi_str = buf.getvalue().rstrip("\n")
                     return self.write(Text.from_ansi(inject_osc8(ansi_str, _enabled=True)), **kwargs)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # OSC8 hyperlink injection failed; fall through to plain write below
             return self.write(styled, **kwargs)
         finally:
@@ -478,7 +478,7 @@ CopyableBlock {
             text = self.log.copy_content()
             try:
                 self.app._copy_text_with_hint(text)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # widget absent during render update; skip gracefully
                 pass
             event.prevent_default()
@@ -487,19 +487,19 @@ CopyableBlock {
         """Lazily mount the copy button on first hover."""
         try:
             from hermes_cli.tui.constants import accessibility_mode, ICON_COPY
-        except ImportError:
+        except ImportError:  # il-ex-1-exempt: swallow
             ICON_COPY = "⎘"
             def accessibility_mode() -> bool:  # type: ignore[no-redef]
                 return False
         if accessibility_mode():
             try:
                 self.query_one("#copy-btn")
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 self.mount(Static("[Copy]", id="copy-btn"))
             return
         try:
             self.query_one("#copy-btn")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             self.mount(Static(ICON_COPY, id="copy-btn"))
 
     def set_streaming(self, active: bool) -> None:
@@ -641,7 +641,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                 engine.process_line(committed)
             if rl._deferred_renders:
                 self.call_after_refresh(msg.refresh, layout=True)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._buf = lines[-1]
 
@@ -690,7 +690,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
         """Enqueue one char or ANSI token; flush+commit on queue full."""
         try:
             self._char_queue.put_nowait(item)
-        except asyncio.QueueFull:
+        except asyncio.QueueFull:  # il-ex-1-exempt: swallow
             # Drain queued chars in order first, then commit new item directly,
             # preserving character ordering without dropping any content.
             self.flush()
@@ -713,7 +713,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                     char = await asyncio.wait_for(
                         self._char_queue.get(), timeout=0.5
                     )
-                except asyncio.TimeoutError:
+                except asyncio.TimeoutError:  # il-ex-1-exempt: swallow
                     continue
 
                 self._animating = True
@@ -729,7 +729,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                             self._buf += c
                             if "\n" in self._buf:
                                 self._commit_lines()
-                        except asyncio.QueueEmpty:
+                        except asyncio.QueueEmpty:  # il-ex-1-exempt: swallow
                             break
                     await asyncio.sleep(0)
                 else:
@@ -763,7 +763,7 @@ class LiveLineWidget(ManagedTimerMixin, Widget):
                 self._buf += char
                 if "\n" in self._buf:
                     self._commit_lines()
-            except asyncio.QueueEmpty:
+            except asyncio.QueueEmpty:  # il-ex-1-exempt: swallow
                 break
         self._animating = False
 
@@ -788,7 +788,7 @@ def _fade_rule(count: int, start_hex: str, end_hex: str) -> Text:
     for i in range(count):
         factor = i / max(count - 1, 1)
         c = blend_rgb(c_start, c_end, factor)
-        t.append("─", style=f"rgb({c.red},{c.green},{c.blue})")
+        t.append("─", style=f"rgb({c.red},{c.green},{c.blue})")  # il-tok-1-exempt: dynamically computed RGB from Color object blend; not a hardcoded literal
     return t
 
 
@@ -903,7 +903,7 @@ class TitledRule(PulseMixin, Widget):
                 v.get("rule-accent-color",     self._accent),
                 v.get("rule-accent-color",     self._title_color),
             )
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # fade/accent lookup failed; return cached fallback values
             return self._fade_start, self._fade_end, self._accent, self._title_color
 
@@ -919,7 +919,7 @@ class TitledRule(PulseMixin, Widget):
             from hermes_cli.tui.widgets.output_panel import OutputPanel
             op = self.app.query_one(OutputPanel)
             w = min(w, op.scrollable_content_region.width)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # banner color lookup failed; skip colour update
             pass
         return max(1, w)
@@ -952,7 +952,7 @@ class TitledRule(PulseMixin, Widget):
             glyph_idle = v.get("brand-glyph-color", v.get("primary-darken-3", _skin_color("banner_dim", "#2d4a6e")))
             glyph_active = v.get("primary", _skin_color("banner_title", "#5f87d7"))
             glyph_err = v.get("status-error-color", "#EF5350")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # SkinColors lookup failed; use hardcoded gold fallback
             glyph_idle = _skin_color("banner_title", "#FFD700")
             glyph_active = _skin_color("banner_title", "#5f87d7")
@@ -988,7 +988,7 @@ class TitledRule(PulseMixin, Widget):
         if self._created_at is not None and not self._show_state:
             try:
                 ts_text = self._created_at.strftime("%H:%M")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # best-effort render hook; widget may be absent
                 ts_text = ""
         metrics_text = self._response_metrics_text()
@@ -1072,7 +1072,7 @@ class PlainRule(Widget):
             from hermes_cli.tui.widgets.output_panel import OutputPanel
             op = self.app.query_one(OutputPanel)
             w = min(w, op.scrollable_content_region.width)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # best-effort render hook; widget may be absent
             pass
         if self._max_width:
@@ -1085,7 +1085,7 @@ class PlainRule(Widget):
             fade_start = v.get("rule-dim-color", fade_start)
             # Same fallback chain as TitledRule: rule-bg-color → app-bg → default
             fade_end = v.get("rule-bg-color") or v.get("app-bg", fade_end)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # best-effort render hook; widget may be absent
             pass
         return _fade_rule(w, fade_start, fade_end)

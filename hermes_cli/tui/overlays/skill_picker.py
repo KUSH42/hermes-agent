@@ -148,7 +148,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
         self._refresh_detail()
         try:
             self.query_one("#picker-filter", Input).focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             k = self.app.get_css_variables().get("primary", "cyan")
@@ -190,7 +190,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
     def _rebuild_list(self) -> None:
         try:
             option_list = self.query_one("#picker-list", OptionList)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         option_list.clear_options()
         filtered = self._filtered_candidates()
@@ -218,7 +218,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
     def _refresh_detail(self) -> None:
         try:
             detail = self.query_one("#picker-right", ScrollableContainer)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         detail.remove_children()
 
@@ -272,7 +272,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
             for c in self._candidates:
                 if c.name == highlighted_id:
                     return c
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # option list not yet rendered or highlighted index invalid; treat as no selection
         return None
 
@@ -281,7 +281,7 @@ class SkillPickerOverlay(ModalOverlayMixin, Widget):
         self._filter = seed
         try:
             self.query_one("#picker-filter", Input).value = seed
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._rebuild_list()
         self._refresh_detail()

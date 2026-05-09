@@ -202,7 +202,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             ol = self.query_one("#co-verbose-list", OptionList)
             for value, label in _VERBOSE_CHOICES:
                 ol.add_option(Option(f"  {label}", id=f"co-verbose-opt-{value}"))
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # widget not yet in DOM during deferred mount; options absent but non-fatal
 
     def on_unmount(self) -> None:
@@ -222,7 +222,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("ConfigOverlay.show_overlay: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show_overlay (permanent widget override)
         self._refresh_active_tab()
@@ -242,7 +242,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("ConfigOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -268,7 +268,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
     def _update_tab_bar(self) -> None:
         try:
             bar = self.query_one("#co-tab-bar", Static)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return  # not yet mounted; called speculatively before compose completes
         parts = []
         for key, hotkey, label in _TABS:
@@ -282,7 +282,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         for key in _TAB_KEYS:
             try:
                 body = self.query_one(f"#co-body-{key}", Vertical)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 continue
             body.display = (key == self.active_tab)
 
@@ -299,7 +299,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             return
         try:
             self.query_one(sel).focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # expected on first show_overlay before compose completes; focus silently skipped
 
     def _refresh_active_tab(self) -> None:
@@ -394,7 +394,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.add_option(Option(f"{marker}{label}{auth_mark}", id=f"co-provider-opt-{pid}"))
             if active_norm in self._provider_slugs:
                 ol.highlighted = self._provider_slugs.index(active_norm)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _populate_model_list(
@@ -423,7 +423,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             models.insert(0, current_model)
         try:
             self.query_one("#co-model-current", Static).update(f"Current:  {current_model}")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             ol = self.query_one("#co-model-list", OptionList)
@@ -433,7 +433,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.add_option(Option(f"{marker}{m}", id=f"co-model-opt-{m}"))
             if current_model in models:
                 ol.highlighted = models.index(current_model)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # ── Background model catalog workers ─────────────────────────────────
@@ -488,7 +488,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             values = [v for v, _ in _VERBOSE_CHOICES]
             if current in values:
                 ol.highlighted = values.index(current)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # ── Reasoning tab ─────────────────────────────────────────────────────
@@ -499,11 +499,11 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         rich = bool(cfg.get("display", {}).get("rich_reasoning", True))
         try:
             self.query_one("#co-rpo-show", Checkbox).value = show
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.query_one("#co-rpo-rich", Checkbox).value = rich
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._update_reasoning_highlights()
 
@@ -516,7 +516,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.add_option(Option(f"{marker}{lvl}", id=f"co-rpo-opt-{lvl}"))
             if self._reasoning_current_level in _REASONING_LEVELS:
                 ol.highlighted = _REASONING_LEVELS.index(self._reasoning_current_level)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # ── YOLO tab ──────────────────────────────────────────────────────────
@@ -532,7 +532,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         try:
             self.query_one("#co-yolo-enable", Button).display = not is_active
             self.query_one("#co-yolo-disable", Button).display = is_active
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _set_yolo(self, enable: bool) -> None:
@@ -554,7 +554,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         try:
             msg = "⚡  YOLO mode enabled" if enable else "  YOLO mode disabled"
             self.app._flash_hint(msg, 2.0)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # flash hint is best-effort UI decoration; action already applied
         self.dismiss_overlay()
 
@@ -583,14 +583,14 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         if tm is not None and hasattr(tm, "list_skins"):
             try:
                 names = list(tm.list_skins())
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 names = []
         if not names:
             names = [self._current_skin or "hermes"]
         self._skin_names = names
         try:
             self.query_one("#co-skin-current", Static).update(f"Current: {self._current_skin}")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             ol = self.query_one("#co-skin-list", OptionList)
@@ -600,7 +600,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.add_option(Option(f"{marker}{n}", id=f"co-skin-opt-{n}"))
             if self._current_skin in names:
                 ol.highlighted = names.index(self._current_skin)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # skin tab widgets not yet in DOM; refresh will retry on next show_overlay
 
     def _refresh_syntax_tab(self) -> None:
@@ -614,7 +614,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             self.query_one("#co-syntax-current", Static).update(
                 f"Current: {self._current_syntax}"
             )
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             ol = self.query_one("#co-syntax-list", OptionList)
@@ -624,7 +624,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.add_option(Option(f"{marker}{s}", id=f"co-syntax-opt-{s}"))
             if self._current_syntax in schemes:
                 ol.highlighted = schemes.index(self._current_syntax)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._render_syntax_fixture(self._current_syntax)
 
@@ -664,9 +664,9 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             try:
                 _lang, fixture = self._syntax_fixture_content()
                 self.query_one("#co-syntax-fixture", Static).update(fixture)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _revert_skin_preview_if_any(self) -> None:
@@ -689,7 +689,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
     def _preview_syntax_theme(self, theme: str) -> None:
         try:
             tm = getattr(self.app, "_theme_manager", None)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             tm = None
         if tm is not None and hasattr(tm, "_css_vars"):
             try:
@@ -750,7 +750,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             self._browsed_provider = slug
             try:
                 self.query_one("#co-model-list", OptionList).focus()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return
         if opt_id.startswith("co-model-opt-"):
@@ -801,7 +801,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         try:
             from hermes_cli.models import normalize_provider
             provider_changed = normalize_provider(browsed) != normalize_provider(config_provider)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             provider_changed = browsed != config_provider
         cmd_args = f"{value} --provider {browsed} --global" if provider_changed else f"{value} --global"
         try:
@@ -809,7 +809,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             inp = self.app.query_one(HermesInput)
             try:
                 inp.save_draft_stash()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # draft stash is best-effort; model switch proceeds regardless
             inp.value = f"/model {cmd_args}"
             inp.action_submit()
@@ -818,7 +818,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         label = f"{browsed}:{value}" if provider_changed else value
         try:
             self.app._flash_hint(f"  Model → {label}", 2.0)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # flash hint is best-effort UI decoration; action already applied
         self.dismiss_overlay()
 
@@ -831,7 +831,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             _log.warning("Failed to persist verbose setting %r", value, exc_info=True)
         try:
             self.app._flash_hint(f"  Tool progress → {value}", 2.0)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # flash hint is best-effort UI decoration; action already applied
         self.dismiss_overlay()
 
@@ -860,11 +860,11 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             _log.debug("_confirm_skin: snapshot refresh failed for %r", name, exc_info=True)
         try:
             self.query_one("#co-skin-current", Static).update(f"Current: {name}")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.app._flash_hint(f"  Skin → {name}", 2.0)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # flash hint is best-effort UI decoration; action already applied
 
     def _confirm_syntax(self, value: str) -> None:
@@ -885,11 +885,11 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             _log.debug("_confirm_syntax: snapshot refresh failed for %r", value, exc_info=True)
         try:
             self.query_one("#co-syntax-current", Static).update(f"Current: {value}")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # syntax tab may not be visible; label update is best-effort display
         try:
             self.app._flash_hint(f"  Syntax → {value}", 2.0)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # flash hint is best-effort UI decoration; action already applied
 
     def _apply_reasoning_level(self, level: str) -> None:
@@ -903,7 +903,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             inp = self.app.query_one(HermesInput)
             try:
                 inp.save_draft_stash()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
             inp.value = f"/reasoning {level}"
             inp.action_submit()

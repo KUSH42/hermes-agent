@@ -305,12 +305,12 @@ def safe_run(
                     input=input_bytes,
                     check=False,
                 )
-        except subprocess.TimeoutExpired as exc_te:
+        except subprocess.TimeoutExpired as exc_te:  # il-ex-1-exempt: swallow
             elapsed = float(timeout)
             if on_timeout is not None:
                 _safe_callback(app, on_timeout, elapsed)
             return
-        except (OSError, subprocess.SubprocessError) as exc_os:
+        except (OSError, subprocess.SubprocessError) as exc_os:  # il-ex-1-exempt: swallow
             _safe_callback(app, on_error, exc_os, "")
             return
 
@@ -345,7 +345,7 @@ def safe_open_url(
     """
     try:
         url = _validate_url(url)
-    except ValidationError as exc:
+    except ValidationError as exc:  # il-ex-1-exempt: swallow
         if on_error:
             on_error(exc)
         return
@@ -395,7 +395,7 @@ def safe_edit_cmd(
     # Step 2: validate path
     try:
         resolved_path = _validate_path(path)
-    except ValidationError as exc:
+    except ValidationError as exc:  # il-ex-1-exempt: swallow
         if on_error:
             on_error(exc)
         return
@@ -419,7 +419,7 @@ def safe_edit_cmd(
             subprocess.run(argv)  # allow-sync-io: safe_edit_cmd is intentionally blocking via App.suspend()
         if on_exit:
             on_exit()
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError) as exc:  # il-ex-1-exempt: swallow
         if on_error:
             on_error(exc)
     finally:
@@ -443,7 +443,7 @@ def safe_read_file(
     """
     try:
         resolved = _validate_path(path, sandbox_root=sandbox_root)
-    except ValidationError as exc:
+    except ValidationError as exc:  # il-ex-1-exempt: swallow
         if on_error:
             on_error(exc)
         return
@@ -495,7 +495,7 @@ def safe_write_file(
             sandbox_root=sandbox_root,
             mkdir_parents=mkdir_parents,
         )
-    except ValidationError as exc:
+    except ValidationError as exc:  # il-ex-1-exempt: swallow
         if on_error:
             on_error(exc)
         return

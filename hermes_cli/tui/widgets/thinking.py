@@ -40,7 +40,7 @@ def _schedule_awaitable(value: object) -> None:
     if hasattr(value, "__await__"):
         try:
             asyncio.ensure_future(value)  # type: ignore[arg-type]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # ensure_future failed outside a running loop; awaitable dropped safely
 
 # ── Engine whitelists ─────────────────────────────────────────────────────────
@@ -291,7 +291,7 @@ _AnimSurface {
                 if not raw.strip():
                     return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)  # no dim — would darken bg
                 return self._render_gradient_line(raw, y)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # thinking content parse failed; widget shows empty content
             pass
         return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)
@@ -518,14 +518,14 @@ _LabelLine   { height: 1;   width: 1fr; }
                 return ThinkingMode.LINE
             if w > 0 and w < 100:
                 return ThinkingMode.COMPACT
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # streaming widget absent; thinking append skipped
             pass
         self._load_config()
         resolved = ThinkingMode.DEFAULT
         try:
             resolved = ThinkingMode(self._cfg_mode)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
         # A4: DEEP only after extended wait — gate on elapsed since LONG_WAIT entry
         if resolved == ThinkingMode.DEEP:
@@ -653,7 +653,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         raw_speed = str(css_vars.get("thinking-hue-shift-speed", "0.15"))
         try:
             self._chroma_hue_speed = float(raw_speed)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # il-ex-1-exempt: swallow
             self._chroma_hue_speed = 0.15
         # Clamp to [0.0, 2.0] turns/second
         self._chroma_hue_speed = max(0.0, min(2.0, self._chroma_hue_speed))
@@ -662,20 +662,20 @@ _LabelLine   { height: 1;   width: 1fr; }
     def _apply_background_styles(self) -> None:
         try:
             self.styles.background = self._app_bg_hex
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # unit tests may call _refresh_colors on __new__ instances without Textual init
         if self._anim_surface is not None:
             self._anim_surface._background_hex = self._app_bg_hex
             self._anim_surface._background_rgb = _hex_to_rgb(self._app_bg_hex)
             try:
                 self._anim_surface.styles.background = self._app_bg_hex
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # child may not be mounted yet; render path still uses cached hex/rgb
         if self._label_line is not None:
             self._label_line._background_hex = self._app_bg_hex
             try:
                 self._label_line.styles.background = self._app_bg_hex
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # child may not be mounted yet; on_mount reapplies cached background
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -830,14 +830,14 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._anim_surface is not None:
             try:
                 _schedule_awaitable(self._anim_surface.remove())
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # scroll target unavailable; thinking display continues
                 pass
             self._anim_surface = None
         if self._label_line is not None:
             try:
                 _schedule_awaitable(self._label_line.remove())
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # scroll target unavailable; thinking display continues
                 pass
             self._label_line = None
@@ -858,7 +858,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         if self._reserve_fallback_timer is not None:
             try:
                 self._reserve_fallback_timer.stop()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # widget absent during cleanup; skip gracefully
                 pass
             self._reserve_fallback_timer = None

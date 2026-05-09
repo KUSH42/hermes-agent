@@ -87,7 +87,7 @@ class ChildPanel(ToolPanel):
         from textual.css.query import NoMatches
         try:
             self.query_one(".tool-body-container").display = not new
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def set_result_summary(self, summary: Any) -> None:

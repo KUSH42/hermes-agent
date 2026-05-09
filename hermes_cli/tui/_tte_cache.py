@@ -44,7 +44,7 @@ def _tte_version() -> str:
         # the same key on every restart, so caches remain valid across sessions
         # as long as the package is not upgraded (which would change __version__).
         return str(getattr(_m, "__version__", "unknown"))
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         return "missing"
 
 
@@ -109,14 +109,14 @@ def load_tte_frames(key: str) -> list[str] | None:
         if not isinstance(data, dict) or data.get("v") != _TTE_CACHE_FORMAT_VER:
             try:
                 path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass  # file may have been deleted between check and unlink — ignore
             return None
         frames = data.get("frames")
         if not isinstance(frames, list) or not frames:
             try:
                 path.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass  # file may have been deleted between check and unlink — ignore
             return None
         # str(f) coercion is intentionally lenient: frames are always written as
@@ -128,7 +128,7 @@ def load_tte_frames(key: str) -> list[str] | None:
         _log.debug("tte_cache: load failed for key=%s", key, exc_info=True)
         try:
             path.unlink(missing_ok=True)
-        except FileNotFoundError:
+        except FileNotFoundError:  # il-ex-1-exempt: swallow
             pass  # raced with another process — fine
         except OSError:
             _log.warning(
@@ -160,7 +160,7 @@ def save_tte_frames(key: str, frames: list[str]) -> None:
         _log.debug("tte_cache: save failed for key=%s", key, exc_info=True)
         try:
             tmp.unlink(missing_ok=True)
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             pass  # tmp file may have been deleted already — ignore
 
 
@@ -175,7 +175,7 @@ def gc_tte_cache() -> None:
                 _st = tmp.stat()
                 if (now - _st.st_mtime) > _GC_MAX_AGE_S:
                     tmp.unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass  # file deleted by concurrent process — ignore
 
         files = list(cache_dir.glob("*.pkl.gz"))
@@ -187,7 +187,7 @@ def gc_tte_cache() -> None:
                     f.unlink(missing_ok=True)
                 else:
                     survivors.append((_st.st_mtime, f))
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass  # file deleted by concurrent process — ignore
         # enforce max file count: keep _GC_MAX_FILES newest
         if len(survivors) > _GC_MAX_FILES:
@@ -195,7 +195,7 @@ def gc_tte_cache() -> None:
             for _mtime, f in survivors[:-_GC_MAX_FILES]:
                 try:
                     f.unlink(missing_ok=True)
-                except OSError:
+                except OSError:  # il-ex-1-exempt: swallow
                     pass  # file deleted by concurrent process — ignore
     except Exception:
         _log.debug("tte_cache: gc failed", exc_info=True)

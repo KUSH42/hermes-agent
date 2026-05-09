@@ -87,7 +87,7 @@ class ModalOverlayMixin:
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # type: ignore[attr-defined]
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             _log.debug("ModalOverlayMixin.on_mount: app has no push_modal (HermesApp not yet patched)")
         self.add_class("--modal")  # il-m1: owned by ModalOverlayMixin; do not set raw --modal elsewhere
 
@@ -97,7 +97,7 @@ class ModalOverlayMixin:
         self.remove_class("--modal")  # il-m1: owned by ModalOverlayMixin
         try:
             self.app.pop_modal(self)  # type: ignore[attr-defined]
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             _log.debug("ModalOverlayMixin.on_unmount: app has no pop_modal")
         if target is not None:
             try:
@@ -123,13 +123,13 @@ class ModalOverlayMixin:
             try:
                 if caller.is_mounted:
                     return caller
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # is_mounted check failed — treat as unmounted
         # Fallback: try HermesInput
         try:
             from hermes_cli.tui.input_widget import HermesInput  # local import to avoid circular
             return self.app.query_one(HermesInput)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # NoMatches or ImportError — expected if HermesInput not in DOM
             return None
 

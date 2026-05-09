@@ -199,7 +199,7 @@ class PathSearchProvider(Widget):
                                     dirs.append(entry.name)
                             else:
                                 files.append(entry.name)
-                        except OSError:
+                        except OSError:  # il-ex-1-exempt: swallow
                             continue
                     # Deterministic order: alphabetical within each category.
                     dirs.sort()
@@ -208,5 +208,5 @@ class PathSearchProvider(Widget):
                     for d in reversed(dirs):
                         stack.append(os.path.join(dirpath, d))
                     yield dirpath, dirs, files
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 continue

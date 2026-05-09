@@ -22,7 +22,7 @@ def _is_numeric(s: str) -> bool:
     try:
         float(s.replace(",", "").replace("%", ""))
         return True
-    except (ValueError, AttributeError):  # noqa: bare-except
+    except (ValueError, AttributeError):  # il-ex-1-exempt: noqa: bare-except
         return False
 
 

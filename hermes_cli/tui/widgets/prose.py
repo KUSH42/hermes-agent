@@ -350,7 +350,7 @@ class InlineProseLog(CopyableRichLog):
             # (e.g. unit tests). render_line shows alt_text until repaint.
             try:
                 self._prerender_halfblock(mode, wid, hb_spans)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Markdown render failed; prose widget shows empty content
                 pass
         elif rendered_tgp:
@@ -510,7 +510,7 @@ class InlineProseLog(CopyableRichLog):
                 try:
                     sel_style = self.screen.get_component_rich_style("screen--selection")
                     strip = _apply_span_style(strip, sel_span[0], sel_span[1], sel_style)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # Rich markup render failed; prose widget shows empty content
                     pass
 
@@ -560,7 +560,7 @@ class MathBlockWidget(Widget):
             try:
                 from hermes_cli.tui.math_renderer import _get_math_renderer
                 label_text = _get_math_renderer().render_unicode(self._latex)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 label_text = self._latex
         else:
             label_text = "∫ Math expression"

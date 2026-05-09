@@ -144,6 +144,7 @@ x-hermes:
     tool-tier-query-accent: '#C7A96B'
     tool-tier-agent-accent: '#C7A96B'
     reasoning-accent: '#C7A96B'
+    user-accent: '#C7A96B'
     browse-turn: '#C7A96B'
     browse-code: '#4caf50'
     browse-tool: '#9b59b6'

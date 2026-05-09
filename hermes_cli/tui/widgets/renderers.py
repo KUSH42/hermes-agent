@@ -323,7 +323,14 @@ class _CopyBtn(TooltipMixin, Static):
 class CopyableBlock(Widget):
     """Wraps CopyableRichLog with a hover-reveal copy button."""
 
-    DEFAULT_CSS = "CopyableBlock { height: auto; margin: 0 2; }"
+    DEFAULT_CSS = """
+CopyableBlock {
+    height: auto;
+    margin: 0;
+    padding: 0 1;
+    border-left: vkey $accent 60%;   /* $accent: existing skin var, no new declaration */
+}
+"""
     _content_type: str = "prose"
 
     def __init__(self, _log_id: str | None = None, **kwargs: Any) -> None:

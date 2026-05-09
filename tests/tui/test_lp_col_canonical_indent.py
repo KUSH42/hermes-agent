@@ -89,11 +89,15 @@ class TestUserAndToolBodyAlignment:
     """LP-COL-2: UserMessagePanel and ToolPanel BodyPane share col 2."""
 
     def test_user_message_first_text_col_eq_2(self):
-        """UserMessagePanel DEFAULT_CSS declares padding: 0 2 (left == 2)."""
+        """UserMessagePanel text col == 2: rail(1) + padding-left(1) = 2 (LP-GUTTER-2)."""
         from hermes_cli.tui.widgets.message_panel import UserMessagePanel
 
-        assert "padding: 0 2" in UserMessagePanel.DEFAULT_CSS, (
-            "UserMessagePanel.DEFAULT_CSS must declare padding: 0 2"
+        # After LP-GUTTER-2: padding: 0 1 + border-left: vkey → col 2
+        assert "padding: 0 1" in UserMessagePanel.DEFAULT_CSS, (
+            "UserMessagePanel.DEFAULT_CSS must declare padding: 0 1 (LP-GUTTER-2)"
+        )
+        assert "border-left" in UserMessagePanel.DEFAULT_CSS, (
+            "UserMessagePanel.DEFAULT_CSS must declare border-left rail (LP-GUTTER-2)"
         )
 
     def test_tcss_tool_panel_padding_left_1(self):
@@ -112,19 +116,27 @@ class TestUserAndToolBodyAlignment:
         )
 
     def test_reasoning_panel_margin_left_eq_2(self):
-        """ReasoningPanel DEFAULT_CSS must declare margin: 0 2 (left == 2)."""
+        """ReasoningPanel text col == 2: rail(1) + padding-left(1) = 2 (LP-GUTTER-3)."""
         from hermes_cli.tui.widgets.message_panel import ReasoningPanel
 
-        assert "margin: 0 2" in ReasoningPanel.DEFAULT_CSS, (
-            "ReasoningPanel.DEFAULT_CSS must declare margin: 0 2"
+        # After LP-GUTTER-3: margin: 0 + padding: 0 1 + border-left: vkey → col 2
+        assert "margin: 0" in ReasoningPanel.DEFAULT_CSS, (
+            "ReasoningPanel.DEFAULT_CSS must declare margin: 0 (LP-GUTTER-3)"
+        )
+        assert "padding: 0 1" in ReasoningPanel.DEFAULT_CSS, (
+            "ReasoningPanel.DEFAULT_CSS must declare padding: 0 1 (LP-GUTTER-3)"
         )
 
     def test_copyable_block_margin_left_eq_2(self):
-        """CopyableBlock DEFAULT_CSS must declare margin: 0 2 (left == 2)."""
+        """CopyableBlock text col == 2: rail(1) + padding-left(1) = 2 (LP-GUTTER-1)."""
         from hermes_cli.tui.widgets.renderers import CopyableBlock
 
-        assert "margin: 0 2" in CopyableBlock.DEFAULT_CSS, (
-            "CopyableBlock.DEFAULT_CSS must declare margin: 0 2"
+        # After LP-GUTTER-1: margin: 0 + padding: 0 1 + border-left: vkey → col 2
+        assert "padding: 0 1" in CopyableBlock.DEFAULT_CSS, (
+            "CopyableBlock.DEFAULT_CSS must declare padding: 0 1 (LP-GUTTER-1)"
+        )
+        assert "border-left" in CopyableBlock.DEFAULT_CSS, (
+            "CopyableBlock.DEFAULT_CSS must declare border-left rail (LP-GUTTER-1)"
         )
 
 
@@ -249,16 +261,20 @@ class TestCrossSurfaceIntegration:
     """Cross-surface column parity assertions."""
 
     def test_all_top_level_surfaces_col_eq_2(self):
-        """UserMessagePanel, ReasoningPanel, CopyableBlock all declare left==2 in DEFAULT_CSS."""
+        """UserMessagePanel, ReasoningPanel, CopyableBlock all achieve col 2 via rail+padding."""
         from hermes_cli.tui.widgets.message_panel import UserMessagePanel, ReasoningPanel
         from hermes_cli.tui.widgets.renderers import CopyableBlock
 
-        # UserMessagePanel: padding: 0 2 → left = 2
-        assert "padding: 0 2" in UserMessagePanel.DEFAULT_CSS
-        # ReasoningPanel: margin: 0 2 → left = 2
-        assert "margin: 0 2" in ReasoningPanel.DEFAULT_CSS
-        # CopyableBlock: margin: 0 2 → left = 2
-        assert "margin: 0 2" in CopyableBlock.DEFAULT_CSS
+        # After LP-GUTTER: all three use rail(1)+padding-left(1) = col 2
+        # UserMessagePanel: border-left: vkey + padding: 0 1 → left = 2
+        assert "border-left" in UserMessagePanel.DEFAULT_CSS
+        assert "padding: 0 1" in UserMessagePanel.DEFAULT_CSS
+        # ReasoningPanel: border-left via tcss + margin: 0 + padding: 0 1 → left = 2
+        assert "margin: 0" in ReasoningPanel.DEFAULT_CSS
+        assert "padding: 0 1" in ReasoningPanel.DEFAULT_CSS
+        # CopyableBlock: border-left: vkey + padding: 0 1 → left = 2
+        assert "border-left" in CopyableBlock.DEFAULT_CSS
+        assert "padding: 0 1" in CopyableBlock.DEFAULT_CSS
 
     def test_footer_matches_body_col(self):
         """FooterPane + parent ToolPanel padding sums to BODY_INDENT_COLUMNS."""

@@ -186,6 +186,7 @@ x-hermes:
     tool-tier-mcp-accent: '#9b59b6'
     tool-tier-thinking-accent: '#00d849'
     reasoning-accent: '#00d849'
+    user-accent: '#00d849'
     tool-tier-tooling-accent: '#00d849'
     tool-tier-file-accent: '#00cc88'
     tool-tier-query-accent: '#00bbee'

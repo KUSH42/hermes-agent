@@ -251,6 +251,44 @@ def _is_blank_glyph(ch: str) -> bool:
     return ch == " " or ch == "⠀"
 
 
+def _tte_gradient_t(
+    row: int,
+    col: int,
+    row_top: int,
+    row_bot: int,
+    col_min: int,
+    col_max: int,
+    direction: str,
+) -> float:
+    """Compute gradient t matching terminaltexteffects' build_coordinate_color_mapping.
+
+    VERTICAL   : same color per row, ramp top→bottom
+    HORIZONTAL : same color per col, ramp left→right
+    DIAGONAL   : TTE formula (2*adj_row + adj_col) / (2*max_row + max_col)
+    RADIAL     : TTE formula — aspect-ratio-corrected distance from center (row×2)
+    """
+    row_range = max(row_bot - row_top, 1)
+    col_range = max(col_max - col_min, 1)
+
+    if direction == "VERTICAL":
+        return max(0.0, min(1.0, (row - row_top) / row_range))
+    if direction == "HORIZONTAL":
+        return max(0.0, min(1.0, (col - col_min) / col_range))
+    if direction == "DIAGONAL":
+        adj_row = row - row_top
+        adj_col = col - col_min
+        denom = 2 * row_range + col_range
+        return max(0.0, min(1.0, (2 * adj_row + adj_col) / denom)) if denom else 0.0
+    # RADIAL: aspect-ratio-corrected distance from center (TTE uses row*2 weight)
+    center_row = row_top + row_range / 2
+    center_col = col_min + col_range / 2
+    max_dist = ((col_range / 2) ** 2 + (row_range) ** 2) ** 0.5  # row already ×2 via *2 below
+    dy = (row - center_row) * 2
+    dx = col - center_col
+    dist = (dx ** 2 + dy ** 2) ** 0.5
+    return min(1.0, dist / max_dist) if max_dist > 0 else 0.0
+
+
 def render_banner_hero_text(markup_hero: str) -> Text:
     """Render banner hero markup; unstyled lines get a per-char diagonal gradient
     using the skin's startup_tte final_gradient_stops, falling back to a 3-stop
@@ -288,38 +326,23 @@ def render_banner_hero_text(markup_hero: str) -> Text:
         else:
             row_extents.append((0, 0))
 
+    # Global col bounds across all painted rows — needed for 2D gradient formulas.
+    global_col_min = min((row_extents[i][0] for i in paint_rows), default=0)
+    global_col_max = max((row_extents[i][1] for i in paint_rows), default=0)
     direction = _hero_gradient_direction() if stops is not None else "RADIAL"
-    # Pre-compute sequential index denominator for DIAGONAL/RADIAL (matches
-    # cli.py _hero_ansi_with_stops so the static banner gradient is identical
-    # to the TTE settle frame — eliminating the post-TTE color snap).
-    _seq_total = sum(len(ln.plain) for ln in lines) or 1
-    _seq_idx = 0
 
     out = Text()
     for i, line in enumerate(lines):
         if line.style or line.spans:
-            _seq_idx += len(line.plain)
             out.append_text(line)
         elif stops is not None:
             plain = line.plain
-            col_lo, col_hi = row_extents[i]
-            col_span = max(col_hi - col_lo, 1)
             for j, ch in enumerate(plain):
-                cur_idx = _seq_idx + j
-                if direction == "VERTICAL":
-                    t = (i - row_top) / row_span if row_span > 0 else 0.0
-                    t = max(0.0, min(1.0, t))
-                elif direction == "HORIZONTAL":
-                    tx = (j - col_lo) / col_span if col_span > 0 else 0.0
-                    t = max(0.0, min(1.0, tx))
-                else:
-                    # DIAGONAL / RADIAL — sequential char index matching cli.py
-                    t = cur_idx / (_seq_total - 1) if _seq_total > 1 else 0.0
                 if _is_blank_glyph(ch):
                     out.append(ch)
                     continue
+                t = _tte_gradient_t(i, j, row_top, row_bot, global_col_min, global_col_max, direction)
                 out.append(ch, style=_interp_stops(stops, t))
-            _seq_idx += len(plain)
         else:
             if n <= 1:
                 color = accent
@@ -368,24 +391,22 @@ def render_banner_logo_text(markup_logo: str) -> Text:
 
     if stops is not None:
         direction = _hero_gradient_direction()
-        _seq_total = sum(len(ln) for ln in lines) or 1
-        _seq_idx = 0
+        # Compute painted bounding box for TTE-matching spatial gradient.
+        paint_cols_logo = [[j for j, ch in enumerate(ln) if ch not in (" ", "⠀")] for ln in lines]
+        paint_rows_logo = [i for i, cols in enumerate(paint_cols_logo) if cols]
+        row_top_l = paint_rows_logo[0] if paint_rows_logo else 0
+        row_bot_l = paint_rows_logo[-1] if paint_rows_logo else max(n - 1, 0)
+        all_cols_l = [c for cols in paint_cols_logo for c in cols]
+        col_min_l = min(all_cols_l) if all_cols_l else 0
+        col_max_l = max(all_cols_l) if all_cols_l else max(width - 1, 0)
         out = Text()
         for i, line in enumerate(lines):
             for j, ch in enumerate(line):
-                cur_idx = _seq_idx + j
-                if direction == "VERTICAL":
-                    t = i / (n - 1) if n > 1 else 0.0
-                elif direction == "HORIZONTAL":
-                    t = j / (width - 1) if width > 1 else 0.0
-                else:
-                    # DIAGONAL / RADIAL — sequential char index
-                    t = cur_idx / (_seq_total - 1) if _seq_total > 1 else 0.0
                 if ch == " " or ch == "⠀":
                     out.append(ch)
                     continue
+                t = _tte_gradient_t(i, j, row_top_l, row_bot_l, col_min_l, col_max_l, direction)
                 out.append(ch, style=f"bold {_interp_stops(stops, t)}")
-            _seq_idx += len(line)
             if i < n - 1:
                 out.append("\n")
         return out

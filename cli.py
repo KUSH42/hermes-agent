@@ -5103,58 +5103,34 @@ class HermesCLI:
     ) -> str:
         """Return ANSI-colored hero applying multi-stop gradient matching *direction*.
 
-        VERTICAL: all chars in a row share one color; gradient advances row-to-row.
-        HORIZONTAL: all chars in a column share one color; gradient advances col-to-col.
-        DIAGONAL / RADIAL / default: per-character-index linear gradient (original behaviour).
+        Uses the same spatial formulas as terminaltexteffects' build_coordinate_color_mapping
+        so the settle frame is visually identical to the last TTE frame.
         """
         from io import StringIO
         from rich.console import Console as _RichConsole
         from rich.text import Text
-        from hermes_cli.tui.animation import lerp_color
+        from hermes_cli.banner import _tte_gradient_t, _interp_stops
 
         if len(stops) < 2:
             return self._hero_ansi_colored(plain_hero)
 
-        n_segs = len(stops) - 1
+        lines = plain_hero.split("\n")
+        # Compute painted bounding box (skip blank glyphs).
+        blank = {" ", "⠀"}
+        paint_rows = [i for i, ln in enumerate(lines) if any(ch not in blank for ch in ln)]
+        row_top = paint_rows[0] if paint_rows else 0
+        row_bot = paint_rows[-1] if paint_rows else max(len(lines) - 1, 0)
+        all_painted_cols = [j for i, ln in enumerate(lines) for j, ch in enumerate(ln) if ch not in blank]
+        col_min = min(all_painted_cols) if all_painted_cols else 0
+        col_max = max(all_painted_cols) if all_painted_cols else max((len(ln) for ln in lines), default=1) - 1
+
         out = Text()
-
-        if direction == "VERTICAL":
-            lines = plain_hero.split("\n")
-            n = len(lines)
-            for i, line in enumerate(lines):
-                t = i / (n - 1) if n > 1 else 0.0
-                seg = min(int(t * n_segs), n_segs - 1)
-                color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
-                out.append(line, style=color)
-                if i < n - 1:
-                    out.append("\n")
-
-        elif direction == "HORIZONTAL":
-            lines = plain_hero.split("\n")
-            max_col = max((len(ln) for ln in lines), default=1)
-            for i, line in enumerate(lines):
-                for c, ch in enumerate(line):
-                    t = c / (max_col - 1) if max_col > 1 else 0.0
-                    seg = min(int(t * n_segs), n_segs - 1)
-                    color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
-                    out.append(ch, style=color)
-                if i < len(lines) - 1:
-                    out.append("\n")
-
-        else:
-            # DIAGONAL, RADIAL, unknown — original character-count approach
-            visible = [c for c in plain_hero if c != "\n"]
-            total = len(visible) or 1
-            vis_idx = 0
-            for ch in plain_hero:
-                if ch == "\n":
-                    out.append("\n")
-                    continue
-                t = vis_idx / (total - 1) if total > 1 else 0.0
-                seg = min(int(t * n_segs), n_segs - 1)
-                color = lerp_color(stops[seg], stops[seg + 1], t * n_segs - seg)
-                out.append(ch, style=color)
-                vis_idx += 1
+        for i, line in enumerate(lines):
+            for j, ch in enumerate(line):
+                t = _tte_gradient_t(i, j, row_top, row_bot, col_min, col_max, direction)
+                out.append(ch, style=_interp_stops(stops, t))
+            if i < len(lines) - 1:
+                out.append("\n")
 
         buf = StringIO()
         con = _RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=200)

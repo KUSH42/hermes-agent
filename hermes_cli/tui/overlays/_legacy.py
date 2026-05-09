@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from rich.style import Style
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 
@@ -43,6 +45,32 @@ except ImportError:
     def _cfg_get_hermes_home():  # type: ignore[misc]
         from pathlib import Path
         return Path.home() / ".hermes"
+
+
+_SESS_FOOTER_LEGEND = "[dim]↑↓ navigate · Enter resume · N new · D delete · Esc close[/dim]"
+
+
+def _format_tokens_compact(total: int) -> str:
+    """Return a right-aligned 9-char token count string, e.g. ' 1.2k tok'."""
+    if total == 0:
+        return "    — tok"
+    if total < 1_000:
+        return f"{total:>5} tok"
+    if total < 10_000:
+        # 1k–9.9k: one decimal, strip trailing .0
+        val = int(total / 100) / 10
+        s = f"{val:.1f}".rstrip("0").rstrip(".") + "k"
+        return f"{s:>5} tok"
+    if total < 1_000_000:
+        # 10k–999k: zero decimals (floor)
+        s = f"{int(total / 1000)}k"
+        return f"{s:>5} tok"
+    if total >= 99_000_000:
+        return " >99M tok"
+    # 1M–98.9M: one decimal, strip trailing .0
+    val = int(total / 100_000) / 10
+    s = f"{val:.1f}".rstrip("0").rstrip(".") + "M"
+    return f"{s:>5} tok"
 
 
 class _SessionResumedBanner(Widget):
@@ -93,6 +121,9 @@ class SessionOverlay(ModalOverlayMixin, Widget):
     }
     SessionOverlay.--visible { display: block; }
     SessionOverlay #sess-scroll { height: auto; max-height: 50%; overflow-y: auto; }
+    SessionOverlay #sess-columns { height: 1; padding: 0 1; color: $text-muted; text-style: bold; }
+    SessionOverlay #sess-confirm { height: 1; padding: 0 1; color: $warning; display: none; }
+    SessionOverlay #sess-confirm.--visible { display: block; }
     SessionOverlay ._SessionRow { height: 1; padding: 0 1; }
     SessionOverlay ._SessionRow.--selected { background: $accent 20%; }
     SessionOverlay ._SessionRow:hover { background: $accent 10%; }
@@ -107,17 +138,25 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         Binding("ctrl+n", "move_down", priority=True),
         Binding("enter",  "select",    priority=True),
         Binding("n",      "new_session", priority=True),
+        Binding("d",      "delete_selected", priority=True),
     ]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._sessions: list[dict] = []
         self._selected_idx: int = 0
+        self._pending_delete_idx: int | None = None
+        cfg = _cfg_read_raw_config()
+        self._heavy_threshold: int = (
+            cfg.get("tui", {}).get("session_overlay", {}).get("tokens_heavy", 200_000)
+        )
 
     def compose(self) -> "ComposeResult":
         yield Static("", id="sess-header")
+        yield Static("", id="sess-columns")
         yield ScrollableContainer(id="sess-scroll")
-        yield Static("[dim]↑↓ navigate  Enter resume  N new session  Esc close[/dim]", id="sess-footer")
+        yield Static("", id="sess-confirm")
+        yield Static(_SESS_FOOTER_LEGEND, id="sess-footer")
 
     def on_mount(self) -> None:
         # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
@@ -129,10 +168,16 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
         pass
 
+    def on_resize(self, _event) -> None:
+        if not self.has_class("--visible") or not self._sessions:
+            return
+        self._render_rows(self._sessions, preserve_idx=self._selected_idx)
+
     def open_sessions(self) -> None:
         """Show overlay and load sessions in background worker."""
         if self.has_class("--visible"):
             return  # already open — don't double-push the modal stack
+        self._cancel_pending_delete()
         self.border_title = "Sessions"
         self._capture_focus_caller()
         try:
@@ -165,6 +210,17 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             except Exception:
                 _log.debug("SessionOverlay.dismiss_overlay: focus restore failed", exc_info=True)
 
+    def _cancel_pending_delete(self) -> None:
+        self._pending_delete_idx = None
+        try:
+            self.query_one("#sess-confirm").remove_class("--visible")
+        except NoMatches:
+            _log.debug("_cancel_pending_delete: #sess-confirm not found")
+        try:
+            self.query_one("#sess-footer").styles.display = "block"
+        except NoMatches:
+            _log.debug("_cancel_pending_delete: #sess-footer not found")
+
     @work(thread=True)
     def _load_sessions(self) -> None:
         """Fetch session list from DB in worker thread."""
@@ -179,7 +235,16 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             sessions = []
         self.app.call_from_thread(self._render_rows, sessions)
 
-    def _render_rows(self, sessions: list[dict]) -> None:
+    def _build_column_header(self, title_width: int) -> str:
+        return (
+            f"{'':2}{'':2}"
+            f"{'TITLE':<{title_width}} "
+            f"{'LAST':<11} "
+            f"{'TURNS':>9} "
+            f"{'TOKENS':>9}"
+        )
+
+    def _render_rows(self, sessions: list[dict], *, preserve_idx: int | None = None) -> None:
         """Render session rows after worker completes (event-loop only)."""
         self._sessions = sessions
         try:
@@ -188,10 +253,43 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             return
         scroll.remove_children()
         current_id = getattr(getattr(self.app, "cli", None), "session_id", None)
+        title_width = max(18, self.content_size.width - 2 - 2 - 11 - 9 - 9 - 3 - 2)
+
+        # SO-2: resolve token colors from skin; fall back to defaults if not valid hex
+        def _is_hex(s: str) -> bool:
+            return bool(s and s.startswith("#") and len(s) in (4, 7, 9) and
+                        all(c in "0123456789abcdefABCDEF" for c in s[1:]))
+
+        color_tokens_warning = "#FEA62B"
+        color_tokens_muted = "#767C8C"
+        color_tokens_disabled = "#3E4252"
+        try:
+            from hermes_cli.tui.body_renderers._grammar import SkinColors
+            sc = SkinColors.from_app(self.app)
+            if _is_hex(sc.warning):
+                color_tokens_warning = sc.warning
+            if _is_hex(sc.muted):
+                color_tokens_muted = sc.muted
+        except Exception:
+            pass
+        try:
+            _cv = self.app.get_css_variables()
+            raw_disabled = (_cv.get("text-disabled") or "").strip()
+            if _is_hex(raw_disabled):
+                color_tokens_disabled = raw_disabled
+        except Exception:
+            pass
+
         rows: list["_SessionRow"] = []
         for i, s in enumerate(sessions):
             is_current = (s.get("id") == current_id)
-            row = _SessionRow(s, is_current=is_current, idx=i)
+            row = _SessionRow(
+                s, is_current=is_current, idx=i,
+                title_width=title_width, heavy_threshold=self._heavy_threshold,
+                color_tokens_warning=color_tokens_warning,
+                color_tokens_muted=color_tokens_muted,
+                color_tokens_disabled=color_tokens_disabled,
+            )
             rows.append(row)
         if rows:
             scroll.mount(*rows)
@@ -209,7 +307,14 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             )
         except NoMatches:
             pass
-        self._selected_idx = 0
+        try:
+            self.query_one("#sess-columns", Static).update(self._build_column_header(title_width))
+        except NoMatches:
+            pass
+        if preserve_idx is not None:
+            self._selected_idx = min(preserve_idx, max(0, len(sessions) - 1))
+        else:
+            self._selected_idx = 0
         self._update_selection()
 
     def _update_selection(self) -> None:
@@ -219,8 +324,10 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             _log.debug("SessionOverlay._update_selection: query failed", exc_info=True)
             return
         for i, row in enumerate(rows):
-            row.set_class(i == self._selected_idx, "--selected")
-        # C2: scroll to keep selected row visible
+            is_sel = (i == self._selected_idx)
+            row.set_class(is_sel, "--selected")
+            row.update(row._build_label(selected=is_sel))  # SO-1: update selector glyph
+        # C2: scroll to keep selected row visible (unchanged)
         if 0 <= self._selected_idx < len(rows):
             try:
                 self.query_one("#sess-scroll", ScrollableContainer).scroll_to_widget(
@@ -230,23 +337,25 @@ class SessionOverlay(ModalOverlayMixin, Widget):
                 pass
 
     def action_move_up(self) -> None:
+        self._cancel_pending_delete()
         self._selected_idx = max(0, self._selected_idx - 1)
         self._update_selection()
 
     def action_move_down(self) -> None:
+        self._cancel_pending_delete()
         count = len(self._sessions)
         self._selected_idx = min(max(count - 1, 0), self._selected_idx + 1)
         self._update_selection()
 
     def action_select(self) -> None:
         if not self._sessions:
-            self.action_dismiss()
+            self.dismiss_overlay()
             return
         idx = max(0, min(self._selected_idx, len(self._sessions) - 1))
         session = self._sessions[idx]
         current_id = getattr(getattr(self.app, "cli", None), "session_id", None)
         sid = session.get("id", "")
-        self.action_dismiss()
+        self.dismiss_overlay()
         if sid == current_id:
             return
         try:
@@ -255,42 +364,163 @@ class SessionOverlay(ModalOverlayMixin, Widget):
             _log.warning("SessionOverlay.action_select: action_resume_session failed", exc_info=True)
 
     def action_new_session(self) -> None:
-        self.action_dismiss()
+        self.dismiss_overlay()
         try:
             self.app._svc_commands.handle_tui_command("/new")
         except Exception:
             _log.warning("SessionOverlay.action_new_session: handle_tui_command failed", exc_info=True)
+
+    def action_delete_selected(self) -> None:
+        if self._pending_delete_idx is not None:
+            # Second-D path: confirm the delete
+            idx = self._pending_delete_idx
+            if not (0 <= idx < len(self._sessions)):
+                _log.debug("delete_session: pending idx %d out of range (sessions len %d)", idx, len(self._sessions))
+                self._cancel_pending_delete()
+                return
+            session = self._sessions[idx]
+            session_id = session.get("id", "")
+            db = getattr(getattr(self.app, "cli", None), "_session_db", None)
+            if db is None:
+                _log.warning("delete_session: no _session_db on app.cli — skipping")
+                self._cancel_pending_delete()
+                return
+            sessions_dir = _cfg_get_hermes_home() / "sessions"
+            # Eagerly pop row before worker starts
+            self._sessions.pop(idx)
+            self._cancel_pending_delete()
+            self._render_rows(self._sessions, preserve_idx=min(idx, max(0, len(self._sessions) - 1)))
+            self._run_delete_worker(session_id, db, sessions_dir, original_idx=idx, session=session)
+            return
+
+        # First-D path
+        if not self._sessions:
+            return
+        idx = self._selected_idx
+        session = self._sessions[idx]
+        current_session_id = getattr(getattr(self.app, "cli", None), "session_id", None)
+        if session.get("id") == current_session_id:
+            try:
+                self.query_one("#sess-footer", Static).update(
+                    "Cannot delete the active session — switch first"
+                )
+            except NoMatches:
+                pass
+
+            def _restore_footer() -> None:
+                try:
+                    self.query_one("#sess-footer", Static).update(_SESS_FOOTER_LEGEND)
+                except NoMatches:
+                    pass  # overlay may have been dismissed before timer fired
+
+            self.set_timer(2, _restore_footer)
+            return
+
+        title = session.get("title") or ""
+        self._pending_delete_idx = idx
+        try:
+            self.query_one("#sess-confirm", Static).update(
+                f"Delete '{title or 'untitled'}'? Press D again to confirm, Esc to cancel"
+            )
+            self.query_one("#sess-confirm").add_class("--visible")
+        except NoMatches:
+            pass
+        try:
+            self.query_one("#sess-footer").styles.display = "none"
+        except NoMatches:
+            pass
+
+    @work(thread=True)
+    def _run_delete_worker(self, session_id, db, sessions_dir, original_idx, session):
+        try:
+            deleted = db.delete_session(session_id, sessions_dir=sessions_dir)
+            if not deleted:
+                _log.debug("delete_session: session %s already gone", session_id)
+            # deleted=False treated as success — row already removed from UI
+        except Exception:
+            _log.exception("delete_session failed for %s", session_id)
+            self.app.call_from_thread(self._after_delete_failure, session, original_idx)
+
+    def _after_delete_failure(self, session: dict, idx: int) -> None:
+        insert_at = min(idx, len(self._sessions))
+        self._sessions.insert(insert_at, session)
+        self._render_rows(self._sessions, preserve_idx=insert_at)
+        try:
+            self.query_one("#sess-footer").styles.display = "none"
+        except NoMatches:
+            _log.debug("_after_delete_failure: #sess-footer not found")
+        try:
+            confirm = self.query_one("#sess-confirm")
+            confirm.update("Delete failed — see log")
+            confirm.add_class("--visible")
+            self._pending_delete_idx = insert_at
+        except NoMatches:
+            _log.debug("_after_delete_failure: #sess-confirm not found")
 
     def dismiss(self) -> None:
         """Public close helper — delegates to action_dismiss."""
         self.action_dismiss()
 
     def action_dismiss(self) -> None:
+        if self._pending_delete_idx is not None:
+            self._cancel_pending_delete()
+            return
         self.dismiss_overlay()
 
 
 class _SessionRow(Static):
     """Single row in SessionOverlay."""
 
-    def __init__(self, session_meta: dict, is_current: bool, idx: int, **kwargs: object) -> None:
+    def __init__(
+        self,
+        session_meta: dict,
+        is_current: bool,
+        idx: int,
+        title_width: int = 18,
+        heavy_threshold: int = 200_000,
+        color_tokens_warning: str = "#FEA62B",
+        color_tokens_muted: str = "#767C8C",
+        color_tokens_disabled: str = "#3E4252",
+        **kwargs: object,
+    ) -> None:
         self._meta = session_meta
         self._is_current = is_current
         self._idx = idx
+        self._title_width = title_width
+        self._heavy_threshold = heavy_threshold
+        self._color_tokens_warning = color_tokens_warning
+        self._color_tokens_muted = color_tokens_muted
+        self._color_tokens_disabled = color_tokens_disabled
         super().__init__(self._build_label(), **kwargs)
         if is_current:
             self.add_class("--current")
 
-    def _build_label(self) -> str:
+    def _build_label(self, selected: bool = False) -> Text:
         import time as _time
         from datetime import datetime as _datetime
         meta = self._meta
         title = meta.get("title") or ""
-        sid = meta.get("id") or ""
-        label = title if title else f"[dim]untitled[/dim]"
-        bullet = "●" if self._is_current else " "
         last_active = meta.get("last_active") or meta.get("started_at") or 0
-        turn_count = meta.get("message_count") or 0
-        # Relative time
+        turn_count = int(meta.get("message_count") or 0)
+
+        # Selector slot
+        t = Text()
+        t.append("› " if selected else "  ")
+        # Current marker slot
+        t.append("● " if self._is_current else "  ")
+
+        # Title slot — operate on plain text, no markup pollution
+        tw = self._title_width
+        if title:
+            display_title = title[:tw] if len(title) <= tw else title[:tw - 1] + "…"
+            t.append(f"{display_title:<{tw}}")
+        else:
+            # Render 'untitled' in dim italic style; pad to title_width
+            padded = f"{'untitled':<{tw}}"
+            t.append(padded, style=Style(color="#767C8C", italic=True))
+        t.append(" ")  # sep after title
+
+        # Last-active slot (11 chars, right-padded)
         now = _time.time()
         diff = now - float(last_active) if last_active else 0
         if diff < 3600:
@@ -299,12 +529,46 @@ class _SessionRow(Static):
             rel = f"{int(diff/3600)}h ago"
         elif diff < 604800:
             rel = f"{int(diff/86400)}d ago"
-        elif diff < 4838400:  # < 56 days (8 weeks)
+        elif diff < 4838400:
             rel = f"{int(diff/604800)}w ago"
         else:
             rel = _datetime.fromtimestamp(float(last_active)).strftime("%Y-%m-%d") if last_active else "?"
-        turn_word = "turn" if turn_count == 1 else "turns"
-        return f"{bullet} {label:<32}  {rel:<10}  {turn_count} {turn_word}"
+        t.append(f"{rel:<11}")
+        t.append(" ")  # sep after last
+
+        # Turns slot (9 chars, right-aligned)
+        if turn_count < 1_000:
+            turn_word = "turn " if turn_count == 1 else "turns"
+            turns_str = f"{turn_count:>3} {turn_word}"
+        elif turn_count < 10_000:
+            turns_str = f"{turn_count // 1000}k turn"
+            turns_str = f"{turns_str:>9}"
+        elif turn_count < 100_000:
+            turns_str = f"{turn_count // 1000}k turn"
+            turns_str = f"{turns_str:>9}"
+        else:
+            turns_str = ">99k turn"
+        t.append(f"{turns_str:>9}")
+        t.append(" ")  # sep after turns
+
+        # Tokens slot (9 chars)
+        total = (
+            int(meta.get("input_tokens") or 0)
+            + int(meta.get("output_tokens") or 0)
+            + int(meta.get("cache_read_tokens") or 0)
+            + int(meta.get("cache_write_tokens") or 0)
+            + int(meta.get("reasoning_tokens") or 0)
+        )
+        tok_str = _format_tokens_compact(total)
+        if total == 0:
+            tok_color = self._color_tokens_disabled
+        elif total >= self._heavy_threshold:
+            tok_color = self._color_tokens_warning
+        else:
+            tok_color = self._color_tokens_muted
+        t.append(tok_str, style=Style(color=tok_color))
+
+        return t
 
 
 class ToolPanelHelpOverlay(ModalOverlayMixin, Widget):

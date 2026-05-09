@@ -33,11 +33,8 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.reactive import reactive
+from textual.message import Message
 from textual.widget import Widget
-
-from hermes_cli.tui.tool_accent import ToolAccent
-
-from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 
 from hermes_cli.tui.resize_utils import THRESHOLD_TOOL_NARROW, crosses_threshold
 
@@ -250,6 +247,12 @@ class ToolGroup(Widget):
 
     _content_type: str = "tool-group"
     can_focus = True
+
+    # PG-3: message posted by StreamingToolBlock per appended line
+    class StreamingLineAppended(Message):
+        def __init__(self, line: str) -> None:
+            super().__init__()
+            self.line = line
 
     collapsed: reactive[bool] = reactive(False, layout=True)
 

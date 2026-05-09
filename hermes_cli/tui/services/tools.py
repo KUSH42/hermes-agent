@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import time as _time
 from dataclasses import dataclass, field as _field
+from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
@@ -15,6 +16,49 @@ if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# SM-01: Tool-call unified state machine model
+# ---------------------------------------------------------------------------
+
+class ToolCallState(str, Enum):
+    """Lifecycle states for a single tool call."""
+    PENDING    = "pending"     # allocated but not yet materialised by the service
+    GENERATED  = "generated"   # model is still generating tool args
+    STARTED    = "started"     # tool handler has started
+    STREAMING  = "streaming"   # output body is receiving lines
+    COMPLETING = "completing"  # result parsing / diff merge in progress
+    DONE       = "done"
+    ERROR      = "error"
+    CANCELLED  = "cancelled"
+    REMOVED    = "removed"
+
+
+_TERMINAL_STATES = frozenset({
+    ToolCallState.DONE,
+    ToolCallState.ERROR,
+    ToolCallState.CANCELLED,
+    ToolCallState.REMOVED,
+})
+
+
+@dataclass
+class ToolCallViewState:
+    """Per-tool-call view state owned by ToolRenderingService."""
+    tool_call_id: "str | None"
+    gen_index: "int | None"
+    tool_name: str
+    label: str
+    args: "dict[str, Any]"
+    state: ToolCallState
+    block: "Any | None"
+    panel: "Any | None"
+    parent_tool_call_id: "str | None"
+    category: str
+    depth: int
+    start_s: float
+    started_at: float = _field(default_factory=_time.monotonic)
 
 
 @dataclass

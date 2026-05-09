@@ -167,7 +167,7 @@ x-hermes:
     cursor-color: '#FFF8DC'
     cursor-selection-bg: '#3A5A8C'
     overlay-selection-bg: '#333399'
-    cursor-placeholder: '#555555'
+    cursor-placeholder: '#8a8a8a'
     ghost-text-color: '#555555'
     chevron-base: '#FFF8DC'
     chevron-file: '#FFBF00'

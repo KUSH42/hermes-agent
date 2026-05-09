@@ -76,7 +76,7 @@ $error-network: #f97316;
 $app-bg: #1E1E1E;
 $cursor-color: #FFF8DC;
 $cursor-selection-bg: #3A5A8C;
-$cursor-placeholder: #555555;
+$cursor-placeholder: #8a8a8a;
 $ghost-text-color: #555555;
 $overlay-selection-bg: #333399;
 $chevron-base: #FFF8DC;

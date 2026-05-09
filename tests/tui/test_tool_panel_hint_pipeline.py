@@ -150,7 +150,7 @@ class TestDynamicHintCollection:
             collapsed=True,
         )
         primary, _ = panel._collect_hints()
-        assert primary == [("Enter", "expand"), ("y", "copy")]
+        assert primary == [("Enter", "expand"), ("c", "copy")]
 
     def test_error_primary_is_enter_collapse_and_r_retry(self):
         """is_error=True terminal (expanded) → primary == [('Enter','collapse'), ('r','retry')];

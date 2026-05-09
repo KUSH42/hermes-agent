@@ -156,6 +156,7 @@ class TestToggleHintReshow:
 
         panel._maybe_show_discovery_hint = lambda: None
         panel._refresh_collapsed_strip = lambda: None
+        panel._refresh_action_row_display = lambda: None
         panel._flash_header = MagicMock()
         panel.on_focus = ToolPanel.on_focus.__get__(panel)
         return panel

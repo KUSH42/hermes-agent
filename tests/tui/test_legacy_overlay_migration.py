@@ -631,12 +631,17 @@ class TestDismissAllInfoOverlays:
 
         hidden.dismiss_overlay.assert_not_called()
 
-    def test_dismiss_all_info_overlays_tpho_still_just_removes_visible(self) -> None:
-        """ToolPanelHelpOverlay: remove_class('--visible') only, no dismiss_overlay."""
+    def test_dismiss_all_info_overlays_tpho_calls_dismiss_overlay(self) -> None:
+        """ToolPanelHelpOverlay: dismiss_overlay() is called (not bare remove_class).
+
+        ToolPanelHelpOverlay.show_overlay() pushes to _modal_stack; dismiss must
+        pop it via dismiss_overlay() or the stack becomes permanently stale.
+        """
         from hermes_cli.tui.overlays._legacy import ToolPanelHelpOverlay
 
         tpho = MagicMock()
-        tpho.remove_class = MagicMock()
+        tpho.has_class = MagicMock(return_value=True)
+        tpho.dismiss_overlay = MagicMock()
 
         app_mock = MagicMock()
         app_mock._sync_workspace_polling_state = MagicMock()
@@ -650,8 +655,7 @@ class TestDismissAllInfoOverlays:
         svc = self._make_svc(app_mock)
         svc.dismiss_all_info_overlays()
 
-        tpho.remove_class.assert_called_once_with("--visible")
-        tpho.dismiss_overlay.assert_not_called()
+        tpho.dismiss_overlay.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

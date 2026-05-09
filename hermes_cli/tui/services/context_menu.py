@@ -426,7 +426,7 @@ class ContextMenuService(AppService):
         # Widgets with dismiss_overlay() registered in the modal stack
         for cls in (
             HelpOverlay, UsageOverlay, CommandsOverlay, WorkspaceOverlay,
-            SessionOverlay, ConfigOverlay,
+            SessionOverlay, ConfigOverlay, _TPHO,
         ):
             for widget in app.query(cls):
                 if widget.has_class("--visible"):
@@ -438,7 +438,4 @@ class ContextMenuService(AppService):
                             widget,
                             exc_info=True,
                         )
-        # ToolPanelHelpOverlay: not modal-registered; remove --visible only
-        for widget in app.query(_TPHO):
-            widget.remove_class("--visible")
         app._sync_workspace_polling_state()

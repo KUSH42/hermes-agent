@@ -987,8 +987,9 @@ class _ToolPanelActionsMixin:
             chunk_cells = len(chunk)  # ASCII keys/labels; len == cell width
             if cell_used + chunk_cells > budget and fitted > 0:
                 break
+            from hermes_cli.tui.services.chip_format import format_chip as _fc
             t.append(sep, style="dim")
-            t.append(key, style="bold")
+            t.append(_fc(key, "").rstrip(), style="bold")
             t.append(f" {label}", style="dim")
             cell_used += chunk_cells
             fitted += 1
@@ -1025,11 +1026,11 @@ class _ToolPanelActionsMixin:
                 t.append("  ", style="dim")
                 t.append_text(ctx_text)
 
-        # P-7: +N more when contextual hints were truncated
+        # P-7: +N keys when contextual hints were truncated
         if n_dropped > 0:
             t.append("  ", style="dim")
             t.append(f"+{n_dropped}", style="bold dim")
-            t.append(" more", style="dim")
+            t.append(" keys", style="dim")
 
         # HF-C / P-6: F1 always pinned regardless of terminal width
         t.append("  F1 ", style="bold dim")
@@ -1058,7 +1059,9 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.services import tool_tips
             tip_key, tip_label = tool_tips.current_tip()
             t.append("  ", style="dim")
-            t.append(tip_key, style="bold dim italic")
+            from hermes_cli.tui.services.chip_format import format_chip as _fc
+            _norm_key = _fc(tip_key, "").rstrip()
+            t.append(_norm_key, style="bold dim italic")
             t.append(f" {tip_label}", style="dim italic")
 
         return t

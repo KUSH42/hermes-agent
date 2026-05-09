@@ -1346,7 +1346,7 @@ class SourcesBar(Widget):
         yield Label("Sources:", classes="--cite-label")
         for n, title, url in self._entries:
             domain = _extract_domain(url)
-            label_text = f"[{n}] {domain}"
+            label_text = f"{n}. {domain}"
             if title:
                 label_text += f" — {_truncate(title, 40)}"
             yield Button(label_text, classes="--cite-chip", id=f"cite-{n}")

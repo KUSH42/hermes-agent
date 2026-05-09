@@ -2,16 +2,61 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+import re
+from typing import TYPE_CHECKING, Any, Callable
 
 from rich.text import Text
 
 _log = logging.getLogger(__name__)
+
+_HR_RE = re.compile(r'^[-_]{3,}\s*$')
+
 from textual.app import ComposeResult
+from textual.containers import Horizontal
 from textual.css.query import NoMatches
 from textual.widget import Widget
+from textual.widgets import Label
 
 from hermes_cli.tui.widgets import CopyableRichLog, _boost_layout_caches
+
+if TYPE_CHECKING:
+    from hermes_cli.tui.tool_result_parse import ResultSummaryV4
+
+
+def _action_class(kind: str) -> str:
+    if kind.startswith("copy") and kind != "copy_err":
+        return "copy"
+    if kind in ("retry", "reconnect"):
+        return "retry"
+    if kind == "copy_err":
+        return "error"
+    return ""
+
+
+class ActionChipsRow(Horizontal):
+    DEFAULT_CSS = """
+    ActionChipsRow { height: 1; margin-top: 1; }
+    ActionChipsRow > Label {
+        background: $surface 80%;
+        color: $text-muted;
+        padding: 0 1;
+        margin-right: 1;
+    }
+    ActionChipsRow > Label.-copy   { background: $accent 20%; color: $accent; }
+    ActionChipsRow > Label.-retry  { background: $warning 20%; color: $warning; }
+    ActionChipsRow > Label.-error  { background: $error 20%; color: $error; }
+    """
+
+    def __init__(self, actions: "tuple") -> None:
+        super().__init__()
+        self._actions = actions
+
+    def compose(self) -> ComposeResult:
+        for a in self._actions:
+            cls = _action_class(a.kind)
+            lbl = Label(f" [{a.hotkey}] {a.label} ", classes=f"-{cls}" if cls else "")
+            lbl.tooltip = a.payload[:80] if a.payload else None
+            yield lbl
 
 from ._shared import (
     COLLAPSE_THRESHOLD,
@@ -94,6 +139,7 @@ class ToolBlock(Widget):
         tool_name: str | None = None,
         rerender_fn: Callable[[], tuple[list[str], list[str]]] | None = None,
         header_stats: ToolHeaderStats | None = None,
+        summary: "ResultSummaryV4 | None" = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -105,6 +151,7 @@ class ToolBlock(Widget):
         self._plain_lines = list(plain_lines)
         self._rerender_fn = rerender_fn if callable(rerender_fn) else None
         self._header_stats = header_stats if isinstance(header_stats, ToolHeaderStats) else None
+        self._summary: "ResultSummaryV4 | None" = summary
         if self._header_stats is None and label == "diff":
             self._header_stats = _count_visible_diff_rows(self._plain_lines)
         auto_expand = len(lines) <= COLLAPSE_THRESHOLD
@@ -162,6 +209,10 @@ class ToolBlock(Widget):
 
     def on_mount(self) -> None:
         self._render_body()
+        if self._summary is not None:
+            self._body.set_stderr_tail(self._summary.stderr_tail or None)
+            if self._summary.actions:
+                self._body.mount(ActionChipsRow(self._summary.actions))
         if not self._header.collapsed:
             self._body.add_class("expanded")
 
@@ -286,7 +337,14 @@ class ToolBlock(Widget):
                     rl.write_with_source(Text(""), "")
                 return
 
+            # B7: trim trailing blank lines before writing
+            while self._plain_lines and not self._plain_lines[-1].strip():
+                self._plain_lines.pop()
+                if self._lines:
+                    self._lines.pop()
             for styled, plain in zip(self._lines, self._plain_lines):
+                if _HR_RE.match(plain.strip()):  # B6: suppress bare HR lines
+                    continue
                 rl.write_with_source(Text.from_ansi(styled), plain)
             if self._header_stats and self._header_stats.has_diff_counts and self._lines:
                 rl.write_with_source(Text(""), "")

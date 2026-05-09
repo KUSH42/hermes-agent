@@ -1034,19 +1034,3 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
                 except AttributeError as exc:
                     logger.warning("omission bar API drift in refresh_skin: %s", exc, exc_info=True)
 
-    def set_age_microcopy(self, text: str) -> None:
-        """F1: update the microcopy slot with age text (only when complete)."""
-        if not self._completed:
-            return
-        from rich.text import Text as _T
-        mc = self._microcopy_widget
-        if mc is None:
-            try:
-                mc = self._body.query_one(".--microcopy", Static)
-                self._microcopy_widget = mc
-            except Exception:  # il-ex-1-exempt: widget not mounted; None return is documented contract
-                return
-        styled = _T(text, style="dim")
-        mc.update(styled)
-        mc.add_class("--active")
-        mc.remove_class("--secondary-args")

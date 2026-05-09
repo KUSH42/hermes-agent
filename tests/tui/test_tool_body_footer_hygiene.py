@@ -111,11 +111,10 @@ class TestTBVH1NoFooterInBodyRenderers:
 
     def test_body_frame_compose_handles_none_footer(self):
         from hermes_cli.tui.body_renderers._frame import BodyFrame
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from textual.widgets import Static
         frame = BodyFrame(header=None, body=Static(""), footer=None)
         children = list(frame.compose())
-        assert not any(isinstance(c, BodyFooter) for c in children)
+        assert len(children) == 1  # only the body Static
 
     def test_replace_body_widget_does_not_mount_body_footer(self):
         """tool_blocks._block.replace_body_widget no longer mounts a BodyFooter."""
@@ -182,31 +181,10 @@ class TestTBVH2IL12NoBodyFooterImport:
 
 
 # ---------------------------------------------------------------------------
-# TBV-H3 — Microcopy form (4 tests)
+# TBV-H3 — Microcopy form (1 test — BodyFooter fully deleted, tuple/str tests removed)
 # ---------------------------------------------------------------------------
 
 class TestTBVH3MicrocopyForm:
-    def test_body_footer_rejects_tuple_entries(self):
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter, SkinColors
-        footer = BodyFooter(("c", "copy"))  # ctor allows; render rejects
-        footer._colors = SkinColors.default()
-        with pytest.raises(TypeError):
-            footer.render()
-
-    def test_body_footer_accepts_str_entries(self):
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter, SkinColors
-        footer = BodyFooter("INFO 2", "WARN 1")
-        footer._colors = SkinColors.default()
-        plain = _plain(footer.render())
-        assert "INFO 2" in plain
-        assert "WARN 1" in plain
-
-    def test_body_footer_separator_uses_glyph_dot(self):
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter, SkinColors
-        footer = BodyFooter("a", "b")
-        footer._colors = SkinColors.default()
-        plain = _plain(footer.render())
-        assert "·" in plain or "-" in plain  # ASCII fallback under HERMES_NO_UNICODE
 
     def test_il3_no_bracket_space_label_form_anywhere(self):
         """Sweep owner paths for the `[x] <affordance-label>` microcopy form

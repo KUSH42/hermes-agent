@@ -1913,13 +1913,13 @@ class TestIL11PressureGates:
 
 
 # ---------------------------------------------------------------------------
-# IL-12 (TBV-H2): no module under body_renderers/ imports BodyFooter except
-# _grammar.py (defines it) and _frame.py (TYPE_CHECKING forward-reference).
+# IL-12 (TBV-H2): no module under body_renderers/ imports BodyFooter
+# (BodyFooter was deleted in B1-Part C; no file may import it any longer).
 # ---------------------------------------------------------------------------
 
 class TestIL12NoBodyFooterImportInRenderers:
     _BODY_RENDERERS = _TUI_ROOT / "body_renderers"
-    _EXEMPT = {"_grammar.py", "_frame.py"}
+    _EXEMPT: set[str] = set()
 
     def _files(self):
         return [

@@ -152,9 +152,6 @@ class _ToolPanelCompletionMixin:
         block = getattr(self, "_block", None)
         if block is None or not getattr(block, "is_mounted", False):
             return
-        if hasattr(block, "set_age_microcopy"):
-            from ._footer import _format_age
-            block.set_age_microcopy(_format_age(elapsed))
 
         # Reschedule cadence matches display granularity:
         #   <60s  → 10s   (matches "Ns ago")
@@ -516,7 +513,12 @@ class _ToolPanelCompletionMixin:
         self._update_kind_from_classifier(line_count)
 
         if self._footer_pane is not None:  # type: ignore[attr-defined]
-            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=frozenset())  # type: ignore[attr-defined]
+            promoted: frozenset[str] = frozenset()
+            if summary.primary and summary.primary.startswith("✓"):
+                promoted = frozenset(
+                    c.text for c in summary.chips if c.text in summary.primary
+                )
+            self._footer_pane.update_summary_v4(summary, promoted_chip_texts=promoted)  # type: ignore[attr-defined]
 
         # ER-1: body owns stderr evidence — propagate stderr_tail to ToolBodyContainer
         body = getattr(self._block, "_body", None)  # type: ignore[attr-defined]

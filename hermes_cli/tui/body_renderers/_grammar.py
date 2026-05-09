@@ -318,62 +318,7 @@ def diff_gutter(sign: str, *, colors: SkinColors) -> Text:
     return t
 
 
-# ---------------------------------------------------------------------------
-# BodyFooter — sticky per-panel affordance footer
-# ---------------------------------------------------------------------------
-
 from textual.widgets import Static
-
-
-class BodyFooter(Static):
-    """Sticky single-line footer advertising key affordances.
-
-    Each entry: either plain str or (key, label) tuple.
-    Entries separated by ' · ' (GLYPH_META_SEP).
-    """
-
-    DEFAULT_CSS = """
-BodyFooter {
-    dock: bottom;
-    height: 1;
-    color: $text-muted 70%;
-    padding: 0 1;
-}
-"""
-
-    def __init__(
-        self,
-        *entries: str,
-        **kwargs,
-    ) -> None:
-        super().__init__("", **kwargs)
-        self._entries = entries
-        self._colors: SkinColors | None = None
-
-    def on_mount(self) -> None:
-        try:
-            self._colors = SkinColors.from_app(self.app)
-        except Exception:
-            _log.debug("BodyFooter.on_mount: SkinColors.from_app failed", exc_info=True)
-            self._colors = SkinColors.default()
-        self.refresh()
-
-    def render(self) -> "object":
-        colors = self._colors if self._colors is not None else SkinColors.default()
-        sep = f" {glyph('·')} "
-        t = Text()
-        for i, entry in enumerate(self._entries):
-            if i:
-                t.append(sep, style=Style(color=colors.separator_dim))
-            if not isinstance(entry, str):
-                raise TypeError(
-                    f"BodyFooter accepts only str entries; got {type(entry).__name__}. "
-                    "Per concept §879, key affordances belong on FooterPane (resolver-driven), "
-                    "not BodyFooter."
-                )
-            t.append(entry, style=Style(color=colors.muted))
-        return t
-
 
 # ---------------------------------------------------------------------------
 # build_parse_failure — body for parse-error states

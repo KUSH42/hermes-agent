@@ -9,7 +9,6 @@ from textual.widgets import Static
 
 if TYPE_CHECKING:
     from rich.console import RenderableType
-    from hermes_cli.tui.body_renderers._grammar import BodyFooter
     from hermes_cli.tui.tool_panel.density import DensityTier
 
 _TIER_CLASS: dict[str, str] = {
@@ -44,7 +43,7 @@ BodyFrame.body-frame--default { margin-bottom: 1; }
         self,
         header: "RenderableType | None",
         body: "RenderableType | Widget | None",
-        footer: "BodyFooter | None",
+        footer: "Widget | None",
         *,
         density: "DensityTier | None" = None,
         classes: str = "",

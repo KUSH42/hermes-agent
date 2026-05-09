@@ -708,6 +708,7 @@ class ResponseFlowEngine:
         self._logical_index: int = 0
         self._log_texts: list["Text"] = []
         self._log_plains: list[str] = []
+        self._last_prose_idx: "int | None" = None  # index of most-recently committed non-blank prose line
         self._tracked_prose_log: "object | None" = None  # identity tracker; reset state on switch
         self._pending_heading: "tuple[Text, str] | None" = None
         # (rich_text, plain) — stashed ATX heading awaiting possible rule merge
@@ -781,6 +782,7 @@ class ResponseFlowEngine:
         self._logical_index = 0
         self._log_texts.clear()
         self._log_plains.clear()
+        self._last_prose_idx = None
 
     def _commit_to_log(self, rich_text: "Text", plain: str) -> None:
         """R-B1 primary commit: write to prose log AND record in parallel tracking.
@@ -793,6 +795,7 @@ class ResponseFlowEngine:
         self._log_texts.append(rich_text)
         self._log_plains.append(plain)
         self._logical_index += 1
+        self._last_prose_idx = None  # cleared here; _write_prose sets it for non-blank prose
         self._assert_log_invariant("_commit_to_log")
 
     def _apply_write_to_log(self, logical_index: int, new_text: "Text") -> None:
@@ -835,6 +838,8 @@ class ResponseFlowEngine:
         _log.debug("_write_prose: plain=%r", plain[:120] if len(plain) > 120 else plain)
         self._dup_trace("prose_main", plain)
         self._commit_to_log(rich_text, plain)
+        if plain.strip():
+            self._last_prose_idx = self._logical_index - 1
         if self._prose_callback is not None and plain.strip():
             try:
                 self._prose_callback(plain)
@@ -1458,14 +1463,24 @@ class ResponseFlowEngine:
             spans.append(TextSpan(text=rich_text[cursor:]))
 
         self._flush_pending_heading()
-        prose_log.write_inline(spans)
-        # R-B1: track this committed line for count invariant. Note: rewrite
-        # fallback in _apply_write_to_log uses write_with_source and would lose
-        # ImageSpans; acceptable since no current late-arriving callback updates
-        # an inline-emoji line (audit confirms _mount_emoji is mount-only).
-        self._log_texts.append(rich_text)
-        self._log_plains.append(plain)
-        self._logical_index += 1
+
+        prev_idx = self._last_prose_idx
+        prev_plain = self._log_plains[prev_idx] if prev_idx is not None and prev_idx < len(self._log_plains) else ""
+        if prev_idx is not None and prev_plain and plain.startswith(prev_plain):
+            # Emoji-suffix decoration of the most-recently committed prose line.
+            # Route through _apply_write_to_log so no duplicate log entry is created.
+            self._apply_write_to_log(prev_idx, rich_text)
+        else:
+            prose_log.write_inline(spans)
+            # R-B1: track this committed line for count invariant. Note: rewrite
+            # fallback in _apply_write_to_log uses write_with_source and would lose
+            # ImageSpans; acceptable since no current late-arriving callback updates
+            # an inline-emoji line (audit confirms _mount_emoji is mount-only).
+            self._log_texts.append(rich_text)
+            self._log_plains.append(plain)
+            self._logical_index += 1
+            self._last_prose_idx = self._logical_index - 1
+
         if self._prose_callback is not None and plain.strip():
             try:
                 self._prose_callback(plain)

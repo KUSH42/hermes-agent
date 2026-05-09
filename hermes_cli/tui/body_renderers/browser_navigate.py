@@ -74,6 +74,18 @@ class BrowserNavigateRenderer(BodyRenderer):
             # malformed status field: fall back to a default based on success
             status = 200 if success else 0
 
+        raw_size = data.get("content_length")
+        try:
+            size_bytes = int(raw_size) if raw_size is not None else None
+        except (TypeError, ValueError):  # il-ex-1-exempt: non-numeric content_length is silently dropped
+            size_bytes = None
+
+        if size_bytes is not None:
+            from hermes_cli.tui.tool_result_parse import _humanize_bytes
+            size_human: str | None = _humanize_bytes(size_bytes)
+        else:
+            size_human = None
+
         status_hex = _status_color(status, c)
 
         result = Text()
@@ -81,8 +93,16 @@ class BrowserNavigateRenderer(BodyRenderer):
         result.append("  ")
         result.append(url, style="link")
 
-        if title:
-            result.append(f"\n  {title}", style="bold")
+        if title or size_human:
+            title_line = Text()
+            if title:
+                title_line.append(title, style="bold")
+            if size_human:
+                if title:
+                    title_line.append(" · ", style=Style(color=c.muted))
+                title_line.append(size_human, style=Style(color=c.muted))
+            result.append("\n  ")
+            result.append_text(title_line)
 
         if not success and data.get("error"):
             result.append(f"\n  {data['error']}", style=Style(color=c.error))

@@ -510,11 +510,15 @@ class WatchersService(AppService):
         except NoMatches:
             pass
         # A3-2: route error message to HintBar for prominent left-side display
+        # HB2-H1: wrap in bold-red markup so _hint_to_text() preserves styling
         try:
             if value:
+                _vars = getattr(self.app, "get_css_variables", lambda: {})() or {}
+                err_color = _vars.get("status-error-color", "#EF5350")
+                flash_text = f"[bold {err_color}]⚠ {value}[/]"
                 self.app.feedback.flash(
                     "hint-bar",
-                    f"⚠ {value}",
+                    flash_text,
                     duration=9999,
                     priority=10,
                 )

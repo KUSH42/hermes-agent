@@ -262,27 +262,34 @@ def _tte_gradient_t(
 ) -> float:
     """Compute gradient t matching terminaltexteffects' build_coordinate_color_mapping.
 
-    VERTICAL   : same color per row, ramp top→bottom
+    TTE uses terminal coordinates: row=1 at BOTTOM, row=N at TOP (bottom-up).
+    Our rows are array indices: row_top=0 at top, row_bot=N at bottom (top-down).
+    Row-sensitive directions must flip: use (row_bot - row) so t=0 lands at the
+    bottom of the text (as TTE does) and t=1 at the top.
+
+    VERTICAL   : same color per row, ramp bottom→top (t=0 at bottom)
     HORIZONTAL : same color per col, ramp left→right
-    DIAGONAL   : TTE formula (2*adj_row + adj_col) / (2*max_row + max_col)
-    RADIAL     : TTE formula — aspect-ratio-corrected distance from center (row×2)
+    DIAGONAL   : TTE formula with row flipped
+    RADIAL     : aspect-ratio-corrected distance from center (symmetric, no flip)
     """
     row_range = max(row_bot - row_top, 1)
     col_range = max(col_max - col_min, 1)
 
     if direction == "VERTICAL":
-        return max(0.0, min(1.0, (row - row_top) / row_range))
+        # TTE: fraction=0 at bottom row, fraction=1 at top row
+        return max(0.0, min(1.0, (row_bot - row) / row_range))
     if direction == "HORIZONTAL":
         return max(0.0, min(1.0, (col - col_min) / col_range))
     if direction == "DIAGONAL":
-        adj_row = row - row_top
+        # TTE: adj_row increases bottom→top; flip to match
+        adj_row = row_bot - row
         adj_col = col - col_min
         denom = 2 * row_range + col_range
         return max(0.0, min(1.0, (2 * adj_row + adj_col) / denom)) if denom else 0.0
-    # RADIAL: aspect-ratio-corrected distance from center (TTE uses row*2 weight)
+    # RADIAL: distance from center — symmetric, no row-direction flip needed
     center_row = row_top + row_range / 2
     center_col = col_min + col_range / 2
-    max_dist = ((col_range / 2) ** 2 + (row_range) ** 2) ** 0.5  # row already ×2 via *2 below
+    max_dist = ((col_range / 2) ** 2 + (row_range) ** 2) ** 0.5
     dy = (row - center_row) * 2
     dx = col - center_col
     dist = (dx ** 2 + dy ** 2) ** 0.5

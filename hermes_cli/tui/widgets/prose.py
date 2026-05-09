@@ -61,6 +61,12 @@ class InlineProseLog(CopyableRichLog):
         # so the base write_with_source() does not record a duplicate "wws" op
         # (the "inline" op stored by write_inline() already covers this write).
         self._inline_source_appending: bool = False
+        # MSG-DEDUP-H1: plain-text → first-seen logical index (capped at 256).
+        # Guards against producer re-emitting the same paragraph twice.
+        self._inline_emit_seen: dict[str, int] = {}
+        # MSG-DEDUP-M2: True inside _do_reflow; new writes are queued, not appended.
+        self._reflowing: bool = False
+        self._pending_during_reflow: list[_WriteOp] = []
 
     # ------------------------------------------------------------------ #
     # Write API
@@ -73,10 +79,39 @@ class InlineProseLog(CopyableRichLog):
         After writing, images are pre-rendered so render_line always reads from
         cache (never runs PIL or emits terminal sequences inside the render path).
         """
+        # MSG-DEDUP-M2 guard: queue writes that arrive mid-reflow replay.
+        if self._reflowing and not self._replaying:
+            self._pending_during_reflow.append(_WriteOp(kind="inline", content=line))
+            _cap = self._SOURCE_OPS_CAP // 4
+            if len(self._pending_during_reflow) > _cap:
+                _log.warning(
+                    "write_inline: pending_during_reflow queue overflow (%d); dropping oldest",
+                    len(self._pending_during_reflow),
+                )
+                del self._pending_during_reflow[0]
+            return
+
         from hermes_cli.tui.inline_prose import ImageSpan
         text = self._line_to_text(line)
         plain = self._line_to_plain(line)
         line_index = self._logical_count  # incremented by write() below
+
+        # MSG-DEDUP-H1 Sub-fix A: index-collision guard (reflow race).
+        # If _logical_count was reset mid-replay, the new line lands at an already-stored
+        # index — patch in place rather than appending a duplicate.
+        if line_index in self._inline_lines:
+            self._rewrite_inline(line_index, line, text, plain)
+            return
+
+        # MSG-DEDUP-H1 Sub-fix B: plain-text dedup guard (producer re-emit).
+        if plain and plain in self._inline_emit_seen and not self._replaying:
+            _log.warning(
+                "write_inline: duplicate plain text emit at idx=%d, prior idx=%d — skipping append",
+                line_index,
+                self._inline_emit_seen[plain],
+            )
+            return
+
         self._inline_lines[line_index] = line
         self._inline_paint[line_index] = self._build_paint_plan(line, text)
         # Record the "inline" op for reflow replay (REFLOW-H2).
@@ -88,6 +123,13 @@ class InlineProseLog(CopyableRichLog):
         if len(self._source_ops) > self._SOURCE_OPS_CAP:
             drop = len(self._source_ops) - self._SOURCE_OPS_CAP
             del self._source_ops[:drop]
+
+        # Register in emit_seen — happens even during replay so replay re-populates the map.
+        if plain:
+            self._inline_emit_seen[plain] = line_index
+            if len(self._inline_emit_seen) > 256:
+                del self._inline_emit_seen[next(iter(self._inline_emit_seen))]
+
         # Suppress write_with_source from also recording a "wws" op for this call
         # (the "inline" op above already covers it for reflow purposes).
         self._inline_source_appending = True
@@ -101,6 +143,43 @@ class InlineProseLog(CopyableRichLog):
         has_images = any(isinstance(s, ImageSpan) for s in line)
         if has_images:
             self._prerender_line_images(line_index, line)
+
+    def _rewrite_inline(self, line_index: int, line: list, text: "Any | None" = None, plain: "str | None" = None) -> None:
+        """Patch an already-stored inline line in place (index-collision during reflow race).
+
+        Does NOT increment _logical_count or call super().write_with_source().
+        """
+        if text is None:
+            text = self._line_to_text(line)
+        if plain is None:
+            plain = self._line_to_plain(line)
+
+        # Remove stale emit_seen entry for the old line at this index.
+        old_line = self._inline_lines.get(line_index)
+        if old_line is not None:
+            old_plain = self._line_to_plain(old_line)
+            if old_plain and self._inline_emit_seen.get(old_plain) == line_index:
+                del self._inline_emit_seen[old_plain]
+
+        self._inline_lines[line_index] = line
+        self._inline_paint[line_index] = self._build_paint_plan(line, text)
+
+        # Update the matching source_op in place (the line_index-th "inline" op).
+        inline_idx = 0
+        for i, op in enumerate(self._source_ops):
+            if op.kind == "inline":
+                if inline_idx == line_index:
+                    self._source_ops[i].content = line
+                    break
+                inline_idx += 1
+
+        # Register new plain text in emit_seen.
+        if plain:
+            self._inline_emit_seen[plain] = line_index
+            if len(self._inline_emit_seen) > 256:
+                del self._inline_emit_seen[next(iter(self._inline_emit_seen))]
+
+        self.refresh()
 
     def write(  # type: ignore[override]
         self,
@@ -197,12 +276,25 @@ class InlineProseLog(CopyableRichLog):
 
         Clears _inline_lines/_inline_paint/_logical_visual_rows/_logical_count
         so that write_inline() calls during replay rebuild them at the new width.
+
+        MSG-DEDUP-M2: sets _reflowing=True so concurrent writes are queued rather
+        than appended mid-replay; drained after replay completes.
         """
-        self._inline_lines.clear()
-        self._inline_paint.clear()
-        self._logical_visual_rows.clear()
-        self._logical_count = 0
-        super()._do_reflow()
+        self._reflowing = True
+        try:
+            self._inline_lines.clear()
+            self._inline_paint.clear()
+            self._logical_visual_rows.clear()
+            self._logical_count = 0
+            self._inline_emit_seen.clear()
+            super()._do_reflow()
+        finally:
+            self._reflowing = False
+        # Drain ops that arrived during the reflow replay window.
+        pending = list(self._pending_during_reflow)
+        self._pending_during_reflow.clear()
+        for op in pending:
+            self.write_inline(op.content)
 
     def _replay_inline_op(self, op: "_WriteOp") -> None:
         """Replay a single "inline" op by delegating to write_inline."""

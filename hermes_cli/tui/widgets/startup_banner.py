@@ -64,3 +64,14 @@ class StartupBannerWidget(Static):
         if not self.display:
             self.display = True
         self.update(rich_text, layout=True)
+
+    def write_static_content(self, rich_text: Text) -> None:
+        """Write the post-TTE static banner content without making the widget visible.
+
+        Called by skin _refresh_branding during startup so the final static frame
+        is pre-loaded before TTE starts.  The widget stays display:none until the
+        first TTE frame arrives via set_frame(), preventing a flash of static art
+        before the animation begins.  After TTE, when the widget is already visible,
+        callers should use set_frame() directly instead.
+        """
+        self.update(rich_text, layout=True)

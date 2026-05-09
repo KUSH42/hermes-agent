@@ -187,7 +187,12 @@ class ThemeService(AppService):
             combined.append_text(hero_text)
 
             bw = app.query_one(StartupBannerWidget)
-            bw.set_frame(combined)
+            if bw.display:
+                bw.set_frame(combined)
+            else:
+                # Widget still hidden (TTE hasn't started): pre-load content
+                # silently so there's no flash of static art before animation.
+                bw.write_static_content(combined)
         except NoMatches:
             pass
         except Exception:

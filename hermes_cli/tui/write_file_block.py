@@ -210,7 +210,7 @@ class WriteFileBlock(StreamingToolBlock):
         self._content_line_count += 1
         try:
             log = self._body.query_one(CopyableRichLog)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         try:
             from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS

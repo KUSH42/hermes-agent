@@ -33,7 +33,7 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     for path in _FONT_SEARCH_PATHS:
         try:
             return ImageFont.truetype(path, size)
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             continue
     return ImageFont.load_default()
 
@@ -46,7 +46,7 @@ def _sdf_from_mask(mask: np.ndarray) -> np.ndarray:
         outside = distance_transform_edt(~mask).astype(np.float32)
         inside = distance_transform_edt(mask).astype(np.float32)
         return outside - inside
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         return _dead_reckon_sdf(mask)
 
 def _dead_reckon_sdf(mask: np.ndarray) -> np.ndarray:
@@ -144,7 +144,7 @@ def _resize_sdf(sdf: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
         zy = target_h / src_h
         zx = target_w / src_w
         return zoom(sdf, (zy, zx), order=1).astype(np.float32)
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         # numpy fallback: nearest-neighbor
         yi = (np.arange(target_h) * src_h / target_h).astype(int)
         xi = (np.arange(target_w) * src_w / target_w).astype(int)

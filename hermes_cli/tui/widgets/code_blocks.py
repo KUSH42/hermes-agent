@@ -80,7 +80,7 @@ class CodeBlockFooter(Widget):
                 f"code-footer::{self.id}",
                 CodeFooterAdapter(self),
             )
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # feedback channel registration failed; copy flash still works via fallback
             pass
 
@@ -88,7 +88,7 @@ class CodeBlockFooter(Widget):
         # RX1 Phase B: deregister code-footer channel
         try:
             self.app.feedback.deregister_channel(f"code-footer::{self.id}")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # Syntax init failed (bad theme); plain text is safe fallback
             pass
 
@@ -118,7 +118,7 @@ class CodeBlockFooter(Widget):
                 duration=duration,
                 key="copy",
             )
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # CSS variable lookup failed; use default theme
             pass
 
@@ -133,7 +133,7 @@ class CodeBlockFooter(Widget):
         if target_id == "code-copy-action":
             try:
                 self.app._copy_code_block(parent)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # widget absent pre-mount; refresh skipped
                 pass
             event.prevent_default()
@@ -143,7 +143,7 @@ class CodeBlockFooter(Widget):
                 if parent.can_toggle():
                     parent.toggle_collapsed()
                     event.prevent_default()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # render_markup failed; display continues with stale content
                 pass
 
@@ -220,10 +220,10 @@ class StreamingCodeBlock(Widget):
             from pygments.formatters import TerminalTrueColorFormatter  # type: ignore[import-untyped]
             try:
                 lexer = get_lexer_by_name(lang, stripall=False) if lang else TextLexer()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 lexer = TextLexer()  # unknown language name → plain text
             return highlight(line, lexer, TerminalTrueColorFormatter(style=self._pygments_theme)).rstrip("\n")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             return line  # safe fallback — plain text
 
     # ------------------------------------------------------------------
@@ -252,7 +252,7 @@ class StreamingCodeBlock(Widget):
         # Browse streaming→ready flash
         try:
             _mounted = self.is_mounted
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # is_mounted check failed; treat as unmounted
             _mounted = False
         if (
@@ -264,7 +264,7 @@ class StreamingCodeBlock(Widget):
             self.add_class("--browse-newly-anchored")
             try:
                 self.set_timer(0.6, lambda: self.remove_class("--browse-newly-anchored"))
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # widget absent during refresh; skip silently
                 pass
 
@@ -280,7 +280,7 @@ class StreamingCodeBlock(Widget):
         code = "\n".join(self._display_code_lines())
         try:
             mounted = bool(self.is_mounted)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # is_mounted check failed; treat as unmounted
             mounted = False
         if not mounted:
@@ -306,12 +306,12 @@ class StreamingCodeBlock(Widget):
         def _cleanup_tmps(m: "object", p: "object") -> None:
             try:
                 m.unlink(missing_ok=True)  # type: ignore[union-attr]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # content update failed; widget may be detached
                 pass
             try:
                 p.unlink(missing_ok=True)  # type: ignore[union-attr]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # content update failed; widget may be detached
                 pass
 
@@ -344,7 +344,7 @@ class StreamingCodeBlock(Widget):
             max_rows = getattr(getattr(self, "app", None), "_math_max_rows", 24)
             img_widget = InlineImage(image=path, max_rows=max_rows)
             self.parent.mount(img_widget, after=self)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # CSS variables unavailable; syntax highlight uses cached vars
             self._render_syntax(self._complete_skin_vars or None)
 
@@ -464,7 +464,7 @@ class StreamingCodeBlock(Widget):
                 code = "\n".join(self._display_code_lines())
                 try:
                     self.app._copy_text_with_hint(code)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # copy action best-effort; widget may not be mounted
                     pass
                 event.prevent_default()

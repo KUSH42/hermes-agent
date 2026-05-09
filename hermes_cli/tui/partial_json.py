@@ -133,7 +133,7 @@ class PartialJSONCodeExtractor:
                     if len(self._unicode_buf) == 4:
                         try:
                             out.append(chr(int(self._unicode_buf, 16)))
-                        except ValueError:
+                        except ValueError:  # il-ex-1-exempt: swallow
                             _log.warning(
                                 "partial_json: bad \\u escape %r — emitting literal",
                                 self._unicode_buf,

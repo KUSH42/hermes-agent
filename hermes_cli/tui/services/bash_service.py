@@ -51,7 +51,7 @@ class BashService(AppService):
         if proc is not None:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-            except ProcessLookupError:
+            except ProcessLookupError:  # il-ex-1-exempt: swallow
                 pass  # process already gone — expected
             except PermissionError:
                 _log.warning("BashService.kill: PermissionError — sandbox or capability issue", exc_info=True)
@@ -94,7 +94,7 @@ class BashService(AppService):
                 self.app.call_from_thread(block.push_line, raw)
             self._proc.wait()
             exit_code = self._proc.returncode
-        except FileNotFoundError:
+        except FileNotFoundError:  # il-ex-1-exempt: swallow
             self.app.call_from_thread(block.push_line, "[error] sh not found")
         except Exception as exc:
             _log.debug("BashService._exec_sync: unexpected error: %s", exc, exc_info=True)

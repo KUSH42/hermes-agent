@@ -128,7 +128,7 @@ def iter_frames(effect_name: str, text: str, skin=None, params: dict[str, object
     try:
         mod = importlib.import_module(spec[0])
         cls = getattr(mod, spec[1])
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         if not _TTE_MISSING_LOGGED:
             _log.info(
                 "TTE animation requested (%s) but terminaltexteffects is not installed. "
@@ -284,7 +284,7 @@ def _apply_effect_params(
         current = getattr(cfg, key)
         try:
             value = _coerce_effect_param(raw, current, color_cls)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # il-ex-1-exempt: swallow
             _log.warning("tte_runner: ignoring invalid %r param %r: %r", effect_name, key, raw)
             continue
         setattr(cfg, key, value)
@@ -310,7 +310,7 @@ def get_effect_gradient_direction(
     try:
         mod = importlib.import_module(spec[0])
         cls = getattr(mod, spec[1])
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # il-ex-1-exempt: swallow
         return "DIAGONAL"
     try:
         effect = cls("x")
@@ -361,7 +361,7 @@ def run_effect(effect_name: str, text: str, skin=None, params: dict[str, object]
     try:
         mod = importlib.import_module(spec[0])
         cls = getattr(mod, spec[1])
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         print("  TerminalTextEffects is not installed.")
         print('  Install it with: pip install "hermes-agent[fun]"')
         return False

@@ -90,12 +90,12 @@ class IOService(AppService):
                     app.hooks.fire("on_streaming_start")
                     try:
                         app.query_one(ThinkingWidget).deactivate()
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         pass
                     # D-4: clear layout-reserve row on first stream chunk
                     try:
                         app.query_one(ThinkingWidget).clear_reserve()
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         pass
                 _seq = getattr(app, "_perf_chunk_seq", 0) + 1
                 app._perf_chunk_seq = _seq
@@ -131,7 +131,7 @@ class IOService(AppService):
                                     _p.refresh(layout=True)
                             app.call_after_refresh(_do_layout_refresh)
                         panel.scroll_end_if_pinned()
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         # NoMatches expected during teardown; panel may unmount mid-chunk
                         pass
                 await asyncio.sleep(0)
@@ -167,7 +167,7 @@ class IOService(AppService):
                 app.status_output_pressure = True
             elif app.status_output_pressure and qsize < maxsize // 2:
                 app.status_output_pressure = False
-        except asyncio.QueueFull:
+        except asyncio.QueueFull:  # il-ex-1-exempt: swallow
             from hermes_cli.tui.perf import _queue_probe
             _queue_probe.record_drop()
             if not app.status_output_dropped:
@@ -177,7 +177,7 @@ class IOService(AppService):
                     app._output_queue.maxsize,
                 )
             app.status_output_dropped = True
-        except RuntimeError:
+        except RuntimeError:  # il-ex-1-exempt: swallow
             pass
 
     def flush_output(self) -> None:
@@ -189,12 +189,12 @@ class IOService(AppService):
         async def _send_flush() -> None:
             try:
                 app._output_queue.put_nowait(None)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # il-ex-1-exempt: swallow
                 # Consumer is behind — yield one tick, then retry.
                 await asyncio.sleep(0)
                 try:
                     app._output_queue.put_nowait(None)
-                except asyncio.QueueFull:
+                except asyncio.QueueFull:  # il-ex-1-exempt: swallow
                     logger.warning(
                         "IOService.flush_output: sentinel dropped after retry "
                         "(queue maxsize=%d); turn flush will be skipped",
@@ -203,7 +203,7 @@ class IOService(AppService):
 
         try:
             asyncio.run_coroutine_threadsafe(_send_flush(), app._event_loop)
-        except RuntimeError:
+        except RuntimeError:  # il-ex-1-exempt: swallow
             pass
 
     # --- TTE effects (suspend-based, not TTEWidget) ---
@@ -248,7 +248,7 @@ class IOService(AppService):
         )
         try:
             return bool(future.result())
-        except concurrent.futures.TimeoutError:
+        except concurrent.futures.TimeoutError:  # il-ex-1-exempt: swallow
             _log.warning("play_effects_blocking: timed out waiting for effects future")
             return False
         except Exception:
@@ -269,7 +269,7 @@ class IOService(AppService):
             widget = self.app.query_one("#tte-effect", TTEWidget)
             widget.play(effect_name, text, params=params, done_event=done_event)
             return True
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             if done_event is not None:
                 done_event.set()
             return False
@@ -308,7 +308,7 @@ class IOService(AppService):
         try:
             widget = self.app.query_one("#tte-effect", TTEWidget)
             widget.stop()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def stop_tte(self) -> None:

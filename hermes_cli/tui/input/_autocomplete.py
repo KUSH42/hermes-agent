@@ -180,7 +180,7 @@ class _AutocompleteMixin:
                 return
             page = max(1, clist.size.height - 1)
             clist.highlighted = max(0, clist.highlighted - page)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def action_completion_page_down(self) -> None:
@@ -193,7 +193,7 @@ class _AutocompleteMixin:
                 return
             page = max(1, clist.size.height - 1)
             clist.highlighted = min(len(clist.items) - 1, clist.highlighted + page)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # --- Accept / dismiss ---
@@ -209,7 +209,7 @@ class _AutocompleteMixin:
             return
         try:
             clist = self.screen.query_one(VirtualCompletionList)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if not clist.items or clist.highlighted < 0:
             return

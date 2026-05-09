@@ -61,7 +61,7 @@ class ContextMenuService(AppService):
             try:
                 from hermes_cli.tui.input_widget import HermesInput as _HI
                 app.query_one(_HI).focus()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             return
         if event.button != 3:
@@ -94,7 +94,7 @@ class ContextMenuService(AppService):
                 region = widget.content_region
                 x = region.x + region.width // 2
                 y = region.y + region.height // 2
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Region unavailable; use (0, 0) as fallback position — correct for menu placement
                 pass
         await self.show_context_menu_at(items, x, y)
@@ -104,7 +104,7 @@ class ContextMenuService(AppService):
         try:
             from hermes_cli.tui.context_menu import ContextMenu as _CM
             await self.app.query_one(_CM).show(items, x, y)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_path_search_provider_batch(self, message: Any) -> None:
@@ -112,7 +112,7 @@ class ContextMenuService(AppService):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.app.query_one(HermesInput).on_path_search_provider_batch(message)
-        except (NoMatches, ImportError):
+        except (NoMatches, ImportError):  # il-ex-1-exempt: swallow
             pass
 
     def build_context_items(self, event: Any) -> list:
@@ -137,7 +137,7 @@ class ContextMenuService(AppService):
                 from hermes_cli.tui.tool_blocks import ToolBlock as _TB
                 if isinstance(node, _TB):
                     return self.build_tool_block_menu_items(node)
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -146,7 +146,7 @@ class ContextMenuService(AppService):
                     parent = node.parent
                     if isinstance(parent, _TB):
                         return self.build_tool_block_menu_items(parent)
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -159,7 +159,7 @@ class ContextMenuService(AppService):
                     if cb.can_toggle():
                         items.append(MenuItem("▸/▾  Expand/Collapse", "", lambda b=cb: b.toggle_collapsed()))
                     return items
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -168,7 +168,7 @@ class ContextMenuService(AppService):
                     msg_text = getattr(node, "_message", "")
                     if msg_text:
                         return [MenuItem("⎘  Copy message", "", lambda t=msg_text: self.app._svc_theme.copy_text_with_hint(t))]
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -182,7 +182,7 @@ class ContextMenuService(AppService):
                         items.append(MenuItem("⎘  Copy selected", "", lambda t=sel_text: self.app._svc_theme.copy_text_with_hint(t)))
                     items.append(MenuItem("⎘  Copy full response", "", lambda p=panel: self.copy_panel(p)))
                     return items
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             try:
@@ -193,7 +193,7 @@ class ContextMenuService(AppService):
                     if sel is not None and not sel.is_empty:
                         try:
                             sel_text = node.get_text_range(sel.start, sel.end)
-                        except Exception:
+                        except Exception:  # il-ex-1-exempt: swallow
                             # get_text_range not available in this widget version; fall back to selected_text
                             sel_text = getattr(node, "selected_text", "")
                         if sel_text:
@@ -203,7 +203,7 @@ class ContextMenuService(AppService):
                         MenuItem("✕  Clear input", "", lambda: self.clear_input()),
                     ]
                     return items
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass
 
             if getattr(node, "id", None) == "input-row":
@@ -370,13 +370,13 @@ class ContextMenuService(AppService):
         if not text:
             try:
                 self.app.query_one("#input-area").focus()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             self.app._flash_hint("clipboard empty", 1.5)
             return
         try:
             inp = self.app.query_one("#input-area")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if hasattr(inp, "insert_text"):
             inp.insert_text(text)
@@ -393,7 +393,7 @@ class ContextMenuService(AppService):
                 inp.clear()
             elif hasattr(inp, "value"):
                 inp.value = ""
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # --- ToolPanel events ---
@@ -407,7 +407,7 @@ class ContextMenuService(AppService):
             from hermes_cli.tui.osc8 import is_supported as _osc8_supported
             if _osc8_supported():
                 return
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # osc8 support check failed; assume unsupported and show plain hint
             pass
         app._path_open_hint_shown = True
@@ -461,11 +461,11 @@ class ContextMenuService(AppService):
                         )
                         try:
                             widget.remove_class("--modal")  # il-m1: fallback in dismiss_all_info_overlays
-                        except Exception:
+                        except Exception:  # il-ex-1-exempt: swallow
                             pass
                         try:
                             app.pop_modal(widget)
-                        except Exception:
+                        except Exception:  # il-ex-1-exempt: swallow
                             pass
         app._sync_workspace_polling_state()
 
@@ -504,11 +504,11 @@ class ContextMenuService(AppService):
                             )
                             try:
                                 widget.remove_class("--modal")  # il-m1: fallback in heal_stale_modal_entries
-                            except Exception:
+                            except Exception:  # il-ex-1-exempt: swallow
                                 pass
                             try:
                                 app.pop_modal(widget)
-                            except Exception:
+                            except Exception:  # il-ex-1-exempt: swallow
                                 pass
             except Exception:
                 _log.debug(

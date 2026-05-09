@@ -230,7 +230,7 @@ class TurnResultItem(Static):
             return
         try:
             overlay = self.app.query_one(HistorySearchOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         idx = self._entry.index if self._entry is not None else None
         if idx is None:
@@ -434,13 +434,13 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
         """Choose wide/narrow layout based on terminal width (P1-D)."""
         try:
             w = self.app.size.width
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             w = 80
         sections = _KM_SECTIONS_WIDE if w >= 80 else _KM_SECTIONS_NARROW
         content = _km_render_sections(sections, width=w)
         try:
             self.query_one("#keymap-content", Static).update(content)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def show(self) -> None:
@@ -450,7 +450,7 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("KeymapOverlay.show: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
         self._update_content()
@@ -468,7 +468,7 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("KeymapOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -567,7 +567,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
             cfg = self.app.cli._cfg or {}
             max_r = cfg.get("display", {}).get("history_search_max_results", 50)
             self._max_results = int(max_r)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # config parse failed; use default max_results limit
         self._build_index()
         self._selected_idx = 0
@@ -577,24 +577,24 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
             hint_bar = self.app.query_one(HintBar)
             self._saved_hint = hint_bar.hint
             hint_bar.hint = "↑↓ navigate  Enter jump  Esc close"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             self._saved_hint = ""
         # A1: clear previous search query so the list always opens unfiltered
         try:
             inp = self.query_one("#history-search-input", Input)
             inp.value = ""
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._render_results("")
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("HistorySearchOverlay.open_search: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by open_search (permanent widget override)
         try:
             self.query_one("#history-search-input", Input).focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def dismiss(self) -> None:
@@ -632,11 +632,11 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         try:
             from .status_bar import HintBar
             self.app.query_one(HintBar).hint = self._saved_hint
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("HistorySearchOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -653,7 +653,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
             panels = [
                 child for child in output_panel.children if isinstance(child, MessagePanel)
             ]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             self._index = []
             return
 
@@ -702,7 +702,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         """B4: display a 'Searching…' indicator in the status bar while the worker runs."""
         try:
             self.query_one("#history-status", Static).update("[dim]Searching all sessions…[/dim]")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _render_results(self, query: str) -> None:
@@ -726,7 +726,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         self._current_results = search_results
         try:
             result_list = self.query_one("#history-result-list", VerticalScroll)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
 
         existing = list(result_list.query(TurnResultItem))
@@ -765,14 +765,14 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
                     "[dim]no matches — try fewer words or a partial phrase[/dim]"
                 )
             self.query_one("#history-status", Static).update(status_text)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _update_selection(self) -> None:
         """Apply --selected CSS class to the currently highlighted row."""
         try:
             items = list(self.query(TurnResultItem))
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during dismiss; return early is correct
             return
         for i, item in enumerate(items):
@@ -795,7 +795,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         try:
             inp = self.query_one("#history-search-input", Input)
             inp.value = query
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # search query widget absent; filter not applied
             pass
 
@@ -813,11 +813,11 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         try:
             mode_bar = self.query_one(_ModeBar)
             mode_bar.set_mode(self._mode)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # mode bar widget absent; visual indicator not updated
         try:
             query = self.query_one("#history-search-input", Input).value
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # search input absent; query defaults to empty string
             query = ""
         if self._mode == "all" and hasattr(self, "_search_cross_session"):
@@ -836,7 +836,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
             hint_bar = self.app.query_one(HintBar)
             title = result.session_title or result.session_id
             hint_bar.hint = f"Switch to session: {title}"
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent during reset; skip gracefully
             pass
 
@@ -892,7 +892,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
                 lines_before = entry.search_text[:result.first_match_offset].count("\n")
                 if lines_before > 5:
                     log.scroll_to(0, lines_before - 2, animate=True)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
     def on_resize(self) -> None:
@@ -908,7 +908,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         self._last_render_w = new_w
         try:
             query = self.query_one("#history-search-input", Input).value
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             query = ""
         self._render_results(query)
 

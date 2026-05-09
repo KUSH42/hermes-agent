@@ -123,7 +123,7 @@ def _grouping_enabled() -> bool:
         from hermes_cli.config import read_raw_config
         cfg = read_raw_config()
         return bool(cfg.get("display", {}).get("tool_grouping", True))
-    except Exception:  # config unavailable (e.g. test environment); grouping defaults to enabled
+    except Exception:  # il-ex-1-exempt: config unavailable (e.g. test environment); grouping defaults to enabled
         return True
 
 
@@ -211,9 +211,9 @@ class GroupHeader(Widget):
 
         # Aggregate chips
         if self._diff_add:
-            t.append(f"  +{self._diff_add}", style="green")
+            t.append(f"  +{self._diff_add}", style="green")  # il-tok-1-exempt: semantic diff color; green=added lines
         if self._diff_del:
-            t.append(f"  -{self._diff_del}", style="red")
+            t.append(f"  -{self._diff_del}", style="red")  # il-tok-1-exempt: semantic diff color; red=deleted lines
 
         # Duration (v4 §2.2 rule)
         ms = self._duration_ms
@@ -225,7 +225,7 @@ class GroupHeader(Widget):
 
         # B2: error count chip — shown before op count for prominence
         if self._error_count > 0:
-            t.append(f"  {self._error_count} err", style="bold red")
+            t.append(f"  {self._error_count} err", style="bold red")  # il-tok-1-exempt: semantic error color; no SkinColors token for error state in this chip
 
         # Op count — compact form at narrow widths
         if self._child_count > 1:
@@ -362,7 +362,7 @@ class GroupOverflowChip(Widget):
         try:
             from hermes_cli.tui.body_renderers._grammar import GLYPH_META_SEP, glyph as _glyph
             sep = f" {_glyph(GLYPH_META_SEP)} "
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # grammar module unavailable in test env; use plain separator
             sep = " · "
         if self._tier == DensityTier.TRACE:
@@ -634,7 +634,7 @@ class ToolGroup(Widget):
                     if ancestor is self:
                         self.focus()
                         break
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # focus may be unparented in test mounts; best-effort walk
             pass
 
@@ -646,7 +646,7 @@ class ToolGroup(Widget):
         # Rebuild browse anchors so hidden children are skipped
         try:
             self.app._svc_browse.rebuild_browse_anchors()
-        except Exception:  # _svc_browse not available; browse-anchor rebuild is best-effort
+        except Exception:  # il-ex-1-exempt: _svc_browse not available; browse-anchor rebuild is best-effort
             pass
 
     def on_click(self, event: object) -> None:
@@ -743,12 +743,12 @@ class ToolGroup(Widget):
                     if badge.startswith("+"):
                         try:
                             diff_add += int(badge[1:])
-                        except ValueError:
+                        except ValueError:  # il-ex-1-exempt: swallow
                             pass
                     elif badge.startswith("-"):
                         try:
                             diff_del += int(badge[1:])
-                        except ValueError:
+                        except ValueError:  # il-ex-1-exempt: swallow
                             pass
             # v4 chips + error count
             rs_v4 = getattr(panel, "_result_summary_v4", None)
@@ -761,12 +761,12 @@ class ToolGroup(Widget):
                     if chip.kind == "diff+":
                         try:
                             diff_add += int(chip.text.lstrip("+"))
-                        except (ValueError, AttributeError):
+                        except (ValueError, AttributeError):  # il-ex-1-exempt: swallow
                             pass
                     elif chip.kind == "diff-":
                         try:
                             diff_del += int(chip.text.lstrip("-"))
-                        except (ValueError, AttributeError):
+                        except (ValueError, AttributeError):  # il-ex-1-exempt: swallow
                             pass
 
             t0 = getattr(panel, "_start_time", None)
@@ -791,7 +791,7 @@ class ToolGroup(Widget):
         # E4: toggle CSS class on group header to indicate child errors
         try:
             self._header.set_class(error_count > 0, "--group-has-error")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # header may be unmounted during teardown; --group-has-error is decorative
             pass
 
@@ -835,7 +835,7 @@ class ToolGroup(Widget):
             current = getattr(block, "_line_err_count", 0)
             try:
                 block._line_err_count = current + 1
-            except AttributeError:
+            except AttributeError:  # il-ex-1-exempt: swallow
                 pass
             self._streaming_err_count += 1
             self._refresh_header_counts()
@@ -877,7 +877,7 @@ class ToolGroup(Widget):
             try:
                 self.set_class(self._group_state == ToolGroupState.DONE, "--group-done")
                 self.set_class(self._group_state == ToolGroupState.ERR, "--group-error")
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # Widget not fully mounted; CSS group-state class is decorative,
                 # missed during early mount is harmless — next recompute will apply it.
                 _log.debug("set_class skipped: ToolGroup not fully mounted (state=%s)", self._group_state)
@@ -909,7 +909,7 @@ def _get_header_label(panel: Widget) -> str:
         header = next(iter(panel.query(_TH)), None)
         if header is not None:
             return str(getattr(header, "_label", ""))
-    except Exception:  # ToolBlock query failed (partially mounted tree); empty label is safe
+    except Exception:  # il-ex-1-exempt: ToolBlock query failed (partially mounted tree); empty label is safe
         pass
     return ""
 
@@ -949,7 +949,7 @@ def _find_diff_target(siblings: list[Widget]) -> Widget | None:
     try:
         from hermes_cli.config import read_raw_config
         attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
-    except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
+    except Exception:  # il-ex-1-exempt: read_raw_config unavailable; hardcoded default window/threshold is safe
         attach_window = 15.0
     targets = _find_diff_targets(siblings, attach_window)
     return targets[0] if targets else None
@@ -963,7 +963,7 @@ def _is_diff_panel(panel: Widget) -> bool:
         from hermes_cli.tui.tool_blocks import ToolBlock as _TB
         blk = next(iter(panel.query(_TB)), None)
         return blk is not None and getattr(blk, "_label", "") == "diff"
-    except Exception:  # ToolBlock query failed in partially mounted tree; False is safe default
+    except Exception:  # il-ex-1-exempt: ToolBlock query failed in partially mounted tree; False is safe default
         return False
 
 
@@ -1090,7 +1090,7 @@ def _find_rule_match(
                 attach_window = float(
                     read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0)
                 )
-            except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
+            except Exception:  # il-ex-1-exempt: read_raw_config unavailable; hardcoded default window/threshold is safe
                 attach_window = 15.0
             gap = (
                 abs(new_start - prev_start)
@@ -1133,7 +1133,7 @@ def _find_rule_match(
         try:
             from hermes_cli.config import read_raw_config
             pipeline_ms = int(read_raw_config().get("display", {}).get("shell_pipeline_ms", 500))
-        except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
+        except Exception:  # il-ex-1-exempt: read_raw_config unavailable; hardcoded default window/threshold is safe
             pipeline_ms = 500
         within_window = (
             prev_start is not None
@@ -1221,7 +1221,7 @@ async def _do_apply_group_widget(
     # Rebuild browse anchors
     try:
         group.app._svc_browse.rebuild_browse_anchors()
-    except Exception:  # _svc_browse not available; browse-anchor rebuild is best-effort
+    except Exception:  # il-ex-1-exempt: _svc_browse not available; browse-anchor rebuild is best-effort
         pass
 
     return group
@@ -1245,7 +1245,7 @@ async def _do_append_to_group(
             group.set_timer(0.6, lambda: group._header.remove_class("--group-appended"))
     try:
         group.app._svc_browse.rebuild_browse_anchors()
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # _svc_browse may be absent (test mount) or unmounted (teardown);
         # browse-anchor rebuild is best-effort
         pass
@@ -1287,7 +1287,7 @@ def _maybe_start_group(message_panel: Widget, new_panel: Widget) -> None:
         try:
             from hermes_cli.config import read_raw_config
             attach_window = float(read_raw_config().get("display", {}).get("diff_attach_window_s", 15.0))
-        except Exception:  # read_raw_config unavailable; hardcoded default window/threshold is safe
+        except Exception:  # il-ex-1-exempt: read_raw_config unavailable; hardcoded default window/threshold is safe
             attach_window = 15.0
         all_targets = _find_diff_targets(siblings, attach_window)
         if len(all_targets) > 1:

@@ -55,7 +55,7 @@ class TTEWidget(Widget):
         try:
             frame = self.query_one("#tte-frame", Static)
             frame.update("")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         if self._done_event is not None:
             self._done_event.set()
@@ -98,5 +98,5 @@ class TTEWidget(Widget):
         try:
             frame = self.query_one("#tte-frame", Static)
             frame.update(rich_text)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass

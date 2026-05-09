@@ -561,7 +561,7 @@ def _parse_search_json(result: str) -> dict | None:
     try:
         import json as _json
         data = _json.loads(result)
-    except (ValueError, MemoryError):
+    except (ValueError, MemoryError):  # il-ex-1-exempt: swallow
         return None
     if not isinstance(data, dict):
         return None

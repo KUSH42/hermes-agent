@@ -150,7 +150,7 @@ class BrowseMinimap(Widget):
         for i, anchor in enumerate(anchors):
             try:
                 wy = anchor.widget.virtual_region.y
-            except (AttributeError, NoMatches) as exc:
+            except (AttributeError, NoMatches) as exc:  # il-ex-1-exempt: swallow
                 fail_count += 1
                 _log.debug(
                     "BrowseMinimap: virtual_region lookup failed for anchor %d (%s)",

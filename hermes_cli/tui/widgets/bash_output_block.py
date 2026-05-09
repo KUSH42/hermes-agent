@@ -85,7 +85,7 @@ class BashOutputBlock(Static):
         if self.has_class("--running"):
             try:
                 self.app._svc_bash.kill()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # best-effort process teardown; ignore if already dead
                 pass
 

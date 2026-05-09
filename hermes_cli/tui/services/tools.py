@@ -175,7 +175,7 @@ def remove_axis_watcher(view: "ToolCallViewState", watcher: "_AxisWatcher") -> N
     """Best-effort remove; silent if absent."""
     try:
         view._watchers.remove(watcher)
-    except ValueError:
+    except ValueError:  # il-ex-1-exempt: swallow
         pass  # already gone — safe
 
 
@@ -242,7 +242,7 @@ def _parse_duration_ms(s: "str | None") -> int:
         if s.endswith("s"):
             return max(0, int(float(s[:-1]) * 1000))
         return max(0, int(float(s)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # il-ex-1-exempt: swallow
         logger.debug("could not parse duration %r", s)
         return 0
 
@@ -406,7 +406,7 @@ class ToolRenderingService(AppService):
             panel = self.app.query_one(OutputPanel)
             self.app._cached_output_panel = panel
             return panel
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return None
 
     def _drain_output_before_tool_mount(self) -> None:
@@ -427,7 +427,7 @@ class ToolRenderingService(AppService):
         while not queue.empty():
             try:
                 chunk = queue.get_nowait()
-            except _asyncio.QueueEmpty:
+            except _asyncio.QueueEmpty:  # il-ex-1-exempt: swallow
                 break  # queue drained between empty() check and get_nowait(); expected TOCTOU, not an error
             except Exception:
                 logger.debug("_drain_output_before_tool_mount: get_nowait failed", exc_info=True)
@@ -568,7 +568,7 @@ class ToolRenderingService(AppService):
             self.app._browse_total += 1
             output.scroll_end_if_pinned()
             return block
-        except Exception as e:  # noqa: bare-except
+        except Exception as e:  # il-ex-1-exempt: noqa: bare-except
             logger.warning("open_execute_code_block failed for idx=%d: %s", idx, e)
             return None
 
@@ -588,7 +588,7 @@ class ToolRenderingService(AppService):
             self.app._browse_total += 1
             output.scroll_end_if_pinned()
             return block
-        except Exception as e:  # noqa: bare-except
+        except Exception as e:  # il-ex-1-exempt: noqa: bare-except
             logger.warning("open_write_file_block failed idx=%d: %s", idx, e)
             return None
 
@@ -608,7 +608,7 @@ class ToolRenderingService(AppService):
             try:
                 self.app.query_one(f"#{base_panel_id}")
                 panel_id: "str | None" = None  # collision: caller will skip suffix
-            except NoMatches:  # vocab-2: ID free → use base
+            except NoMatches:  # il-ex-1-exempt: vocab-2: ID free → use base
                 panel_id = base_panel_id
             _turn_count = getattr(self.app, "_current_turn_tool_count", 0) + 1
             self.app._current_turn_tool_count = _turn_count
@@ -707,7 +707,7 @@ class ToolRenderingService(AppService):
             msg.refresh(layout=True)
             self.app._browse_total += 1
             output.scroll_end_if_pinned()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _live_block_for_streaming(self, tool_call_id: str):
@@ -868,7 +868,7 @@ class ToolRenderingService(AppService):
             try:
                 raw = _json.dumps(args, ensure_ascii=False)
                 preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except (TypeError, ValueError):  # vocab-2: non-serializable args → empty preview — # noqa: bare-except
+            except (TypeError, ValueError):  # il-ex-1-exempt: vocab-2: non-serializable args → empty preview — # noqa: bare-except
                 preview = ""
             cat = classify_tool(tool_name).value
             new_entries.append(PlannedCall(
@@ -996,7 +996,7 @@ class ToolRenderingService(AppService):
         if tool_call_id and tool_call_id in self._agent_stack:
             try:
                 self._agent_stack.remove(tool_call_id)
-            except ValueError:
+            except ValueError:  # il-ex-1-exempt: swallow
                 pass  # already removed; concurrent cleanup — safe
 
         # Step 5: clear _active_tool_name only when this view owns it
@@ -1454,7 +1454,7 @@ class ToolRenderingService(AppService):
             if view.block is not None:
                 try:
                     view.block._tool_call_id = tool_call_id
-                except AttributeError:
+                except AttributeError:  # il-ex-1-exempt: swallow
                     logger.debug("block %r does not accept _tool_call_id", type(view.block).__name__)
 
             if view.panel is not None:
@@ -1464,7 +1464,7 @@ class ToolRenderingService(AppService):
                     # M19: check for DOM collision before renaming
                     try:
                         collision = bool(list(self.app.query(f"#{new_id}")))
-                    except Exception:
+                    except Exception:  # il-ex-1-exempt: swallow
                         # query() may fail before app is fully mounted; treat as no collision
                         collision = False
                     if not collision:

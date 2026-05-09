@@ -204,7 +204,7 @@ def _safe_cell_width(s: str) -> int:
         from wcwidth import wcswidth
         w = wcswidth(s)
         return w if w >= 0 else len(s)
-    except ImportError:  # noqa: bare-except
+    except ImportError:  # il-ex-1-exempt: noqa: bare-except
         return len(s)
 
 
@@ -299,7 +299,7 @@ def _secondary_args_text(category: "Any", tool_input: "dict | None") -> str:
                 return "args: " + ", ".join(f"{k}: {v}" for k, v in pairs)
             return ""
 
-    except Exception:  # defensive catch for entire label render; "" is always a safe fallback
+    except Exception:  # il-ex-1-exempt: defensive catch for entire label render; "" is always a safe fallback
         pass
     return ""
 
@@ -412,7 +412,7 @@ def header_label_v4(
                 label_str = label_str[:max(1, available - 1)] + "…"
             t.append(f" {label_str}")
             return t
-    except Exception:  # ToolCategory import unavailable; skip category-specific args formatting
+    except Exception:  # il-ex-1-exempt: ToolCategory import unavailable; skip category-specific args formatting
         pass
 
     if primary == "path":
@@ -437,7 +437,7 @@ def header_label_v4(
         try:
             from hermes_cli.tui.tool_category import ToolCategory as _TC
             _is_shell = cat == _TC.SHELL
-        except Exception:  # ToolCategory.SHELL check failed (import unavailable); skip $ prefix
+        except Exception:  # il-ex-1-exempt: ToolCategory.SHELL check failed (import unavailable); skip $ prefix
             _is_shell = False
         if accent_color and _is_shell:
             t.append(" $", style=f"bold {accent_color}")
@@ -584,7 +584,7 @@ class OmissionBar(TooltipMixin, Widget):
                 btn.display = visible
             more_btn = self.query_one(".--ob-more", Button)
             more_btn.label = "[less ◂]" if visible else "[more ▸]"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_resize(self, event: "events.Resize") -> None:
@@ -617,19 +617,19 @@ class OmissionBar(TooltipMixin, Widget):
                     self._set_advanced_visible(False)
                 try:
                     self.query_one(".--ob-down-all", Button).display = False
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
             else:
                 # Restore [↓all] visibility
                 try:
                     self.query_one(".--ob-down-all", Button).display = True
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 down_btn = self.query_one(".--ob-down", Button)
                 vs, ve, tot = self._visible_start, self._visible_end, self._total
                 step_below = min(_PAGE_SIZE, tot - ve)
                 down_btn.label = f"[↓+{step_below}]" if step_below > 0 else "[↓+0]"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def set_counts(
@@ -668,7 +668,7 @@ class OmissionBar(TooltipMixin, Widget):
                     up_page_btn = self.query_one(".--ob-up-page", Button)
                     up_page_btn.label = f"[↑+{step_above}]" if step_above > 0 else "[↑+0]"
                     up_page_btn.disabled = step_above == 0
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
             else:
                 step_below = min(_PAGE_SIZE, total - visible_end)
@@ -683,13 +683,13 @@ class OmissionBar(TooltipMixin, Widget):
                     if at_default:
                         try:
                             reset_btn.add_class("--at-default")
-                        except AttributeError:  # noqa: bare-except
+                        except AttributeError:  # il-ex-1-exempt: noqa: bare-except
                             pass
                         self._tooltip_text = "Already at default view"
                     else:
                         try:
                             reset_btn.remove_class("--at-default")
-                        except AttributeError:  # noqa: bare-except
+                        except AttributeError:  # il-ex-1-exempt: noqa: bare-except
                             pass
                         self._tooltip_text = "Scroll output window"
                     # G1: advanced [↑] button
@@ -700,7 +700,7 @@ class OmissionBar(TooltipMixin, Widget):
                     down_btn.disabled = at_end
                     # G1: [show all]
                     self.query_one(".--ob-down-all", Button).disabled = at_end
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
 
             if self._cap_label is not None:
@@ -710,7 +710,7 @@ class OmissionBar(TooltipMixin, Widget):
                 else:
                     self._cap_label.update("")
                     self._cap_label.remove_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -733,7 +733,7 @@ class OmissionBar(TooltipMixin, Widget):
                 if "--at-default" in btn.classes:
                     event.stop()
                     return
-            except Exception:  # .--ob-cap button not yet mounted; skip --at-default guard and proceed
+            except Exception:  # il-ex-1-exempt: .--ob-cap button not yet mounted; skip --at-default guard and proceed
                 pass
             pb.rerender_window(0, _VISIBLE_CAP)
         elif "--ob-up" in classes:

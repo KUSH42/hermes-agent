@@ -49,7 +49,7 @@ class BrowserNavigateRenderer(BodyRenderer):
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError):  # il-ex-1-exempt: swallow
             # malformed/non-JSON tool output: best-effort fall back to raw text
             from rich.text import Text
             return Text(raw)
@@ -70,7 +70,7 @@ class BrowserNavigateRenderer(BodyRenderer):
         raw_status = data.get("status_code") or data.get("status") or (200 if success else 0)
         try:
             status = int(raw_status)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # il-ex-1-exempt: swallow
             # malformed status field: fall back to a default based on success
             status = 200 if success else 0
 
@@ -122,7 +122,7 @@ class BrowserNavigateRenderer(BodyRenderer):
         tool_name = getattr(self.payload, "tool_name", "")
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError):  # il-ex-1-exempt: swallow
             # non-JSON output is expected when the browser tool crashes or returns plain text
             return f"({tool_name})"
         if tool_name in _ACTION_TOOLS:

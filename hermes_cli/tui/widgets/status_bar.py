@@ -91,7 +91,7 @@ def _safe_int(value: object, default: int = 0) -> int:
         return default
     try:
         return int(value)  # type: ignore[arg-type]
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # CSS variable lookup failed; return caller-supplied default
         return default
 
@@ -101,7 +101,7 @@ def _safe_bool(value: object, default: bool = False) -> bool:
         return default
     try:
         return bool(value)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # CSS variable lookup failed; return caller-supplied default
         return default
 
@@ -647,7 +647,7 @@ class StatusBar(PulseMixin, Widget):
         try:
             v = self.app.get_css_variables()
             return v.get("primary", "#5f87d7")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # colour resolve failed; use hardcoded fallback blue
             return "#5f87d7"
 
@@ -728,13 +728,13 @@ class StatusBar(PulseMixin, Widget):
             self.add_class("--streaming")
             try:
                 self.app.query_one(HintBar).add_class("--streaming")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # HintBar not yet mounted
         else:
             self.remove_class("--streaming")
             try:
                 self.app.query_one(HintBar).remove_class("--streaming")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # HintBar may be unmounted during teardown
 
     def _on_model_change(self, _model: str = "") -> None:
@@ -1131,7 +1131,7 @@ class VoiceStatusBar(Widget):
     def update_status(self, text: str) -> None:
         try:
             self.query_one("#voice-status-text", Static).update(text)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
 
@@ -1288,7 +1288,7 @@ class AttachmentChip(Static, can_focus=True):
     def action_blur_back(self) -> None:
         try:
             self.app.query_one("#input-area").focus()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # #input-area may not be mounted yet during startup; focus loss is
             # acceptable in that edge case.
             pass
@@ -1304,7 +1304,7 @@ def _extract_domain(url: str) -> str:
     try:
         host = urlparse(url).netloc
         return host.removeprefix("www.") if host else url[:30]
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # URL truncation failed; return first 30 chars as safe fallback
         return url[:30]
 

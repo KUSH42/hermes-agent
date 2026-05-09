@@ -87,7 +87,7 @@ def _next_legal_tier_static(
     cycle = _density_cycle()
     try:
         idx = cycle.index(start)  # type: ignore[arg-type]
-    except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
+    except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
         return DensityTier.DEFAULT
     for _ in range(len(cycle)):
         idx = (idx + direction) % len(cycle)
@@ -112,7 +112,7 @@ class _ToolPanelActionsMixin:
         cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
+        except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
             return DensityTier.DEFAULT
         return cycle[(idx + 1) % len(cycle)]
 
@@ -126,7 +126,7 @@ class _ToolPanelActionsMixin:
         cycle = _density_cycle()
         try:
             idx = cycle.index(current)  # type: ignore[arg-type]
-        except ValueError:  # noqa: bare-except
+        except ValueError:  # il-ex-1-exempt: noqa: bare-except
             return DensityTier.DEFAULT
         return cycle[(idx - 1) % len(cycle)]
 
@@ -370,7 +370,7 @@ class _ToolPanelActionsMixin:
             opener = "open" if sys.platform == "darwin" else "xdg-open"
             try:
                 self.app._open_path_action(header, header._full_path, opener, False)  # type: ignore[attr-defined]
-            except Exception:  # OS open failure surfaced to user via _flash_header("open failed")
+            except Exception:  # il-ex-1-exempt: OS open failure surfaced to user via _flash_header("open failed")
                 self._flash_header("open failed", tone="error")
             return
         paths = self._result_paths_for_action()
@@ -482,7 +482,7 @@ class _ToolPanelActionsMixin:
             if existing:
                 try:
                     inp._save_to_history(existing)
-                except Exception:  # history save is best-effort; input proceeds regardless
+                except Exception:  # il-ex-1-exempt: history save is best-effort; input proceeds regardless
                     pass
             inp.value = payload
             inp.focus()
@@ -523,7 +523,7 @@ class _ToolPanelActionsMixin:
         try:
             self.app._svc_commands.initiate_retry()  # type: ignore[attr-defined]
             self._flash_header("retrying…")
-        except Exception:  # retry failure surfaced to user via _flash_header("retry failed")
+        except Exception:  # il-ex-1-exempt: retry failure surfaced to user via _flash_header("retry failed")
             self._flash_header("retry failed")
 
     def action_edit_args(self) -> None:
@@ -541,7 +541,7 @@ class _ToolPanelActionsMixin:
             spec = spec_for(self._tool_name or "")  # type: ignore[attr-defined]
             is_shell = spec.category == ToolCategory.SHELL
             cat_name = spec.category.value
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             is_shell = False
             cat_name = "tool"
         label = self._tool_name or "tool"  # type: ignore[attr-defined]
@@ -582,7 +582,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # CopyableRichLog not yet mounted
+            except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted
                 pass
         if not all_rich:
             self.action_copy_body()
@@ -611,7 +611,7 @@ class _ToolPanelActionsMixin:
                 from hermes_cli.tui.widgets import CopyableRichLog
                 rl = block._body.query_one(CopyableRichLog)
                 all_rich = getattr(rl, "_all_rich", None)
-            except Exception:  # CopyableRichLog not yet mounted
+            except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted
                 pass
         if not all_rich:
             self._flash_header("HTML: nothing to copy", tone="warning")
@@ -623,7 +623,7 @@ class _ToolPanelActionsMixin:
         try:
             css = self.app.get_css_variables()  # type: ignore[attr-defined]
             bg_hex = css.get("app-bg") or css.get("background") or _APP_BG_FALLBACK
-        except Exception as exc:
+        except Exception as exc:  # il-ex-1-exempt: swallow
             _log.debug("app-bg css lookup failed: %s", exc)
             bg_hex = _APP_BG_FALLBACK
         html = html.replace('<pre style="', f'<pre style="background:{bg_hex}; ', 1)
@@ -635,7 +635,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.clipboard_cache import write_html as _write_html
             cache_path = _write_html(html)
             self._flash_header(f"copied HTML{_size_suffix}  (saved {cache_path})")
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             self._flash_header(f"copied HTML{_size_suffix}")
 
     def action_copy_urls(self) -> None:
@@ -666,7 +666,7 @@ class _ToolPanelActionsMixin:
                 self._footer_pane._remediation_row.update("")  # type: ignore[attr-defined]
                 self._footer_pane._remediation_row.remove_class("footer-remediation--error")  # type: ignore[attr-defined]
                 self._footer_pane.remove_class("has-remediation")  # type: ignore[attr-defined]
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_show_context_menu(self) -> None:
@@ -675,7 +675,7 @@ class _ToolPanelActionsMixin:
             return
         try:
             header._show_context_menu_at_center()
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_down(self) -> None:
@@ -685,7 +685,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_down(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_up(self) -> None:
@@ -695,7 +695,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_up(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_page_down(self) -> None:
@@ -707,7 +707,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_down(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_page_up(self) -> None:
@@ -719,7 +719,7 @@ class _ToolPanelActionsMixin:
             page = max(5, (self.size.height or 20) // 2)  # type: ignore[attr-defined]
             for _ in range(page):
                 log.scroll_up(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_top(self) -> None:
@@ -729,7 +729,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_home(animate=False)
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     def action_scroll_body_bottom(self) -> None:
@@ -739,7 +739,7 @@ class _ToolPanelActionsMixin:
             from hermes_cli.tui.widgets import CopyableRichLog
             log = self._block._body.query_one(CopyableRichLog)  # type: ignore[attr-defined]
             log.scroll_end(animate=False)
-        except Exception:  # CopyableRichLog not yet mounted; scroll is a no-op before first render
+        except Exception:  # il-ex-1-exempt: CopyableRichLog not yet mounted; scroll is a no-op before first render
             pass
 
     def action_show_help(self) -> None:
@@ -747,7 +747,7 @@ class _ToolPanelActionsMixin:
         from textual.css.query import NoMatches
         try:
             overlay = self.app.query_one(ToolPanelHelpOverlay)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # overlay not yet mounted; action is a no-op before TUI is fully composed
             return
         is_opening = not overlay.has_class("--visible")
@@ -802,20 +802,20 @@ class _ToolPanelActionsMixin:
         from textual.css.query import NoMatches
         try:
             footer = self.query_one("FooterPane")  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if not footer.has_class("has-actions"):
             return
         try:
             action_row = footer.query_one(".action-row")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         # Show when panel or any descendant currently holds focus.
         # Use app.focused instead of self.has_focus because on_blur fires before
         # Widget._on_blur (which updates has_focus), so has_focus is stale here.
         try:
             focused = self.app.focused  # type: ignore[attr-defined]
-        except Exception:  # app may not be available during teardown; skip silently
+        except Exception:  # il-ex-1-exempt: app may not be available during teardown; skip silently
             return
         has_focus_within = (
             focused is not None and self in focused.ancestors_with_self  # type: ignore[attr-defined]
@@ -826,7 +826,7 @@ class _ToolPanelActionsMixin:
         """Return the content area width in terminal cells."""
         try:
             return self.content_region.width  # type: ignore[attr-defined]
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             return 80
 
     def _is_error(self) -> bool:
@@ -857,7 +857,7 @@ class _ToolPanelActionsMixin:
                 block = self._block  # type: ignore[attr-defined]
                 if block is not None and getattr(block._header, "_path_clickable", False):
                     self.post_message(self.__class__.PathFocused(self))  # type: ignore[attr-defined]
-            except Exception:  # panel may be unmounting; PathFocused message is best-effort
+            except Exception:  # il-ex-1-exempt: panel may be unmounting; PathFocused message is best-effort
                 pass
 
     def on_resize(self, event: "events.Resize") -> None:
@@ -876,7 +876,7 @@ class _ToolPanelActionsMixin:
             return {
                 getattr(b, "name", "") for b in fp._action_row.query(".--action-chip")
             } - {""}
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # Best-effort DOM query during layout; partial DOM is expected at startup
             return set()
 
@@ -1073,7 +1073,7 @@ class _ToolPanelActionsMixin:
             bar = getattr(block, "_omission_bar_bottom", None)
             if isinstance(bar, _OB) and getattr(block, "_omission_bar_bottom_mounted", False):
                 return bar
-        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
         return None
 
@@ -1137,7 +1137,7 @@ class _ToolPanelActionsMixin:
             header = getattr(self._block, "_header", None)  # type: ignore[attr-defined]
             if header is not None:
                 header.flash_success()
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             self.app.notify("Rerun not available", timeout=2)  # type: ignore[attr-defined]
 
     def action_omission_expand(self) -> None:
@@ -1146,7 +1146,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_expand_one()
-        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
 
     def action_omission_collapse(self) -> None:
@@ -1155,7 +1155,7 @@ class _ToolPanelActionsMixin:
             bar = next(iter(self.query(OmissionBar)), None)  # type: ignore[attr-defined]
             if bar is not None:
                 bar._do_collapse_one()
-        except Exception:  # OmissionBar query failed (widget not mounted); None/no-op is safe
+        except Exception:  # il-ex-1-exempt: OmissionBar query failed (widget not mounted); None/no-op is safe
             pass
 
     def _clear_streaming_kind_hint(self, view: "object") -> None:
@@ -1270,7 +1270,7 @@ class _ToolPanelActionsMixin:
         current = view.user_kind_override
         try:
             idx = cycle.index(current)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             _log.debug("user_kind_override=%r not in cycle; snapping to None", current)
             idx = -1
         next_kind = cycle[(idx + 1) % len(cycle)]
@@ -1312,7 +1312,7 @@ class _ToolPanelActionsMixin:
         )
         try:
             idx = cycle.index(current)
-        except ValueError:  # tier not in density cycle (unknown enum value); DEFAULT is safe
+        except ValueError:  # il-ex-1-exempt: tier not in density cycle (unknown enum value); DEFAULT is safe
             idx = -1
         nxt = cycle[(idx + 1) % len(cycle)]
         return nxt.value.lower() if nxt is not None else "auto"

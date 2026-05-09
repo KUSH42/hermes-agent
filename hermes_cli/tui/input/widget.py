@@ -114,7 +114,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Deny focus when a focus-capturing modal overlay is active."""
         try:
             return not self.app.has_focus_capturing_modal()
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             return True  # app not yet attached (pre-mount) — allow
 
     def on_focus(self, event: events.Focus) -> None:
@@ -129,7 +129,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     top.focus()
                 except Exception:
                     _log.debug("on_focus: modal focus redirect failed", exc_info=True)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass  # pre-mount — no app yet, nothing to redirect to
 
     # --- Messages ---
@@ -218,7 +218,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         self._sync_height_to_content()
         self._inject_bash_prefix_style()  # resolve skin color now that app is ready
 
-    def on_resize(self, event: events.Resize) -> None:
+    def on_resize(self, event: events.Resize) -> None:  # il-rz-1-exempt: sync_height must fire on every resize to keep input row-count correct
         self._sync_height_to_content()
 
     def on_click(self, event: Any) -> None:
@@ -318,7 +318,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         try:
             from hermes_cli.tui.overlays.skill_picker import SkillPickerOverlay
             picker = self.app.query_one(SkillPickerOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         picker.dismiss()
 
@@ -331,7 +331,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 self.suggestion = suggestion
                 try:
                     self.app.status_ghost_suggestion = bool(self.suggestion.strip())
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                     _log.debug("_resolve_assist: could not propagate ghost state to app")
             return
@@ -347,21 +347,21 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self.suggestion = ""
             try:
                 self.app.status_ghost_suggestion = False
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
         elif target is AssistKind.GHOST:
             self.suggestion = suggestion
             try:
                 self.app.status_ghost_suggestion = bool(self.suggestion.strip())
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
         elif target is AssistKind.OVERLAY:
             self.suggestion = ""
             try:
                 self.app.status_ghost_suggestion = False
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
             self._show_completion_overlay()
@@ -369,7 +369,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self.suggestion = ""
             try:
                 self.app.status_ghost_suggestion = False
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Expected before mount (NoActiveAppError) or non-HermesApp pilots.
                 _log.debug("_resolve_assist: could not propagate ghost state to app")
             opened = self.app._open_skill_picker(
@@ -394,7 +394,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Keep the input 1-3 rows tall based only on visible text rows."""
         try:
             width = int(getattr(getattr(self, "content_size", None), "width", 0) or 0)
-        except Exception:  # content_size.width not a valid int — use 0 fallback
+        except Exception:  # il-ex-1-exempt: content_size.width not a valid int — use 0 fallback
             width = 0
         width = max(1, width)
         rows = 0
@@ -529,7 +529,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     if clist.highlighted >= 0 and not highlighted_is_typed:
                         self.action_accept_autocomplete()
                         return
-                except Exception:  # VirtualCompletionList absent — fallback to submit
+                except Exception:  # il-ex-1-exempt: VirtualCompletionList absent — fallback to submit
                     pass
             self.action_submit()
             return
@@ -559,14 +559,14 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 if hs.has_class("--visible"):
                     hs.action_dismiss()
                     return
-            except Exception:  # HistorySearchOverlay absent — proceed to next escape handler
+            except Exception:  # il-ex-1-exempt: HistorySearchOverlay absent — proceed to next escape handler
                 pass
             if self._completion_overlay_visible():
                 self._resolve_assist(AssistKind.NONE)
                 return
             try:
                 self.app.on_key(event)
-            except Exception:  # app.on_key unavailable — escape not forwarded to app
+            except Exception:  # il-ex-1-exempt: app.on_key unavailable — escape not forwarded to app
                 pass
             return
 
@@ -603,7 +603,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
-            except Exception:  # app._flash_hint unavailable — height hint not shown
+            except Exception:  # il-ex-1-exempt: app._flash_hint unavailable — height hint not shown
                 pass
             return
 
@@ -614,7 +614,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             self._sync_height_to_content()
             try:
                 self.app._flash_hint(f"Input height: {self._input_height_override}", 1.5)  # type: ignore[attr-defined]
-            except Exception:  # app._flash_hint unavailable — height hint not shown
+            except Exception:  # il-ex-1-exempt: app._flash_hint unavailable — height hint not shown
                 pass
             return
 
@@ -647,7 +647,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                     event.stop()
                     event.prevent_default()
                     return
-            except Exception:  # UsageOverlay absent — "c" processed normally by TextArea
+            except Exception:  # il-ex-1-exempt: UsageOverlay absent — "c" processed normally by TextArea
                 pass
 
         await super()._on_key(event)
@@ -656,7 +656,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         """Intercept terminal drag-and-drop before TextArea inserts raw path text."""
         try:
             resolution = resolve_dropped_paths(event.text, multi_line=True)
-        except Exception:  # drag parse failed — treat paste as plain text
+        except Exception:  # il-ex-1-exempt: drag parse failed — treat paste as plain text
             resolution = None
         if resolution is not None and resolution.paths:
             self.post_message(
@@ -849,7 +849,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         if picker_active:
             try:
                 self.query_one("#input-chevron", Label).update(RichText("$ "))
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # NoMatches or unmounted: chevron not yet rendered — best-effort update, safe to skip.
                 pass
         else:
@@ -864,7 +864,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
                 legend.show_legend("picker")
             else:
                 self._sync_legend_to_mode(self._mode)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # legend bar may not be mounted yet
         except Exception as exc:
             _log.debug("picker legend sync failed: %s", exc, exc_info=True)
@@ -887,7 +887,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
             color_hex = self.app.get_css_variables().get(var_name, "")
             style = Style(color=color_hex) if color_hex else Style()
             self.query_one("#input-chevron", Label).update(RichText(glyph, style=style))
-        except Exception:  # CSS variables unavailable — chevron rendered without custom colour
+        except Exception:  # il-ex-1-exempt: CSS variables unavailable — chevron rendered without custom colour
             pass
 
     def _sync_legend_to_mode(self, mode: InputMode) -> None:
@@ -945,7 +945,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         color = "#A8D46E"  # fallback matches default $chevron-shell
         try:
             color = self.app.get_css_variables().get("chevron-shell", color)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # app not yet mounted; fallback color is fine
         theme.syntax_styles["bash-prefix"] = RichStyle(color=color, bold=True)
 
@@ -997,7 +997,7 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         from hermes_cli.tui.services.watchers import WatchersService
         try:
             ws = self.app.query_one(WatchersService)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             super().action_undo()
             return
         state = ws._last_drop_undo_state

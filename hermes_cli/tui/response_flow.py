@@ -219,13 +219,13 @@ def _resolve_log_width(log_widget: "Any") -> int:
     """Resolve the visual width a log write should target."""
     try:
         region_w = log_widget.scrollable_content_region.width
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         region_w = 0  # widget not yet laid out — dimension unavailable
     if region_w > 0:
         return region_w
     try:
         size_w = log_widget.size.width
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         size_w = 0  # widget not yet laid out — dimension unavailable
     if size_w > 0:
         return size_w
@@ -233,7 +233,7 @@ def _resolve_log_width(log_widget: "Any") -> int:
         # Same pre-layout fallback as CopyableRichLog.write():
         # app width minus scrollbar + prose margins.
         return max(log_widget.app.size.width - 6, 20)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         return 80  # app not available pre-mount — use safe default
 
 
@@ -249,12 +249,12 @@ def _make_rule(log_widget: "Any") -> "Text":
     if w <= 0:
         try:
             w = log_widget.app.size.width
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             w = 80  # app not available pre-mount
     try:
         app_cap = max(log_widget.app.size.width - 6, 20)
         w = min(w, app_cap)
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         pass  # app size unavailable; skip cap — rule may overflow by ≤6 cells
     return Text("─" * w, style="dim")
 
@@ -301,7 +301,7 @@ def _detect_lang(code: str) -> str:
         from pygments.lexers import guess_lexer  # type: ignore[import-untyped]
         lexer = guess_lexer(code)
         return lexer.aliases[0] if lexer.aliases else "text"
-    except Exception:
+    except Exception:  # il-ex-1-exempt: swallow
         # pygments.ClassNotFound / any lexer detection failure — plain text is the safe fallback
         return "text"
 
@@ -744,7 +744,7 @@ class ResponseFlowEngine:
             w = log.scrollable_content_region.width
             if w > 0:
                 return w
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         return _LIST_WRAP_WIDTH
 

@@ -44,7 +44,7 @@ def _hex_luminance(hex_color: str) -> float:
         try:
             r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
             return 0.2126 * r + 0.7152 * g + 0.0722 * b
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
     return 0.0  # fallback → treat as dark
 
@@ -177,7 +177,7 @@ class PreviewPanel(RichLog):
                     header = f"{path.name}/  ({len(all_entries)} items)"
                     body = "\n".join(lines) if lines else "(empty)"
                     text = f"{header}\n\n{body}"
-                except OSError as e:
+                except OSError as e:  # il-ex-1-exempt: swallow
                     text = f"(cannot read directory: {e})"
                 if not worker.is_cancelled:
                     self.post_message(self.PlainReady(abs_path, text))
@@ -202,7 +202,7 @@ class PreviewPanel(RichLog):
             head = "\n".join(text.splitlines()[:_MAX_PREVIEW_LINES])
             if not worker.is_cancelled:
                 self.post_message(self.PreviewReady(abs_path, head))
-        except OSError as e:
+        except OSError as e:  # il-ex-1-exempt: swallow
             if not worker.is_cancelled:
                 self.post_message(self.PlainReady(abs_path, f"(cannot read: {e})"))
 

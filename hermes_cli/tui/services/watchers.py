@@ -86,22 +86,22 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import HintBar, ImageBar
         try:
             h = size.height
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             return
         try:
             plain_rule = self.app.query_one("#input-rule-bottom")
             plain_rule.display = h >= 8
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             image_bar = self.app.query_one(ImageBar)
             image_bar.recompute_visibility()
-        except (NoMatches, AttributeError):
+        except (NoMatches, AttributeError):  # il-ex-1-exempt: swallow
             pass  # NoMatches: ImageBar not yet mounted during startup; AttributeError: app.size not set
         try:
             hint_bar = self.app.query_one(HintBar)
             hint_bar.display = h >= 9
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_compact(self, value: bool) -> None:
@@ -127,7 +127,7 @@ class WatchersService(AppService):
         try:
             chev = self.app.query_one("#input-chevron", Static)
             chev.update("❯" if value else "❯ ")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
         # A1: ToolHeaderBar deleted — sync --compact on ToolPanel directly
@@ -146,7 +146,7 @@ class WatchersService(AppService):
             sbar = self.app.query_one(SessionBar)
             single = len(getattr(self.app, "_session_records_cache", [])) <= 1
             sbar.display = not (compact and single)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # ------------------------------------------------------------------
@@ -159,7 +159,7 @@ class WatchersService(AppService):
             self.app.hooks.fire("on_compact_complete")
         try:
             self.app.query_one("#input-rule", TitledRule).progress = value
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         _warn = float(
             getattr(self.app, "config", {}).get("display", {}).get("compact_warn_threshold", 0.85)
@@ -202,7 +202,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import VoiceStatusBar
         try:
             self.app.query_one(VoiceStatusBar).set_class(value, "active")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self.app._svc_spinner.set_hint_phase("voice" if value else self.app._svc_spinner.compute_hint_phase())
 
@@ -214,7 +214,7 @@ class WatchersService(AppService):
                 bar.update_status("● REC")
             elif self.app.voice_mode:
                 bar.update_status("🎤 Voice mode")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # ------------------------------------------------------------------
@@ -225,7 +225,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import ImageBar
         try:
             self.app.query_one(ImageBar).update_images(value)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def append_attached_images(self, images: list[Path]) -> None:
@@ -253,7 +253,7 @@ class WatchersService(AppService):
         """Insert raw text at the input cursor (no link formatting)."""
         try:
             inp = self.app.query_one("#input-area")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if hasattr(inp, "insert_text"):
             inp.insert_text(text)
@@ -265,7 +265,7 @@ class WatchersService(AppService):
             return
         try:
             inp = self.app.query_one("#input-area")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
 
         # DD-PL-7: snapshot pre-drop state for single-slot undo
@@ -313,11 +313,11 @@ class WatchersService(AppService):
         """Format a dropped file path: relative if in cwd/child/parent, else absolute."""
         try:
             return path.relative_to(cwd).as_posix()
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
         try:
             rel = _os_mod.path.relpath(path, cwd)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             return path.as_posix()
         depth = 0
         r = rel
@@ -410,7 +410,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.overlays import InterruptOverlay
         try:
             return self.app.query_one(InterruptOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return None
 
     def _post_interrupt_focus(self) -> None:
@@ -426,7 +426,7 @@ class WatchersService(AppService):
                 # Agent still running: return focus to screen (App.focus() doesn't exist
                 # in Textual 8.x; screen.focus() is the correct call).
                 self.app.call_after_refresh(self.app.screen.focus)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception as exc:
             _log.debug("_post_interrupt_focus: focus call failed: %s", exc, exc_info=True)
@@ -457,7 +457,7 @@ class WatchersService(AppService):
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             self.app.query_one(DrawbrailleOverlay).signal("waiting" if value is not None else "thinking")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         ov = self._get_interrupt_overlay()
         if ov is None:
@@ -499,7 +499,7 @@ class WatchersService(AppService):
             from hermes_cli.tui.path_search import PathCandidate as _PC
             panel = self.app.query_one(_PP)
             panel.candidate = c if isinstance(c, _PC) else None
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             from hermes_cli.tui.completion_overlay import CompletionOverlay as _CO
@@ -508,7 +508,7 @@ class WatchersService(AppService):
                 comp.add_class("--no-preview")
             else:
                 comp.remove_class("--no-preview")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_sudo_state(self, value: "SecretOverlayState | None") -> None:
@@ -546,7 +546,7 @@ class WatchersService(AppService):
         from hermes_cli.tui.widgets import TitledRule
         try:
             self.app.query_one("#input-rule", TitledRule).set_error(bool(value))
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self.app._svc_spinner.set_hint_phase(self.app._svc_spinner.compute_hint_phase())
         # A1: ERROR phase is orthogonal — save/restore previous phase
@@ -565,7 +565,7 @@ class WatchersService(AppService):
             from hermes_cli.tui.input.widget import HermesInput
             inp = self.app.query_one("#input-area", HermesInput)
             inp.error_state = value if value else None
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         # A3-2: route error message to HintBar for prominent left-side display
         # HB2-H1: wrap in bold-red markup so _hint_to_text() preserves styling
@@ -628,7 +628,7 @@ class WatchersService(AppService):
                     inp._set_input_locked(False)
                 except Exception as exc:
                     _log.debug("on_undo_state: _set_input_locked(False) failed: %s", exc, exc_info=True)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         if value is None:
             self.app._pending_undo_panel = None

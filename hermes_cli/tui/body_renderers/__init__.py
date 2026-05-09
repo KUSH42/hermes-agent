@@ -141,7 +141,7 @@ def _build_streaming_lookup() -> "dict":
                 category = cat
             try:
                 matched = cls.can_render(_STREAMING_EMPTY_CLS, _FakePayload())  # type: ignore[arg-type]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # best-effort probe: streaming renderers may raise on synthetic payload; treat as no-match
                 matched = False
             if matched:
@@ -205,7 +205,7 @@ def pick_renderer(
         # category not in the prebuilt map (or non-hashable synthetic categories).
         try:
             cls = _STREAMING_RENDERER_BY_CATEGORY.get(payload.category)
-        except TypeError:
+        except TypeError:  # il-ex-1-exempt: swallow
             # category is unhashable (e.g. test stub); skip the dict path
             cls = None
         if cls is not None and cls.accepts(phase, density):

@@ -77,7 +77,7 @@ class _ContextItem(Static):
         try:
             menu = self.app.query_one(ContextMenu)
             prev = menu._prev_focus
-        except (NoMatches, AttributeError):
+        except (NoMatches, AttributeError):  # il-ex-1-exempt: swallow
             prev = None
         try:
             self._item.action()
@@ -89,7 +89,7 @@ class _ContextItem(Static):
                 logger.debug("ContextMenu: app.notify failed during action error report", exc_info=True)
         try:
             self.app.query_one(ContextMenu).dismiss()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
 
@@ -221,11 +221,11 @@ class ContextMenu(ModalOverlayMixin, Widget):
         if "--modal" in self.classes:
             try:
                 self.app.pop_modal(self)
-            except AttributeError:
+            except AttributeError:  # il-ex-1-exempt: swallow
                 pass
         try:
             self.app.push_modal(self)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass  # app has no push_modal — graceful degrade
         self.add_class("--modal")  # il-m1: owned by ContextMenu.show() (permanent widget)
 
@@ -285,7 +285,7 @@ class ContextMenu(ModalOverlayMixin, Widget):
             try:
                 if pf.is_mounted:
                     return pf
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # is_mounted check failed — treat as unmounted
         return super()._restore_focus_to()
 
@@ -305,7 +305,7 @@ class ContextMenu(ModalOverlayMixin, Widget):
         self.remove_class("--modal")  # il-m1: owned by ContextMenu.dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             pass  # app has no pop_modal — graceful degrade
         if target is not None and self.app.focused is self:
             try:

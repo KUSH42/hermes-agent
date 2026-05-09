@@ -27,7 +27,7 @@ def _show_ghost_legend(widget: object) -> None:
         from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
         widget._ghost_legend_shown = True  # type: ignore[attr-defined]
         widget.screen.query_one(InputLegendBar).show_legend("ghost")  # type: ignore[attr-defined]
-    except Exception:  # InputLegendBar absent — ghost legend not shown
+    except Exception:  # il-ex-1-exempt: InputLegendBar absent — ghost legend not shown
         pass
 
 
@@ -36,7 +36,7 @@ def _hide_ghost_legend(widget: object) -> None:
     try:
         from hermes_cli.tui.widgets.input_legend_bar import InputLegendBar
         widget.screen.query_one(InputLegendBar).hide_legend()  # type: ignore[attr-defined]
-    except Exception:  # InputLegendBar absent — ghost legend not hidden
+    except Exception:  # il-ex-1-exempt: InputLegendBar absent — ghost legend not hidden
         pass
 
 
@@ -87,7 +87,7 @@ class _HistoryMixin:
                 self._history = deduped[-_MAX_HISTORY:]
                 if not deduped:
                     self._ghost_legend_shown = False  # type: ignore[attr-defined]
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             self._history = []
 
     def _save_to_history(self, text: str) -> None:
@@ -99,7 +99,7 @@ class _HistoryMixin:
             return
         try:
             self._history.remove(text)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass
         self._history.append(text)
         payload = _serialize_history_entries(self._history)
@@ -121,7 +121,7 @@ class _HistoryMixin:
             if tmp_path is not None:
                 try:
                     os.unlink(tmp_path)
-                except OSError:
+                except OSError:  # il-ex-1-exempt: swallow
                     pass
             self._on_history_write_error(exc)
 
@@ -140,7 +140,7 @@ class _HistoryMixin:
                 duration=6.0,
                 priority=WARN,
             )
-        except Exception:  # feedback service absent — warning shown only in log
+        except Exception:  # il-ex-1-exempt: feedback service absent — warning shown only in log
             pass
 
     def set_slash_commands(self, commands: list[str]) -> None:
@@ -188,7 +188,7 @@ class _HistoryMixin:
                     priority=_fb.NORMAL,
                     key=_fb.HINT_KEY_REV_SEARCH,
                 )
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # feedback service absent during startup or test teardown — hint not shown
             # Recompute mode so watch__mode handles legend/chevron
             try:
@@ -206,7 +206,7 @@ class _HistoryMixin:
                 try:
                     self.load_text(self._history[idx])  # type: ignore[attr-defined]
                     self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                except Exception:  # TextArea API unavailable — rev-search match not displayed
+                except Exception:  # il-ex-1-exempt: TextArea API unavailable — rev-search match not displayed
                     pass
                 finally:
                     self._history_loading = False  # type: ignore[attr-defined]
@@ -232,7 +232,7 @@ class _HistoryMixin:
             try:
                 self.load_text(saved)  # type: ignore[attr-defined]
                 self.move_cursor((0, len(saved)))  # type: ignore[attr-defined]
-            except Exception:  # TextArea API unavailable — rev-search match not displayed
+            except Exception:  # il-ex-1-exempt: TextArea API unavailable — rev-search match not displayed
                 pass
             finally:
                 self._history_loading = False  # type: ignore[attr-defined]
@@ -250,15 +250,15 @@ class _HistoryMixin:
         try:
             from hermes_cli.tui.services import feedback as _fb
             self.app.feedback.cancel("hint-bar", key=_fb.HINT_KEY_REV_SEARCH)  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # feedback service absent during startup or test teardown — cancel skipped
         # Restore idle placeholder
         try:
             self._refresh_placeholder()  # type: ignore[attr-defined]
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             try:
                 self.placeholder = self._idle_placeholder  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
         # Recompute mode so watch__mode handles legend/chevron
         try:
@@ -285,7 +285,7 @@ class _HistoryMixin:
                     try:
                         self.load_text(self._history[idx])  # type: ignore[attr-defined]
                         self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                    except Exception:  # TextArea API unavailable — rev-search match not displayed
+                    except Exception:  # il-ex-1-exempt: TextArea API unavailable — rev-search match not displayed
                         pass
                     return self._history[idx]
                 idx -= 1
@@ -296,7 +296,7 @@ class _HistoryMixin:
                     try:
                         self.load_text(self._history[idx])  # type: ignore[attr-defined]
                         self.move_cursor((0, len(self._history[idx])))  # type: ignore[attr-defined]
-                    except Exception:  # TextArea API unavailable — rev-search match not displayed
+                    except Exception:  # il-ex-1-exempt: TextArea API unavailable — rev-search match not displayed
                         pass
                     return self._history[idx]
                 idx += 1

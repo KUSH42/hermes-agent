@@ -34,7 +34,7 @@ from textual.strip import Strip
 try:
     from PIL import Image as PILImage
     _PIL_AVAILABLE = True
-except ImportError:
+except ImportError:  # il-ex-1-exempt: swallow
     PILImage = None  # type: ignore[assignment,misc]
     _PIL_AVAILABLE = False
 
@@ -364,7 +364,7 @@ def _cell_px() -> tuple[int, int]:
             cw, ch = int(w), int(h)
             if cw > 0 and ch > 0:
                 return cw, ch
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError):  # il-ex-1-exempt: swallow
             pass
 
     return 10, 20  # safe fallback

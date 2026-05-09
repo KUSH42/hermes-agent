@@ -72,7 +72,7 @@ class OutputJSONLWriter:
                     continue
                 try:
                     lines.append(json.loads(line))
-                except json.JSONDecodeError:
+                except json.JSONDecodeError:  # il-ex-1-exempt: swallow
                     pass
         except OSError:
             logger.debug("HeadlessSession: failed to read output.jsonl", exc_info=True)

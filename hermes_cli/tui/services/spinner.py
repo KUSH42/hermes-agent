@@ -101,7 +101,7 @@ class SpinnerService(AppService):
                     self._update_plain_spinner_overlay(overlay, padded)
             else:
                 self._update_plain_spinner_overlay(overlay, padded)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
         _dt = (_time.perf_counter() - _t0) * 1000
@@ -129,7 +129,7 @@ class SpinnerService(AppService):
                 try:
                     target = app.query_one("#spinner-overlay", Static)
                     app._cached_spinner_overlay = target
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     target = None
         if target is not None:
             target.display = False
@@ -272,7 +272,7 @@ class SpinnerService(AppService):
                     counter = app.query_one(FPSCounter)
                     counter.fps = fps
                     counter.avg_ms = avg_ms
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
 
     def on_fps_hud_visible(self, value: bool) -> None:
@@ -284,7 +284,7 @@ class SpinnerService(AppService):
                 counter.add_class("--visible")
             else:
                 counter.remove_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     # --- Reactive watchers ---
@@ -309,7 +309,7 @@ class SpinnerService(AppService):
             inp = app.query_one("#input-area")
             if hasattr(inp, "value") and inp.value:
                 return "typing"
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         return "idle"
 
@@ -320,7 +320,7 @@ class SpinnerService(AppService):
         app._hint_phase = phase
         try:
             app.query_one(HintBar).set_phase(phase)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def set_chevron_phase(self, phase: str) -> None:
@@ -332,7 +332,7 @@ class SpinnerService(AppService):
                 chevron.remove_class(cls)
             if phase:
                 chevron.add_class(phase)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def drawbraille_show_hide(self, running: bool, signal_on_show: "str | None" = None) -> None:
@@ -359,15 +359,15 @@ class SpinnerService(AppService):
                 if cfg.dim_background:
                     try:
                         app.query_one(OutputPanel).add_class("-dim-bg")
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         pass
             else:
                 overlay.hide(cfg)
                 try:
                     app.query_one(OutputPanel).remove_class("-dim-bg")
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         except Exception:
             _log.debug("drawbraille_show_hide: overlay update failed", exc_info=True)

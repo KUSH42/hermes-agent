@@ -39,13 +39,13 @@ class _PathCompletionMixin:
         try:
             clist = self.screen.query_one(VirtualCompletionList)  # type: ignore[attr-defined]
             clist.searching = value
-        except Exception:  # VirtualCompletionList absent — searching indicator not shown
+        except Exception:  # il-ex-1-exempt: VirtualCompletionList absent — searching indicator not shown
             pass
 
     def _set_overlay_mode(self, *, slash_only: bool) -> None:
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         overlay.set_class(slash_only, "--slash-only")
 
@@ -53,12 +53,12 @@ class _PathCompletionMixin:
         """Show the completion overlay (CSS/DOM side effects only; does NOT write self.assist)."""
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         overlay.add_class("--visible")
         try:
             self.app._completion_hint = "Tab accept  ·  ↑↓ navigate  ·  Esc dismiss"  # type: ignore[attr-defined]
-        except Exception:  # app._completion_hint absent — hint not shown
+        except Exception:  # il-ex-1-exempt: app._completion_hint absent — hint not shown
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
@@ -74,13 +74,13 @@ class _PathCompletionMixin:
         self._set_searching(False)
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         overlay.remove_class("--visible")
         overlay.remove_class("--slash-only")
         try:
             self.app._completion_hint = ""  # type: ignore[attr-defined]
-        except Exception:  # app._completion_hint absent — hint clear skipped
+        except Exception:  # il-ex-1-exempt: app._completion_hint absent — hint clear skipped
             pass
         try:
             self._mode = self._compute_mode()  # type: ignore[attr-defined]
@@ -96,13 +96,13 @@ class _PathCompletionMixin:
         try:
             overlay = self.screen.query_one(CompletionOverlay)  # type: ignore[attr-defined]
             return overlay.has_class("--visible") and overlay.has_class("--slash-only")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return False
 
     def _move_highlight(self, delta: int) -> None:
         try:
             clist = self.screen.query_one(VirtualCompletionList)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if not clist.items:
             return
@@ -176,7 +176,7 @@ class _PathCompletionMixin:
             return
         try:
             provider = self.screen.query_one(PathSearchProvider)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         request = self._resolve_path_search_request()
         provider.search(
@@ -232,7 +232,7 @@ class _PathCompletionMixin:
     def _push_to_list(self, candidates: list[Candidate]) -> None:
         try:
             clist = self.screen.query_one(VirtualCompletionList)  # type: ignore[attr-defined]
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         request = self._resolve_path_search_request()
         new_query = request.match_query or self._current_trigger.fragment

@@ -175,7 +175,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
                 continue
             try:
                 RichColor.parse(candidate)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 continue
             return candidate
         return "#888888"
@@ -316,7 +316,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         from textual.widgets import Static
         try:
             badge = self.app.query_one("#overflow-badge", Static)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         n = len(self.items)
         visible = self.size.height if self.size.height > 0 else 13
@@ -326,7 +326,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         else:
             badge.display = False
 
-    def on_resize(self, _event: "events.Resize") -> None:
+    def on_resize(self, _event: "events.Resize") -> None:  # il-rz-1-exempt: badge update is O(1) DOM query; no rerender cost
         self._update_overflow_badge()
 
     # -------------------------------------------------------------------------

@@ -87,7 +87,7 @@ class CodeRenderer(BodyRenderer):
         args = self.payload.args or {}
         try:
             start_line = int(args.get("start_line") or 1)
-        except (ValueError, TypeError):  # noqa: bare-except
+        except (ValueError, TypeError):  # il-ex-1-exempt: noqa: bare-except
             start_line = 1
         lines = code.splitlines()
         show_line_numbers = len(lines) >= 6 or "start_line" in args

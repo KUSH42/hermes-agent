@@ -198,13 +198,13 @@ class AssistantNameplate(Widget):
         # A2: watch status_phase to pause/resume pulse
         try:
             self.watch(self.app, "status_phase", self._on_phase_change)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         # A3-1: register error hooks (independent of _effects_enabled)
         try:
             self.app.hooks.register("on_error_set",   self._on_error_set,   owner=self, priority=100, name="nameplate_error_set")
             self.app.hooks.register("on_error_clear", self._on_error_clear, owner=self, priority=100, name="nameplate_error_clear")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # best-effort UI update; widget may not be mounted
             pass
 
@@ -222,7 +222,7 @@ class AssistantNameplate(Widget):
         self._stop_all_idle_timers()
         try:
             self.app.hooks.unregister_owner(self)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # best-effort UI update; widget may not be mounted
             pass
 
@@ -404,7 +404,7 @@ class AssistantNameplate(Widget):
         if self._linked_rule is not None:
             try:
                 self._linked_rule.refresh()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # best-effort turn-boundary cleanup; widget may be absent
                 pass
 
@@ -450,7 +450,7 @@ class AssistantNameplate(Widget):
         try:
             if self.app.has_class("reduced-motion"):
                 return  # static nameplate in reduced-motion mode
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         self._active_phase += 0.11  # ~1.9 s full cycle @ 30 fps
 
@@ -733,7 +733,7 @@ class AssistantNameplate(Widget):
             elif phase == Phase.IDLE:
                 pass  # transition_to_idle() drives IDLE transitions
             # Phase.ERROR handled by A3 (error-prominence spec)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # best-effort status update; widget may be absent
             pass
 

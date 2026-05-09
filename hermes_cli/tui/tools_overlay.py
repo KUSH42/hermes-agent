@@ -424,7 +424,7 @@ ToolsScreen > #prefix-legend.--hidden {
             self.app._t_rebind_hint_shown = True
             try:
                 self.app._flash_hint("tree/timeline now [Shift+T]", 1.5)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
         await self._rebuild()
         # Start auto-refresh if any tool is still in-progress
@@ -473,7 +473,7 @@ ToolsScreen > #prefix-legend.--hidden {
         header_text.append(pip, style=pip_style)
         try:
             self.query_one("#tools-header", Static).update(header_text)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         # Advance spinner and rebuild rows when any tool is in-progress
         has_in_progress = any(e.get("dur_ms") is None for e in self._filtered)
@@ -509,7 +509,7 @@ ToolsScreen > #prefix-legend.--hidden {
         self._rebuild_in_flight = False
         try:
             listview = self.query_one("#tools-list", ListView)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             return
         await listview.clear()
         # Update Gantt scale header
@@ -518,7 +518,7 @@ ToolsScreen > #prefix-legend.--hidden {
             label_w, gantt_w = _split_flex(flex)
             scale = _gantt_scale_text(max(self._turn_total_s, 0.001), gantt_w, label_w)
             self.query_one("#gantt-scale", Static).update(scale)
-        except Exception:  # gantt scale widget absent — header not updated
+        except Exception:  # il-ex-1-exempt: gantt scale widget absent — header not updated
             pass
         if not self._filtered:
             await listview.append(ListItem(Static(Text("  no matching tool calls", style="dim"))))
@@ -556,7 +556,7 @@ ToolsScreen > #prefix-legend.--hidden {
         """Rebuild interactive pill buttons for category filtering."""
         try:
             pills_row = self.query_one("#filter-pills-row", Horizontal)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             return
         # Remove old buttons
         for btn in list(pills_row.children):
@@ -635,7 +635,7 @@ ToolsScreen > #prefix-legend.--hidden {
             return
         try:
             legend = self.query_one("#prefix-legend", Static)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             return
         value = filter_value.lower()
         if not value:
@@ -671,7 +671,7 @@ ToolsScreen > #prefix-legend.--hidden {
         try:
             fi = self.query_one("#filter-input", Input)
             fi.display = False
-        except Exception:  # filter-input widget absent — display state not changed
+        except Exception:  # il-ex-1-exempt: filter-input widget absent — display state not changed
             pass
         self.dismiss_overlay()
 
@@ -689,7 +689,7 @@ ToolsScreen > #prefix-legend.--hidden {
             fi = self.query_one("#filter-input", Input)
             fi.value = ""
             fi.display = False
-        except Exception:  # filter-input widget absent — filter input clear skipped
+        except Exception:  # il-ex-1-exempt: filter-input widget absent — filter input clear skipped
             pass
         await self._apply_filter()
         await self._rebuild()
@@ -718,7 +718,7 @@ ToolsScreen > #prefix-legend.--hidden {
                 from textual.css.query import NoMatches
                 try:
                     panel = self.app.query_one(f"#{panel_id}")
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     self.app._flash_hint("⚠  panel not found", 2.0)
                     return
                 # Expand enclosing ToolGroup if collapsed
@@ -728,13 +728,13 @@ ToolsScreen > #prefix-legend.--hidden {
                         if isinstance(ancestor, _TG) and ancestor.collapsed:
                             ancestor.collapsed = False
                             break
-                except Exception:  # ancestor query failed — tool group stays collapsed
+                except Exception:  # il-ex-1-exempt: ancestor query failed — tool group stays collapsed
                     pass
                 # Expand own body if collapsed
                 try:
                     if hasattr(panel, "_body") and not panel._body.has_class("expanded"):
                         panel.toggle()
-                except Exception:  # panel toggle failed — body expansion skipped
+                except Exception:  # il-ex-1-exempt: panel toggle failed — body expansion skipped
                     pass
                 panel.scroll_visible(animate=False)
                 if self.app.browse_mode:
@@ -745,9 +745,9 @@ ToolsScreen > #prefix-legend.--hidden {
                             if h.parent is panel or (hasattr(h, "parent") and getattr(h.parent, "parent", None) is panel):
                                 self.app.browse_index = i
                                 break
-                    except Exception:  # scroll or browse_mode unavailable — panel jump without scroll
+                    except Exception:  # il-ex-1-exempt: scroll or browse_mode unavailable — panel jump without scroll
                         pass
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass
 
         self.app.call_later(_after_pop)
@@ -774,9 +774,9 @@ ToolsScreen > #prefix-legend.--hidden {
             }
             path.write_text(json.dumps(payload, indent=2, default=str))
             self.app._flash_hint(f"✓ exported → {path}", 3.0)
-        except PermissionError as e:
+        except PermissionError as e:  # il-ex-1-exempt: swallow
             self.app._flash_hint(f"✗ export failed: permission denied — {e}", 3.0)
-        except OSError as e:
+        except OSError as e:  # il-ex-1-exempt: swallow
             self.app._flash_hint(f"✗ export failed: {e}", 3.0)
 
     async def action_refresh(self) -> None:
@@ -812,7 +812,7 @@ ToolsScreen > #prefix-legend.--hidden {
         sort_label = _SORT_LABELS.get(self._sort_mode, "chrono")
         try:
             self.app._flash_hint(f"sort: {sort_label}", 1.5)
-        except Exception:  # app._flash_hint unavailable — sort hint not shown
+        except Exception:  # il-ex-1-exempt: app._flash_hint unavailable — sort hint not shown
             pass
 
     def action_toggle_view(self) -> None:
@@ -820,14 +820,14 @@ ToolsScreen > #prefix-legend.--hidden {
         # DU-6: explicit Shift+T press also suppresses the rebind hint.
         try:
             self.app._t_rebind_hint_shown = True
-        except Exception:  # app attribute absent — rebind hint flag not set
+        except Exception:  # il-ex-1-exempt: app attribute absent — rebind hint flag not set
             pass
         self._tree_view = not self._tree_view
         self.call_after_refresh(self._rebuild)
         label = "tree" if self._tree_view else "timeline"
         try:
             self.app._flash_hint(f"view: {label}", 1.5)
-        except Exception:  # app._flash_hint unavailable — view-toggle hint not shown
+        except Exception:  # il-ex-1-exempt: app._flash_hint unavailable — view-toggle hint not shown
             pass
 
     def _get_ordered_records(self, records: list[dict]) -> list[tuple[dict, int]]:

@@ -168,7 +168,7 @@ class OutputPanel(ScrollableContainer):
         """S1-B: update status_active_file_offscreen based on scroll position."""
         try:
             app = self.app
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # widget absent or unmounted; return early is correct
             return
         active_file = getattr(app, "status_active_file", "")
@@ -265,7 +265,7 @@ class OutputPanel(ScrollableContainer):
         """Sync badge visibility and pending count display."""
         try:
             badge = self.query_one(OutputPanelScrollBadge)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return  # not yet mounted; expected during startup
         if self.scroll_state == ScrollState.PINNED:
             self._anchored_pending_count = 0
@@ -310,7 +310,7 @@ class OutputPanel(ScrollableContainer):
         for cls in (LiveLineWidget, ThinkingWidget):
             try:
                 return self.query_one(cls)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 continue
         return None
 
@@ -338,7 +338,7 @@ class OutputPanel(ScrollableContainer):
                     len(self.children),
                 )
                 self.mount(panel, after=last_ump)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 # No UMP yet — fall back to before LiveLineWidget/ThinkingWidget.
                 anchor = self._live_anchor()
                 _log.debug(
@@ -375,7 +375,7 @@ class OutputPanel(ScrollableContainer):
         for child in to_remove:
             try:
                 child.remove()
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # widget may already be mid-removal from a previous call
 
     def flush_live(self) -> None:
@@ -389,7 +389,7 @@ class OutputPanel(ScrollableContainer):
             tw.deactivate()
             # D-4: clear the layout reserve row after the 150ms fade-out timer fires
             self.set_timer(0.20, lambda: _clear_thinking_reserve(tw))
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         live = self.live_line
         live.flush()  # drain _char_queue before reading _buf (no-op when typewriter disabled)
@@ -436,7 +436,7 @@ class OutputPanel(ScrollableContainer):
         """
         try:
             viewport_rows = max(1, self.app.screen.size.height)
-        except AttributeError:
+        except AttributeError:  # il-ex-1-exempt: swallow
             # screen is None before the app mounts (common in unit tests); 999
             # acts as "infinite viewport" so no pressure-induced tier change fires.
             _log.debug("_compute_viewport_pressure: screen not yet mounted, using sentinel")
@@ -479,7 +479,7 @@ class OutputPanel(ScrollableContainer):
             try:
                 from hermes_cli.tui.tool_category import _CATEGORY_DEFAULTS
                 threshold = _CATEGORY_DEFAULTS[block._category].default_collapsed_lines
-            except Exception:  # category unavailable pre-mount; use safe default
+            except Exception:  # il-ex-1-exempt: category unavailable pre-mount; use safe default
                 threshold = 20
             inputs = LayoutInputs(
                 phase=phase,
@@ -593,7 +593,7 @@ class OutputPanelScrollBadge(Static):
     def render(self) -> str:
         try:
             panel = self.app.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return ""
         if panel.scroll_state == ScrollState.ANCHORED:
             n = panel._anchored_pending_count

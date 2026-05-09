@@ -131,7 +131,7 @@ def _size_suffix(path: Path, budget_spare: int) -> str:
     try:
         from hermes_cli.tui.streaming_microcopy import _human_size
         return f" ({_human_size(path.stat().st_size)})"
-    except OSError:
+    except OSError:  # il-ex-1-exempt: swallow
         return ""
 
 
@@ -140,7 +140,7 @@ def _size_str_for_path(path: Path) -> str:
     try:
         from hermes_cli.tui.streaming_microcopy import _human_size
         return _human_size(path.stat().st_size)
-    except OSError:
+    except OSError:  # il-ex-1-exempt: swallow
         return ""
 
 
@@ -420,7 +420,7 @@ class InlineThumbnail(TooltipMixin, Widget):
         try:
             rel = p.relative_to(cwd)
             self._tooltip_text = rel.as_posix()
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             self._tooltip_text = p.as_posix()
         self._load_strips()
 
@@ -512,7 +512,7 @@ class AttachmentBar(Widget):
         p = Path(path).resolve()
         try:
             mtime = int(p.stat().st_mtime)
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             mtime = 0
         return (str(p), mtime)
 

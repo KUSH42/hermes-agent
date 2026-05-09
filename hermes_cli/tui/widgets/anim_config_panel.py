@@ -220,7 +220,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("AnimConfigPanel.show: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
         self.focus()
@@ -304,7 +304,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
     def _get_overlay(self) -> "DrawbrailleOverlay | None":
         try:
             return self.app.query_one(DrawbrailleOverlay)
-        except (NoMatches, Exception):
+        except (NoMatches, Exception):  # il-ex-1-exempt: swallow
             return None
 
     # ── rendering ──────────────────────────────────────────────────────────
@@ -343,7 +343,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
         """Update the Static child with current field state."""
         try:
             self.query_one("#anim-config-body", Static).update(self._build_text())
-        except (NoMatches, Exception):
+        except (NoMatches, Exception):  # il-ex-1-exempt: swallow
             pass
 
     def _format_field_value(self, f: _PanelField) -> str:
@@ -379,7 +379,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
         self.remove_class("--visible")
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("AnimConfigPanel.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -397,12 +397,12 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
             io = self.app.query_one(_IO)
             if io.has_class("--visible"):
                 return
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # InterruptOverlay absent (NoMatches) or app torn down — proceed with refocus
             pass
         try:
             self.call_after_refresh(self.focus)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # call_after_refresh unavailable before mount or after detach — focus deferral skipped
             pass
 
@@ -485,7 +485,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
             return
         try:
             cur = f.choices.index(str(f.value))
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             cur = 0
         idx = (cur + direction) % len(f.choices)
         f.value = f.choices[idx]
@@ -590,7 +590,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
                 ov = self._get_overlay()
                 if ov is not None:
                     ov.hide(_dbo._overlay_config())
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # reactive not yet initialized; slider value skipped
             pass
 
@@ -610,7 +610,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
             def _clear_hint() -> None:
                 try:
                     self.app.query_one(HintBar).hint = ""  # type: ignore[attr-defined]
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass  # HintBar removed before timer fired — harmless
 
             self.app.set_timer(2.0, _clear_hint)  # type: ignore[attr-defined]
@@ -623,7 +623,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
             vals = _fields_to_dict(self._fields)
             try:
                 self.app._svc_commands.persist_anim_config(vals)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # Fallback: direct write
                 from hermes_cli.config import read_raw_config, save_config, _set_nested
                 cfg = read_raw_config()
@@ -636,11 +636,11 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
                 def _clear_hint() -> None:
                     try:
                         self.app.query_one(HintBar).hint = ""  # type: ignore[attr-defined]
-                    except NoMatches:
+                    except NoMatches:  # il-ex-1-exempt: swallow
                         pass  # hint bar removed before timer fired; skip
 
                 self.app.set_timer(2.0, _clear_hint)  # type: ignore[attr-defined]
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # HintBar absent (e.g. minimal test harness); hint update skipped
             try:
                 ov = self._get_overlay()
@@ -650,7 +650,7 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
                         ov.show(cfg)
                     elif not cfg.enabled:
                         ov.hide(cfg)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # slider value out of range or widget absent; step skipped
                 pass
         except Exception as exc:
@@ -722,7 +722,7 @@ class _GalleryPreview(Widget):
             if hasattr(self._engine, "on_mount"):
                 try:
                     self._engine.on_mount(self)  # type: ignore[arg-type]
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     # color preview widget absent; color update skipped
                     pass
         else:
@@ -805,7 +805,7 @@ class AnimGalleryOverlay(ModalOverlayMixin, Widget):
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # il-m1: register in arbiter stack
-        except AttributeError:  # push_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: push_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("AnimGalleryOverlay.show: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show (permanent widget override)
         self._refresh_list()
@@ -840,14 +840,14 @@ class AnimGalleryOverlay(ModalOverlayMixin, Widget):
         lines.append("  ↑↓ navigate · Enter select · P preview · Esc close")
         try:
             self.query_one("#gallery-list", Static).update("\n".join(lines))
-        except (NoMatches, Exception):
+        except (NoMatches, Exception):  # il-ex-1-exempt: swallow
             pass
 
     def _update_preview(self) -> None:
         try:
             key = self._engine_list[self._focus_idx]
             self.query_one(_GalleryPreview).set_engine(key)
-        except (NoMatches, IndexError, Exception):
+        except (NoMatches, IndexError, Exception):  # il-ex-1-exempt: swallow
             pass
 
     def action_prev_item(self) -> None:
@@ -866,16 +866,16 @@ class AnimGalleryOverlay(ModalOverlayMixin, Widget):
             try:
                 ov = self.app.query_one(DrawbrailleOverlay)
                 ov.animation = key
-            except (NoMatches, Exception):
+            except (NoMatches, Exception):  # il-ex-1-exempt: swallow
                 pass
             try:
                 import hermes_cli.tui.drawbraille_overlay as _dbo
                 cfg = _dbo._overlay_config()
                 cfg.animation = key
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 # index out of range for current preset list; selection no-op
                 pass
-        except IndexError:
+        except IndexError:  # il-ex-1-exempt: swallow
             pass
         self.action_dismiss()
 
@@ -892,7 +892,7 @@ class AnimGalleryOverlay(ModalOverlayMixin, Widget):
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
         try:
             self.app.pop_modal(self)  # il-m1: deregister from arbiter stack
-        except AttributeError:  # pop_modal absent in tests or pre-patch HermesApp — graceful degrade
+        except AttributeError:  # il-ex-1-exempt: pop_modal absent in tests or pre-patch HermesApp — graceful degrade
             _log.debug("AnimGalleryOverlay.dismiss_overlay: app has no pop_modal")
         if target is not None:
             try:
@@ -921,18 +921,18 @@ class AnimGalleryOverlay(ModalOverlayMixin, Widget):
                         ov2.show(pre_cfg)
                     else:
                         ov2.hide(pre_cfg)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass  # overlay already gone; skip silently
 
             self.app.set_timer(5.0, _revert)  # type: ignore[attr-defined]
-        except (NoMatches, Exception):
+        except (NoMatches, Exception):  # il-ex-1-exempt: swallow
             pass  # overlay absent or app not ready; preview is best-effort
 
     def action_open_config(self) -> None:
         self.action_dismiss()  # was: self.remove_class("--visible") — bypassed pop_modal
         try:
             self.app.query_one(AnimConfigPanel).show()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # AnimConfigPanel not yet mounted — best-effort open
         except Exception:
             _log.debug("AnimGalleryOverlay.action_open_config: show() failed", exc_info=True)

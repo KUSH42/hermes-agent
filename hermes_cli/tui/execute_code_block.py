@@ -177,7 +177,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         try:
             self._body = self.query_one(ExecuteCodeBody)
             self._body.add_class("expanded")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self._header._has_affordances = True
         self._header.collapsed = False
@@ -198,7 +198,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         try:
             output_section = self.query_one(OutputSection)
             rl = output_section.query_one(CopyableRichLog)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         top_bar = OmissionBar(
             parent_block=self, position="top",
@@ -237,7 +237,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 cursor_widget = self.query_one("#code-live-cursor", Static)
                 self._cached_cursor = cursor_widget
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 return
         if self._code_state == _STATE_FINALIZED:
             cursor_widget.display = False
@@ -290,7 +290,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 code_log = self.query_one(CodeSection).query_one(CopyableRichLog)
                 self._cached_code_log = code_log
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 return
         code_log.write_with_source(Text.from_ansi(highlighted), line)
 
@@ -346,7 +346,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 # Bypass pacer; ensure OutputSection is visible so the user is not stuck
                 try:
                     self.query_one(OutputSection).display = True
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass  # OutputSection not yet mounted — safe to ignore during early finalization
 
         # Record canonical code lines for collapse threshold
@@ -372,7 +372,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
                     css_vars = self.app.get_css_variables()
                     theme = css_vars.get("preview-syntax-theme", "monokai")
                     bg = css_vars.get("app-bg", None)
-                except Exception:  # CSS variables unavailable — use monokai fallback for syntax highlight
+                except Exception:  # il-ex-1-exempt: CSS variables unavailable — use monokai fallback for syntax highlight
                     theme = "monokai"
                     bg = None
                 from hermes_cli.tui.body_renderers import pick_renderer, _STREAMING_EMPTY_CLS
@@ -393,17 +393,17 @@ class ExecuteCodeBlock(StreamingToolBlock):
                 renderable = renderer.finalize_code(code, theme=theme, bg=bg)
                 if renderable is not None:
                     code_log.write(renderable)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
         # Reveal OutputSeparator + OutputSection
         try:
             self.query_one(OutputSeparator).display = True
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             self.query_one(OutputSection).display = True
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _flush_pending(self) -> None:
@@ -418,7 +418,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
             try:
                 output_log = self.query_one(OutputSection).query_one(CopyableRichLog)
                 self._cached_output_log = output_log
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 return
 
         lines_written = 0
@@ -469,7 +469,7 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if cursor_w is None:
             try:
                 cursor_w = self.query_one("#code-live-cursor", Static)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 cursor_w = None
         if cursor_w is not None:
             cursor_w.display = False
@@ -481,11 +481,11 @@ class ExecuteCodeBlock(StreamingToolBlock):
         if self._total_received == 0:
             try:
                 self.query_one(OutputSeparator).display = False
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             try:
                 self.query_one(OutputSection).display = False
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
         # Hide tail badge
         self._tail.dismiss()

@@ -56,7 +56,7 @@ class SessionIndex:
             return {"active_session_id": "", "sessions": []}
         try:
             return json.loads(self._path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError):  # il-ex-1-exempt: swallow
             return {"active_session_id": "", "sessions": []}
 
     def write(self, data: dict) -> None:
@@ -73,7 +73,7 @@ class SessionIndex:
                 except Exception:
                     try:
                         os.unlink(tmp_path)
-                    except OSError:
+                    except OSError:  # il-ex-1-exempt: swallow
                         pass
                     raise
             finally:
@@ -103,7 +103,7 @@ class SessionIndex:
         for s in data.get("sessions", []):
             try:
                 result.append(SessionRecord.from_dict(s))
-            except (KeyError, TypeError):
+            except (KeyError, TypeError):  # il-ex-1-exempt: swallow
                 continue
         return result
 
@@ -153,16 +153,16 @@ class SessionManager:
             while time.monotonic() < deadline:
                 try:
                     os.kill(record.pid, 0)
-                except ProcessLookupError:
+                except ProcessLookupError:  # il-ex-1-exempt: swallow
                     break
                 time.sleep(sleep_t)
                 sleep_t = min(sleep_t * 2, 0.1)
             else:
                 try:
                     os.kill(record.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                except ProcessLookupError:  # il-ex-1-exempt: swallow
                     pass
-        except ProcessLookupError:
+        except ProcessLookupError:  # il-ex-1-exempt: swallow
             pass
 
     def write_state(self, session_dir: Path, record: SessionRecord) -> None:
@@ -175,7 +175,7 @@ class SessionManager:
         try:
             layout_path.parent.mkdir(parents=True, exist_ok=True)
             layout_path.write_text(json.dumps(layout, indent=2))
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             pass
 
     def load_layout_blob(self, session_id: str) -> dict:
@@ -185,7 +185,7 @@ class SessionManager:
             return {}
         try:
             return json.loads(layout_path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError):  # il-ex-1-exempt: swallow
             return {}
 
     def read_state(self, session_id: str) -> Optional[SessionRecord]:
@@ -194,7 +194,7 @@ class SessionManager:
             return None
         try:
             return SessionRecord.from_dict(json.loads(state_path.read_text()))
-        except (json.JSONDecodeError, KeyError, OSError):
+        except (json.JSONDecodeError, KeyError, OSError):  # il-ex-1-exempt: swallow
             return None
 
     def poll_state_until_pid(self, session_id: str, timeout: float = 3.0) -> Optional[SessionRecord]:
@@ -240,7 +240,7 @@ class _NotifyListener:
         self._stop_event.clear()
         try:
             Path(self._socket_path).unlink(missing_ok=True)
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             pass
         self._thread = threading.Thread(target=self._run, daemon=True, name="notify-listener")
         self._thread.start()
@@ -251,7 +251,7 @@ class _NotifyListener:
             if self._sock:
                 try:
                     self._sock.close()
-                except OSError:
+                except OSError:  # il-ex-1-exempt: swallow
                     pass
 
     def _run(self) -> None:
@@ -265,19 +265,19 @@ class _NotifyListener:
             while not self._stop_event.is_set():
                 try:
                     conn, _ = srv.accept()
-                except socket.timeout:
+                except socket.timeout:  # il-ex-1-exempt: swallow
                     continue
-                except OSError:
+                except OSError:  # il-ex-1-exempt: swallow
                     break
                 threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             pass
         finally:
             with self._lock:
                 self._sock = None
             try:
                 Path(self._socket_path).unlink(missing_ok=True)
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass
 
     def _handle(self, conn: socket.socket) -> None:
@@ -294,19 +294,19 @@ class _NotifyListener:
                     continue
                 try:
                     self._on_event(json.loads(line))
-                except json.JSONDecodeError:
+                except json.JSONDecodeError:  # il-ex-1-exempt: swallow
                     pass
                 except Exception:
                     logger.warning(
                         "_NotifyListener._handle: on_event dispatch raised",
                         exc_info=True,
                     )
-        except OSError:
+        except OSError:  # il-ex-1-exempt: swallow
             pass
         finally:
             try:
                 conn.close()
-            except OSError:
+            except OSError:  # il-ex-1-exempt: swallow
                 pass
 
 
@@ -319,5 +319,5 @@ def send_notification(socket_path: str, event: dict) -> bool:
         sock.sendall((json.dumps(event) + "\n").encode())
         sock.close()
         return True
-    except OSError:
+    except OSError:  # il-ex-1-exempt: swallow
         return False

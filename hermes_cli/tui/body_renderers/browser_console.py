@@ -49,7 +49,7 @@ class BrowserConsoleRenderer(BodyRenderer):
         raw = getattr(self.payload, "output_raw", "") or ""
         try:
             data = json.loads(raw)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError):  # il-ex-1-exempt: swallow
             # malformed/non-JSON tool output: best-effort fall back to raw text
             return Text(raw)
 

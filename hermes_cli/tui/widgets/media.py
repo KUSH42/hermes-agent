@@ -195,7 +195,7 @@ class InlineMediaWidget(Widget):
         if thumb_path:
             try:
                 self.mount(InlineThumbnail(thumb_path), before="#media-controls")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: swallow
                 pass  # thumbnail mount failed; media widget continues without preview
         self.state = "idle"
         try:

@@ -564,17 +564,17 @@ class FooterPane(Widget):
         try:
             for btn in list(self._artifact_row.query(".--artifact-chip")):
                 btn.remove()
-        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
+        except Exception:  # il-ex-1-exempt: artifact button may have been removed by a concurrent refresh; teardown safe
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-overflow")):
                 btn.remove()
-        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
+        except Exception:  # il-ex-1-exempt: artifact button may have been removed by a concurrent refresh; teardown safe
             pass
         try:
             for btn in list(self._artifact_row.query(".--artifact-collapse")):
                 btn.remove()
-        except Exception:  # artifact button may have been removed by a concurrent refresh; teardown safe
+        except Exception:  # il-ex-1-exempt: artifact button may have been removed by a concurrent refresh; teardown safe
             pass
 
         if not summary.artifacts:
@@ -628,7 +628,7 @@ class FooterPane(Widget):
         try:
             for btn in list(action_row.query(".--action-chip")):
                 btn.remove()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # no chips mounted yet — expected on first call
         filtered = [a for a in actions_to_render if a.kind in _IMPLEMENTED_ACTIONS]
         filtered = _sort_actions_for_render(filtered)

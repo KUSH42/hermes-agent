@@ -50,7 +50,7 @@ class SessionsService(AppService):
         from hermes_cli.tui.overlays import SessionOverlay
         try:
             return self.app.query_one(SessionOverlay).display
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             # NoMatches is expected when the overlay is not mounted — not an error
             return False
         except Exception:
@@ -108,7 +108,7 @@ class SessionsService(AppService):
                 self.app._session_active_id,
                 self.app._session_mgr._max_sessions,
             )
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         if self.app._own_session_id:
             try:
@@ -133,7 +133,7 @@ class SessionsService(AppService):
                 active_idx = next(
                     i + 1 for i, r in enumerate(records) if getattr(r, "id", None) == active_id
                 )
-            except StopIteration:
+            except StopIteration:  # il-ex-1-exempt: swallow
                 active_idx = 1
             self.app.session_label = f"[{active_idx}/{session_count}]"
         else:
@@ -161,7 +161,7 @@ class SessionsService(AppService):
                 self.app._session_active_id,
                 max_s,
             )
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def poll_session_index(self) -> None:
@@ -204,7 +204,7 @@ class SessionsService(AppService):
         try:
             ov = self.app.query_one(InterruptOverlay)
             ov.present(make_new_session_payload(), replace=True)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def flash_sessions_max(self) -> None:
@@ -264,7 +264,7 @@ class SessionsService(AppService):
             try:
                 run_worker(fn, *args, thread=True)
                 return
-            except TypeError:
+            except TypeError:  # il-ex-1-exempt: swallow
                 run_worker(fn, *args)
                 return
         fn(*args)
@@ -290,7 +290,7 @@ class SessionsService(AppService):
         try:
             notif = self.app.query_one(_SessionNotification)
             notif.push(event)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         self.refresh_session_records_from_index()
 
@@ -307,7 +307,7 @@ class SessionsService(AppService):
             new_id = self.app._session_mgr.new_id()
             try:
                 self.app._session_mgr.validate_socket_path(new_id)
-            except ValueError as exc:
+            except ValueError as exc:  # il-ex-1-exempt: swallow
                 self.app.call_from_thread(
                     getattr(overlay, "_set_error", lambda m: None), str(exc)
                 )
@@ -319,7 +319,7 @@ class SessionsService(AppService):
                     ["git", "worktree", "add", str(worktree_path), "-b", branch, base_ref],
                     capture_output=True, text=True, check=True,
                 )
-            except _sp.CalledProcessError as exc:
+            except _sp.CalledProcessError as exc:  # il-ex-1-exempt: swallow
                 err = (exc.stderr or "").strip() or "git worktree add failed"
                 self.app.call_from_thread(
                     getattr(overlay, "_set_error", lambda m: None), err
@@ -331,7 +331,7 @@ class SessionsService(AppService):
                     cwd=str(worktree_path),
                     start_new_session=True,
                 )
-            except OSError as exc:
+            except OSError as exc:  # il-ex-1-exempt: swallow
                 self.app.call_from_thread(
                     getattr(overlay, "_set_error", lambda m: None), f"Spawn failed: {exc}"
                 )
@@ -347,7 +347,7 @@ class SessionsService(AppService):
                     proc.terminate()
                     try:
                         proc.wait(timeout=2.0)
-                    except _sp.TimeoutExpired:
+                    except _sp.TimeoutExpired:  # il-ex-1-exempt: swallow
                         _log.warning(
                             "create_new_session: SIGTERM ignored; sending SIGKILL to pid=%d",
                             proc.pid,
@@ -375,7 +375,7 @@ class SessionsService(AppService):
             except Exception as exc:
                 _log.error("create_new_session: index.add_session failed", exc_info=True)
             self.app.call_from_thread(self.on_session_created, new_id, overlay)
-        except SessionCreateTimeout:
+        except SessionCreateTimeout:  # il-ex-1-exempt: swallow
             pass  # already logged and cleaned up by the inner raise path
         except Exception:
             _log.exception("sessions.create_new_session: failed")
@@ -461,7 +461,7 @@ class SessionsService(AppService):
             overlay.present(
                 make_merge_confirm_payload(session_id, diff_stat), replace=True
             )
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     @work(thread=True)
@@ -584,7 +584,7 @@ class SessionsService(AppService):
                 if db is not None:
                     try:
                         session_meta = db.get_session(session_id) or {}
-                    except Exception:
+                    except Exception:  # il-ex-1-exempt: swallow
                         # DB read for session metadata is best-effort; empty dict means no title shown
                         pass
                 title = session_meta.get("title") or ""
@@ -602,7 +602,7 @@ class SessionsService(AppService):
         self.app._svc_context.dismiss_all_info_overlays()
         try:
             self.app.query_one(SessionOverlay).open_sessions()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
 

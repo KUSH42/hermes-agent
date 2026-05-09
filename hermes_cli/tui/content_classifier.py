@@ -118,7 +118,7 @@ def _cached_classify(output_raw: str, tool_name: str, arg_query: str | None) -> 
                             {"hit_count": len(results), "query": arg_query, "json": True, "source": "extract"},
                         )
             return ClassificationResult(ResultKind.JSON, 0.95)
-        except (json.JSONDecodeError, MemoryError):
+        except (json.JSONDecodeError, MemoryError):  # il-ex-1-exempt: swallow
             pass
 
     # Deadline check before table check

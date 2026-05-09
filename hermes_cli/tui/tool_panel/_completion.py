@@ -52,7 +52,7 @@ class _ToolPanelCompletionMixin:
         if fn is not None:
             try:
                 return str(fn())
-            except Exception:  # noqa: bare-except
+            except Exception:  # il-ex-1-exempt: noqa: bare-except
                 pass
         for attr in ("_all_plain", "_content_lines", "_plain_lines"):
             lines = getattr(self._block, attr, None)  # type: ignore[attr-defined]
@@ -124,7 +124,7 @@ class _ToolPanelCompletionMixin:
                 priority=_fb_mod.LOW,
                 key="tool-discovery",
             )
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     # ------------------------------------------------------------------
@@ -319,7 +319,7 @@ class _ToolPanelCompletionMixin:
     ) -> None:
         try:
             self.remove_class("--streaming")  # type: ignore[attr-defined]
-        except Exception:  # remove_class may fail on partially initialized widget; swap continues
+        except Exception:  # il-ex-1-exempt: remove_class may fail on partially initialized widget; swap continues
             pass
         try:
             from hermes_cli.tui.tool_payload import ResultKind
@@ -383,7 +383,7 @@ class _ToolPanelCompletionMixin:
             if stderr_raw:
                 return
             self.add_class("--minified")  # type: ignore[attr-defined]
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
     # ------------------------------------------------------------------
@@ -414,7 +414,7 @@ class _ToolPanelCompletionMixin:
             output = self.app.query_one("#output-panel")  # type: ignore[attr-defined]
             if getattr(output, "_user_scrolled_up", False):
                 user_scrolled_up = True
-        except Exception:  # noqa: bare-except
+        except Exception:  # il-ex-1-exempt: noqa: bare-except
             pass
 
         has_focus = self.has_focus or bool(list(self.query("*:focus")))  # type: ignore[attr-defined]
@@ -501,7 +501,7 @@ class _ToolPanelCompletionMixin:
                         duration=0.5,
                         tone="success",
                     )
-                except KeyError:
+                except KeyError:  # il-ex-1-exempt: swallow
                     _log.debug(
                         "tool-header channel missing for 'done' flash on panel id=%r — "
                         "decorative; if seen post-fix this is an adoption re-registration desync",
@@ -537,7 +537,7 @@ class _ToolPanelCompletionMixin:
         else:
             try:
                 self.add_class("--completing")  # type: ignore[attr-defined]
-            except AttributeError:  # noqa: bare-except
+            except AttributeError:  # il-ex-1-exempt: noqa: bare-except
                 pass
             self.call_after_refresh(self._post_complete_tidy, summary)  # type: ignore[attr-defined]
 
@@ -547,7 +547,7 @@ class _ToolPanelCompletionMixin:
     def _post_complete_tidy(self, summary: "ResultSummaryV4") -> None:
         try:
             self.remove_class("--completing")  # type: ignore[attr-defined]
-        except AttributeError:  # noqa: bare-except
+        except AttributeError:  # il-ex-1-exempt: noqa: bare-except
             pass
 
         if summary.is_error:

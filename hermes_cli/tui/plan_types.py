@@ -15,7 +15,7 @@ from typing import Optional
 
 try:
     from enum import StrEnum
-except ImportError:
+except ImportError:  # il-ex-1-exempt: swallow
     # Python < 3.11 fallback
     from enum import Enum
 

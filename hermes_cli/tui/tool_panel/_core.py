@@ -321,7 +321,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                     f"tool-header::{_panel_key}",
                     ToolHeaderAdapter(header),
                 )
-            except Exception:  # FeedbackService not yet registered; header channel optional
+            except Exception:  # il-ex-1-exempt: FeedbackService not yet registered; header channel optional
                 pass
 
         self.collapsed = False
@@ -342,7 +342,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         try:
             _panel_key = self.id if self.id is not None else str(id(self))
             self.app.feedback.deregister_channel(f"tool-header::{_panel_key}")
-        except Exception:  # FeedbackService unavailable on unmount; deregistration best-effort, safe
+        except Exception:  # il-ex-1-exempt: FeedbackService unavailable on unmount; deregistration best-effort, safe
             pass
         # TBC-3: evict slow-renderer tag for this block to prevent stale entries
         # from accumulating across block reuse cycles.
@@ -352,7 +352,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
                 tid = getattr(vs, "tool_call_id", None)
                 if tid and tid in self._slow_renderer_classes_by_block:
                     del self._slow_renderer_classes_by_block[tid]
-        except Exception:  # best-effort eviction; safe to swallow
+        except Exception:  # il-ex-1-exempt: best-effort eviction; safe to swallow
             pass
 
     def watch_collapsed(self, old: bool, new: bool) -> None:
@@ -382,7 +382,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             try:
                 self.remove_class(f"-l{old}")
                 self.add_class(f"-l{new}")
-            except AttributeError:  # add/remove_class fails on partially initialized widget; CSS best-effort
+            except AttributeError:  # il-ex-1-exempt: add/remove_class fails on partially initialized widget; CSS best-effort
                 pass
 
         header = getattr(self._block, "_header", None)
@@ -407,7 +407,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
             # invariant (line 438-439), so no lock is needed — event-loop reads are
             # safe per the _state_lock contract in ToolsService.__init__.
             vs = svc.live_by_id(tool_call_id)
-        except Exception:  # _svc_tools not yet attached; view-state lookup returns None safely
+        except Exception:  # il-ex-1-exempt: _svc_tools not yet attached; view-state lookup returns None safely
             return None
         # TBM-5: when view-state is found for the first time, drain any
         # _apply_layout decisions that arrived before it was wired so the
@@ -451,7 +451,7 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         try:
             app = self.app
             thread_id = getattr(app, "_thread_id", None)
-        except Exception:  # app not yet available pre-mount; thread_id check skipped
+        except Exception:  # il-ex-1-exempt: app not yet available pre-mount; thread_id check skipped
             app = None
             thread_id = None
         if thread_id is not None and threading.get_ident() != thread_id:

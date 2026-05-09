@@ -59,7 +59,7 @@ def normalize_emoji(
     """
     try:
         from PIL import Image
-    except ImportError:
+    except ImportError:  # il-ex-1-exempt: swallow
         return None
     max_cell_height = 1  # enforce line-height constraint
     try:

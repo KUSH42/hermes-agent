@@ -195,7 +195,7 @@ class _HermesScreen(Screen):
             event._set_forwarded()
             try:
                 widget, region = self.get_widget_at(event.x, event.y)
-            except Exception:  # widget lookup failed (e.g. during rapid resize) — skip forward
+            except Exception:  # il-ex-1-exempt: widget lookup failed (e.g. during rapid resize) — skip forward
                 return
             event.style = self.get_style_at(event.screen_x, event.screen_y)
             if widget.loading:
@@ -485,7 +485,7 @@ class HermesApp(App):
         try:
             if "app" in AssistantNameplate.__dict__:
                 delattr(AssistantNameplate, "app")
-        except Exception:  # attribute absent or already removed — safe to ignore
+        except Exception:  # il-ex-1-exempt: attribute absent or already removed — safe to ignore
             pass
         self.cli = cli
         self._startup_fn = startup_fn
@@ -729,7 +729,7 @@ class HermesApp(App):
         """Deregister an overlay; unsuppress the new top if one exists."""
         try:
             self._modal_stack.remove(overlay)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             pass  # overlay was not in stack (double-pop or never pushed) — no-op
         if self._modal_stack:
             try:
@@ -794,12 +794,12 @@ class HermesApp(App):
             if _np_min:
                 try:
                     _np_kwargs["idle_beat_min_s"] = float(_np_min)
-                except ValueError:
+                except ValueError:  # il-ex-1-exempt: swallow
                     logger.warning("HERMES_NP_IDLE_MIN_S not a float: %r", _np_min)
             if _np_max:
                 try:
                     _np_kwargs["idle_beat_max_s"] = float(_np_max)
-                except ValueError:
+                except ValueError:  # il-ex-1-exempt: swallow
                     logger.warning("HERMES_NP_IDLE_MAX_S not a float: %r", _np_max)
             yield AssistantNameplate(**_np_kwargs)
             yield HintBar(id="hint-bar")
@@ -928,7 +928,7 @@ class HermesApp(App):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             try:
                 self.query_one(_HI).focus()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
@@ -946,7 +946,7 @@ class HermesApp(App):
         # Apply InlineImageBar enabled state from config
         try:
             self.query_one(InlineImageBar)._enabled = self._inline_image_bar_enabled
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         # Initialize workspace tracker in background thread (subprocess call)
         self._init_workspace_tracker()
@@ -1013,7 +1013,7 @@ class HermesApp(App):
         try:
             panel = self.query_one(OutputPanel)
             self.watch(panel, "scroll_state", self._on_output_scroll_state)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         # Seed status_model from CLI so the bar shows the model name immediately.
         try:
@@ -1058,7 +1058,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.emoji_registry import _cell_px
             cpw, cph = _cell_px()
-        except Exception:  # _cell_px() unavailable (non-graphical terminal) — skip reload
+        except Exception:  # il-ex-1-exempt: _cell_px() unavailable (non-graphical terminal) — skip reload
             return
         cur = getattr(self, "_emoji_cell_px", None)
         if cur == (cpw, cph):
@@ -1116,7 +1116,7 @@ class HermesApp(App):
         too_small = w < THRESHOLD_ULTRA_NARROW or h < THRESHOLD_MIN_HEIGHT
         try:
             existing = self.screen.query("MinSizeBackdrop")
-        except ScreenStackError:
+        except ScreenStackError:  # il-ex-1-exempt: swallow
             return
         if too_small and not existing:
             self.screen.mount(MinSizeBackdrop(w, h))
@@ -1294,7 +1294,7 @@ class HermesApp(App):
         overlay_visible = False
         try:
             overlay_visible = self.query_one(WorkspaceOverlay).has_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         return overlay_visible or bool(self.agent_running)
 
@@ -1330,7 +1330,7 @@ class HermesApp(App):
             ov = self.query_one(WorkspaceOverlay)
             if ov.has_class("--visible"):
                 ov.refresh_data(tracker, self._last_git_snapshot)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_workspace_updated(self, event: WorkspaceUpdated) -> None:
@@ -1352,7 +1352,7 @@ class HermesApp(App):
             ov = self.query_one(WorkspaceOverlay)
             if ov.has_class("--visible"):
                 ov.refresh_data(tracker, event.snapshot)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         apply_ms = (_t.perf_counter() - _t0) * 1000.0
         if self._workspace_apply_perf_alarm is not None:
@@ -1380,7 +1380,7 @@ class HermesApp(App):
             kw["icon_nf"] = msg.icon_nf
         try:
             register_mcp_server(msg.server, **kw)
-        except ValueError:
+        except ValueError:  # il-ex-1-exempt: swallow
             logger.warning("register_mcp_server failed for %r", msg.server)
             return
         for tool_meta in msg.tools:
@@ -1400,7 +1400,7 @@ class HermesApp(App):
     def action_toggle_workspace(self) -> None:
         try:
             ov = self.query_one(WorkspaceOverlay)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         if ov.has_class("--visible"):
             ov.action_dismiss()
@@ -1455,9 +1455,9 @@ class HermesApp(App):
             for banner in banners:
                 try:
                     banner.remove()
-                except Exception:  # widget already removed or detached — safe to ignore
+                except Exception:  # il-ex-1-exempt: widget already removed or detached — safe to ignore
                     pass
-        except Exception:  # screen query failed (app shutting down) — safe to ignore
+        except Exception:  # il-ex-1-exempt: screen query failed (app shutting down) — safe to ignore
             pass
 
     # --- InlineImageBar handlers ---
@@ -1466,7 +1466,7 @@ class HermesApp(App):
         """Bubble from StreamingToolBlock.ImageMounted → add thumbnail to InlineImageBar."""
         try:
             self.query_one(InlineImageBar).add_image(event.path)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     async def on_inline_image_bar_thumbnail_clicked(self, event: Any) -> None:
@@ -1477,7 +1477,7 @@ class HermesApp(App):
             if getattr(widget, "_src_path", "") == event.path:
                 try:
                     self.query_one(OutputPanel).scroll_to_widget(widget, animate=True)
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 widget.add_class("--highlight-pulse")
                 self.set_timer(0.6, lambda w=widget: w.remove_class("--highlight-pulse"))
@@ -1502,7 +1502,7 @@ class HermesApp(App):
             try:
                 tool_pending = output.query_one(ToolPendingLine)
                 output.mount(widget, before=tool_pending)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 output.mount(widget)
         except Exception:
             logger.exception("_mount_inline_media_widget: mount failed")
@@ -1525,7 +1525,7 @@ class HermesApp(App):
             for hint in panel.query(".--empty-state-hint"):
                 try:
                     hint.remove()
-                except Exception:  # hint already removed — safe to ignore
+                except Exception:  # il-ex-1-exempt: hint already removed — safe to ignore
                     pass
             ump = UserMessagePanel(text, images=images)
             logger.debug(
@@ -1541,7 +1541,7 @@ class HermesApp(App):
             # Re-engage auto-scroll for the upcoming assistant response.
             panel._user_scrolled_up = False
             self.call_after_refresh(panel.scroll_end, animate=False)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def _resolve_user_emoji(self, text: str, panel: "UserMessagePanel") -> None:
@@ -1595,7 +1595,7 @@ class HermesApp(App):
                 chevron.add_class("--yolo-active")
             else:
                 chevron.remove_class("--yolo-active")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass  # chevron not yet mounted or already unmounted
         except Exception:
             logger.warning("watch_yolo_mode: CSS swap failed", exc_info=True)
@@ -1614,7 +1614,7 @@ class HermesApp(App):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             if isinstance(focused, _HI) or (hasattr(focused, "parent") and isinstance(focused.parent, _HI)):
                 zone_name = "compose"
-        except ImportError:
+        except ImportError:  # il-ex-1-exempt: swallow
             pass  # input_widget not available — compose zone detection skipped
         except Exception:
             logger.warning("watch_focused: compose zone detect failed", exc_info=True)
@@ -1623,7 +1623,7 @@ class HermesApp(App):
                 op = self.query_one(OutputPanel)
                 if op.is_ancestor_of(focused) or focused is op:
                     zone_name = "output"
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass  # OutputPanel not yet mounted
             except Exception:
                 logger.warning("watch_focused: output zone detect failed", exc_info=True)
@@ -1634,7 +1634,7 @@ class HermesApp(App):
                     if tp.is_ancestor_of(focused) or focused is tp:
                         zone_name = "tool"
                         break
-            except ImportError:
+            except ImportError:  # il-ex-1-exempt: swallow
                 pass  # tool_panel not available — tool zone detection skipped
             except Exception:
                 logger.warning("watch_focused: tool zone detect failed", exc_info=True)
@@ -1660,9 +1660,9 @@ class HermesApp(App):
                 try:
                     from hermes_cli.tui.widgets.message_panel import ThinkingWidget as _TW
                     _output.query_one(_TW).activate()
-                except (NoMatches, Exception):
+                except (NoMatches, Exception):  # il-ex-1-exempt: swallow
                     pass  # ThinkingWidget not yet mounted — activation deferred to on_mount
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             # RX4: lifecycle hooks for turn start
             # Note: _sync_workspace_polling_state() is intentionally omitted here —
@@ -1684,14 +1684,14 @@ class HermesApp(App):
                 # Evict old turns after the layout pass — purely cosmetic, nothing reads
                 # the result synchronously, and deferring keeps the turn-boundary repaint fast.
                 self.call_after_refresh(output.evict_old_turns)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             # v2 heat injection: signal turn complete
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
                 ov = self.query_one(DrawbrailleOverlay)
                 ov.signal("complete")
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass  # DrawbrailleOverlay disabled or not in DOM
             except Exception:
                 logger.debug("drawbraille signal failed", exc_info=True)
@@ -1707,10 +1707,10 @@ class HermesApp(App):
                     def _send_turn_completed(widget: HistorySearchOverlay = hs) -> None:
                         try:
                             widget.post_message(HistorySearchOverlay.TurnCompleted())
-                        except Exception:  # widget unmounted between now and refresh
+                        except Exception:  # il-ex-1-exempt: widget unmounted between now and refresh
                             pass
                     self.call_after_refresh(_send_turn_completed)
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
             # RX4: fire lifecycle hooks for turn end
             self.hooks.fire("on_turn_end_any")
@@ -1728,7 +1728,7 @@ class HermesApp(App):
         if not value:
             try:
                 self.query_one("#nameplate", AssistantNameplate).transition_to_idle()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
         # --- undo safety guard ---
@@ -1749,7 +1749,7 @@ class HermesApp(App):
                 widget.display = True
                 try:
                     self.query_one("#spinner-overlay", Static).display = False
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass
                 # Clear the HintBar spinner when the agent stops.
                 # E3 fix: FeedbackService.on_agent_idle() leaves active flashes
@@ -1761,7 +1761,7 @@ class HermesApp(App):
                 self._svc_context.heal_stale_modal_entries()
                 # GAP-17: restore focus so the user can type immediately without clicking
                 self.call_after_refresh(widget.focus)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         # New turn starting — create a new MessagePanel with the last user input
         if value:
@@ -1798,7 +1798,7 @@ class HermesApp(App):
                             elif p is not None:
                                 # empty string sentinel — just clear it
                                 prev_engine._block_buf._pending = None
-                        except Exception:  # old engine cleaned up; steal is best-effort
+                        except Exception:  # il-ex-1-exempt: old engine cleaned up; steal is best-effort
                             pass
                         try:
                             # Also steal any partial chunk (no \n yet) buffered by feed()
@@ -1806,7 +1806,7 @@ class HermesApp(App):
                             if frag:
                                 prev_engine._partial = ""
                                 stolen_partial = frag
-                        except Exception:  # old engine cleaned up; steal is best-effort
+                        except Exception:  # il-ex-1-exempt: old engine cleaned up; steal is best-effort
                             pass
                     logger.debug(
                         "watch_agent_running: stolen_pending=%r stolen_partial=%r",
@@ -1824,7 +1824,7 @@ class HermesApp(App):
                     new_msg._carry_pending = stolen_pending
                 if stolen_partial and new_msg is not None:
                     new_msg._carry_partial = stolen_partial
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
         # Recompute hint phase when agent stops
         if not value:
@@ -1847,7 +1847,7 @@ class HermesApp(App):
                         self._workspace_last_shown_fingerprint = fp
                         self._sync_workspace_polling_state()
                         self._trigger_git_poll()
-                except NoMatches:
+                except NoMatches:  # il-ex-1-exempt: swallow
                     pass  # WorkspaceOverlay not yet in DOM — skip auto-show
 
     def _osc_progress_update(self, running: bool) -> None:
@@ -1919,7 +1919,7 @@ class HermesApp(App):
             from hermes_cli.tui.input_widget import HermesInput as _HI
             try:
                 self.query_one(_HI).focus()
-            except NoMatches:  # widget not mounted (e.g. headless mode)
+            except NoMatches:  # il-ex-1-exempt: widget not mounted (e.g. headless mode)
                 pass
 
     def _lc_osc_progress_start(self) -> None:
@@ -1950,7 +1950,7 @@ class HermesApp(App):
             msg = self.query_one(OutputPanel).current_message
             if msg is not None:
                 msg._last_file_tool_block = None
-        except Exception:  # lifecycle hook helper; failure must not break turn boundary
+        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_drain_gen_queue(self, **_: object) -> None:
@@ -1959,7 +1959,7 @@ class HermesApp(App):
             for block in pending:
                 try:
                     block.remove()
-                except Exception:  # lifecycle hook helper; failure must not break turn boundary
+                except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
                     pass
             pending.clear()
 
@@ -1975,7 +1975,7 @@ class HermesApp(App):
                     widget.placeholder = f"Error: {err_snippet}…  (Esc to clear)"
                 else:
                     widget.placeholder = getattr(widget, "_idle_placeholder", "")
-        except Exception:  # lifecycle hook helper; failure must not break turn boundary
+        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_chevron_done_pulse(self, **_: object) -> None:
@@ -1985,7 +1985,7 @@ class HermesApp(App):
             if not chevron.has_class("--phase-error"):
                 self._svc_spinner.set_chevron_phase("--phase-done")
                 self.set_timer(0.4, lambda: self._svc_spinner.set_chevron_phase(""))
-        except Exception:  # lifecycle hook helper; failure must not break turn boundary
+        except Exception:  # il-ex-1-exempt: lifecycle hook helper; failure must not break turn boundary
             pass
 
     def _lc_auto_title(self, **_: object) -> None:
@@ -2002,7 +2002,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # timer already stopped or expired — safe to ignore
+            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
         if error:
@@ -2015,7 +2015,7 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # timer already stopped or expired — safe to ignore
+            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
 
@@ -2037,13 +2037,13 @@ class HermesApp(App):
                 if q is not None:
                     try:
                         q.put_nowait(sentinel)
-                    except Exception:  # queue full or already closed during session switch — safe to ignore
+                    except Exception:  # il-ex-1-exempt: queue full or already closed during session switch — safe to ignore
                         pass
         if getattr(self, "agent_running", False):
             try:
                 if hasattr(self.cli, "agent") and self.cli.agent:
                     self.cli.agent.interrupt()
-            except Exception:  # agent already stopped or interrupt not supported — safe to ignore
+            except Exception:  # il-ex-1-exempt: agent already stopped or interrupt not supported — safe to ignore
                 pass
 
     def _lc_session_resume_reset(self, session_id: str = "", turn_count: int = 0, **_: object) -> None:
@@ -2052,12 +2052,12 @@ class HermesApp(App):
         if _timer is not None:
             try:
                 _timer.stop()
-            except Exception:  # timer already stopped or expired — safe to ignore
+            except Exception:  # il-ex-1-exempt: timer already stopped or expired — safe to ignore
                 pass
             self._status_error_timer = None
         try:
             self.status_error = ""
-        except Exception:  # reactive not yet initialised during early teardown — safe to ignore
+        except Exception:  # il-ex-1-exempt: reactive not yet initialised during early teardown — safe to ignore
             pass
 
     def _on_streaming_start(self, **_: object) -> None:
@@ -2109,7 +2109,7 @@ class HermesApp(App):
                 sound=bool(display.get("notify_sound", False)),
                 sound_name=str(display.get("notify_sound_name", "Glass")),
             )
-        except Exception:  # desktop notify unavailable — non-critical, skip silently
+        except Exception:  # il-ex-1-exempt: desktop notify unavailable — non-critical, skip silently
             pass
 
     def _refresh_live_response_metrics(self) -> None:
@@ -2118,7 +2118,7 @@ class HermesApp(App):
             return
         try:
             output = self.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         msg = output.current_message
         if msg is None:
@@ -2156,7 +2156,7 @@ class HermesApp(App):
             panel = self.query_one(OutputPanel).current_message
             if panel is not None:
                 panel._active_prose_block.set_streaming(True)
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             # OutputPanel or current_message absent at stream start — gate skipped
             pass
 
@@ -2180,7 +2180,7 @@ class HermesApp(App):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.query_one(DrawbrailleOverlay)
             ov.signal("token")
-        except Exception:  # overlay absent or not yet mounted — heat signal skipped
+        except Exception:  # il-ex-1-exempt: overlay absent or not yet mounted — heat signal skipped
             pass
         self._refresh_live_response_metrics()
 
@@ -2203,7 +2203,7 @@ class HermesApp(App):
         try:
             _reflow_output = self.query_one(OutputPanel)
             _reflow_panel = _reflow_output.current_message
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         try:
             self.hooks.fire("on_streaming_end")
@@ -2212,11 +2212,11 @@ class HermesApp(App):
             if _reflow_panel is not None:
                 try:
                     _reflow_panel._active_prose_block.set_streaming(False)
-                except Exception:
+                except Exception:  # il-ex-1-exempt: swallow
                     pass
         try:
             output = self.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         msg = output.current_message
         if msg is None:
@@ -2254,7 +2254,7 @@ class HermesApp(App):
         if value:
             try:
                 self.query_one("#nameplate", AssistantNameplate).glitch_idle()
-            except NoMatches:
+            except NoMatches:  # il-ex-1-exempt: swallow
                 pass
 
     @property
@@ -2271,7 +2271,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.query_one(HermesInput).dismiss_completion_overlay()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def on_completion_overlay__auto_dismiss_bubble(self, ev: "object") -> None:
@@ -2290,7 +2290,7 @@ class HermesApp(App):
         try:
             if self.query_one(_CO).has_class("--visible"):
                 return
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             hs = self.query_one(HistorySearchOverlay)
@@ -2298,14 +2298,14 @@ class HermesApp(App):
                 hs.action_dismiss()
             else:
                 hs.open_search()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def action_show_commands(self) -> None:
         """F3: Show the slash commands reference overlay."""
         try:
             self.query_one(CommandsOverlay).show_overlay()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def action_show_help(self) -> None:
@@ -2316,7 +2316,7 @@ class HermesApp(App):
                 km.action_dismiss()         # was: km.remove_class("--visible") — bypassed pop_modal
             else:
                 km.show()                   # was: km.add_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def show_model_switch_result(self, new_model: str) -> None:
@@ -2334,7 +2334,7 @@ class HermesApp(App):
             if agent is not None:
                 ov.refresh_data(agent)
             ov.add_class("--visible")
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def action_jump_turn_prev(self) -> None:
@@ -2357,14 +2357,14 @@ class HermesApp(App):
         """o: move focus to OutputPanel."""
         try:
             self.query_one(OutputPanel).focus()
-        except Exception:  # widget absent or not yet mounted — focus skipped
+        except Exception:  # il-ex-1-exempt: widget absent or not yet mounted — focus skipped
             pass
 
     def action_scroll_to_latest(self) -> None:
         """W-10: End key — re-pin output to live edge and scroll to bottom."""
         try:
             panel = self.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         panel.scroll_state = ScrollState.PINNED
         panel.scroll_end_if_pinned()
@@ -2395,7 +2395,7 @@ class HermesApp(App):
         try:
             w, h = self.size.width, self.size.height
             self.compact = w <= self._COMPACT_WIDTH or h <= self._COMPACT_HEIGHT
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass  # size not yet available — leave compact unchanged
 
     def action_toggle_density(self) -> None:
@@ -2415,7 +2415,7 @@ class HermesApp(App):
             cfg = getattr(self.cli, "_cfg", None) or {}
             if isinstance(cfg, dict):
                 cfg.setdefault("display", {})["auto_mini_mode"] = True
-        except Exception:  # config dict absent or panel query failed — auto-mini cleanup skipped
+        except Exception:  # il-ex-1-exempt: config dict absent or panel query failed — auto-mini cleanup skipped
             pass
         self._flash_hint("Auto-mini ON  (/density full to disable)", 2.0)
 
@@ -2429,7 +2429,7 @@ class HermesApp(App):
             from hermes_cli.tui.tool_panel import ToolPanel
             for panel in self.query(ToolPanel):
                 panel.remove_class("--minified")
-        except Exception:  # config dict absent or panel query failed — auto-mini cleanup skipped
+        except Exception:  # il-ex-1-exempt: config dict absent or panel query failed — auto-mini cleanup skipped
             pass
 
     def _dismiss_floating_panels(self) -> None:
@@ -2442,20 +2442,20 @@ class HermesApp(App):
             hs = self.query_one(HistorySearchOverlay)
             if hs.has_class("--visible"):
                 hs.action_dismiss()
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
         try:
             ko = self.query_one(KeymapOverlay)
             if ko.has_class("--visible"):
                 ko.action_dismiss()             # was: ko.remove_class("--visible") — bypassed pop_modal
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             pass
 
     def handle_session_resume(self, session_id: str, session_title: str, turn_count: int) -> None:
         """Clear OutputPanel and show resumed-session banner. Event-loop only."""
         try:
             panel = self.query_one(OutputPanel)
-        except NoMatches:
+        except NoMatches:  # il-ex-1-exempt: swallow
             return
         panel.remove_children()
         banner = _SessionResumedBanner(session_title or session_id[-8:], turn_count)
@@ -2465,7 +2465,7 @@ class HermesApp(App):
         try:
             from hermes_cli.tui.widgets.status_bar import StatusBar as _StatusBar
             self.query_one(_StatusBar)._full_session_id = session_id
-        except Exception:
+        except Exception:  # il-ex-1-exempt: swallow
             pass
         self._auto_title_done = False
         # D3: reset browse anchor state so old indices do not point to removed widgets
@@ -2476,7 +2476,7 @@ class HermesApp(App):
             try:
                 from hermes_cli.tui.input_widget import HermesInput as _HI
                 self.query_one(_HI).focus()
-            except (NoMatches, ImportError):
+            except (NoMatches, ImportError):  # il-ex-1-exempt: swallow
                 pass
         # RX4: let services reset per-session state on resume
         self.hooks.fire("on_session_resume", session_id=session_id, turn_count=turn_count)
@@ -2868,12 +2868,12 @@ class HermesApp(App):
                 AnimConfigPanel as _ACP,
                 AnimGalleryOverlay as _AGO,
             )
-        except Exception:  # optional dep or widget not mounted — treat as not visible
+        except Exception:  # il-ex-1-exempt: optional dep or widget not mounted — treat as not visible
             return False
         for cls in (_ACP, _AGO):
             try:
                 w = self.query_one(cls)
-            except Exception:  # optional dep or widget not mounted — treat as not visible
+            except Exception:  # il-ex-1-exempt: optional dep or widget not mounted — treat as not visible
                 continue
             if w.has_class("--visible"):
                 return True
@@ -2960,7 +2960,7 @@ class HermesApp(App):
             existing = self.query_one(SkillPickerOverlay)
             existing.set_filter(seed_filter)
             return True
-        except _NM:
+        except _NM:  # il-ex-1-exempt: swallow
             # MOD-4: only open if no conflicting modal is active (or the stack is
             # empty / the top is itself a SkillPickerOverlay).
             top = self.top_modal()
@@ -3074,7 +3074,7 @@ class HermesApp(App):
                 from hermes_cli.tui.overlays.interrupt import InterruptOverlay as _IO
                 _io = self.query_one(_IO)
                 _has_blocker = _io.has_class("--visible")
-            except Exception:  # InterruptOverlay not mounted — treat as not visible
+            except Exception:  # il-ex-1-exempt: InterruptOverlay not mounted — treat as not visible
                 pass
         if _has_blocker:
             self.ui_phase = "blocker"

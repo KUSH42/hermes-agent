@@ -325,6 +325,7 @@ PlanPanel _BudgetSection {
 ThinkingWidget {
     height: auto;
     display: none;
+    background: $app-bg;
 }
 
 /* When the app has an active plan, force ThinkingWidget to LINE mode */

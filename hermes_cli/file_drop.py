@@ -258,8 +258,26 @@ def detect_file_drop_text(user_input: str) -> FileDropMatch | None:
 
     first_token = raw[:pos]
     path = _path_from_text(first_token)
-    if not path.exists():
-        return None
+    if not path.exists() or not path.is_file():
+        # Token stopped at first space; try greedily finding the longest
+        # existing prefix to handle unquoted paths with spaces (e.g. macOS
+        # screenshot names). Check the full raw string first, then each
+        # space-terminated prefix from longest to shortest.
+        candidates: list[tuple[int, str]] = [(len(raw), raw)]
+        space_positions = [i for i, c in enumerate(raw) if c == " "]
+        candidates.extend((sp, raw[:sp]) for sp in reversed(space_positions))
+        found_path: Path | None = None
+        found_pos: int = pos
+        for end, token in candidates:
+            candidate = _path_from_text(token)
+            if candidate.exists() and candidate.is_file():
+                found_path = candidate
+                found_pos = end
+                break  # longest match wins
+        if found_path is None:
+            return None
+        path = found_path
+        pos = found_pos
 
     remainder = raw[pos:].strip()
     return FileDropMatch(

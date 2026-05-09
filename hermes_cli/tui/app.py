@@ -66,7 +66,7 @@ from textual.screen import Screen
 from textual.widgets import Static, TextArea
 from textual import events, work
 
-from hermes_cli.file_drop import classify_dropped_file, format_link_token
+from hermes_cli.file_drop import classify_dropped_file, format_link_token, parse_dragged_file_paste
 from hermes_cli.tui.state import (
     ChoiceOverlayState,
     OverlayState,
@@ -3037,3 +3037,21 @@ class HermesApp(App):
 
     def on_hermes_input_files_dropped(self, event: Any) -> None:
         self._svc_watchers.handle_file_drop(event.paths)
+
+    async def on_paste(self, event: events.Paste) -> None:
+        """Route drag-and-drop pastes to the input regardless of which widget has focus.
+
+        HermesInput handles pastes when it is focused; this catches the case
+        where focus is on the OutputPanel or any other widget.
+        """
+        from hermes_cli.tui.input_widget import HermesInput
+        if isinstance(self.focused, HermesInput):
+            return  # HermesInput._on_paste already ran
+        try:
+            dropped_paths = parse_dragged_file_paste(event.text)
+        except Exception:
+            logger.debug("app on_paste: drag parse failed", exc_info=True)
+            dropped_paths = None
+        if dropped_paths:
+            self._svc_watchers.handle_file_drop(dropped_paths)
+            event.stop()

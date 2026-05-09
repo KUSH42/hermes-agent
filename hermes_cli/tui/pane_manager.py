@@ -340,14 +340,21 @@ class PaneManager:
                 pane.focus()
         except Exception:
             _log.debug("PaneManager.focus_active_pane: child focus failed", exc_info=True)
-        # Show "Esc → input" hint when a side pane gets focus
+        # Show "Esc → input" hint when a side pane gets focus — routed through
+        # FeedbackService so priority ordering is respected (LOW = 0 yields to
+        # any diagnostic flash). FeedbackService handles expiry after 3s.
         if pane_id != PaneId.CENTER:
             try:
-                from hermes_cli.tui.widgets import HintBar
-                app.query_one(HintBar).hint = "Esc → input"
-                app.set_timer(3.0, lambda: _clear_hint_if_side_pane(app, pane_id))
+                from hermes_cli.tui.services import feedback as _fb
+                app.feedback.flash(
+                    "hint-bar",
+                    "Esc → input",
+                    duration=3.0,
+                    priority=_fb.LOW,
+                    key=_fb.HINT_KEY_PANE_FOCUS,
+                )
             except Exception:
-                _log.debug("PaneManager.focus_active_pane: hint update failed", exc_info=True)
+                _log.debug("focus_active_pane: hint flash failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # Width overrides (from /layout command)
@@ -398,12 +405,3 @@ def _int_or_none(v: Any) -> int | None:
     return int(v) if v is not None else None
 
 
-def _clear_hint_if_side_pane(app: Any, pane_id: "PaneId") -> None:
-    """Timer callback: clear 'Esc → input' hint if the side pane is still focused."""
-    try:
-        from hermes_cli.tui.widgets import HintBar
-        pm = getattr(app, "_pane_manager", None)
-        if pm is not None and pm._focused_pane == pane_id:
-            app.query_one(HintBar).hint = ""
-    except Exception:
-        _log.debug("_clear_hint_if_side_pane: hint clear failed", exc_info=True)

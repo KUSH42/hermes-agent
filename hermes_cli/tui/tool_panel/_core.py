@@ -473,8 +473,17 @@ class ToolPanel(_ToolPanelActionsMixin, _ToolPanelCompletionMixin, Widget):
         flash_text = density_flash_text(self._last_density_result, decision.tier, decision.reason)
         self._last_density_result = new_result
         if flash_text and self.is_attached:
-            from hermes_cli.tui.widgets.status_bar import FlashMessage
-            self.post_message(FlashMessage(flash_text, duration=1.2))
+            try:
+                from hermes_cli.tui.services import feedback as _fb
+                self.app.feedback.flash(
+                    "hint-bar",
+                    flash_text,
+                    duration=1.2,
+                    priority=_fb.LOW,   # LOW = 0; yield to all diagnostic flashes
+                    key=_fb.HINT_KEY_DENSITY_CHANGE,
+                )
+            except Exception:
+                _log.debug("density flash failed", exc_info=True)
 
         # 2. Reactives — Textual schedules watcher dispatch after this returns.
         self.density = decision.tier

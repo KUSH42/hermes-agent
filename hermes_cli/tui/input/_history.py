@@ -180,13 +180,16 @@ class _HistoryMixin:
             _apply_assist(self, AssistKind.NONE)
             self._refresh_placeholder()  # type: ignore[attr-defined]
             try:
+                from hermes_cli.tui.services import feedback as _fb
                 self.app.feedback.flash(  # type: ignore[attr-defined]
                     "hint-bar",
                     "Ctrl+G abort · Esc accept · ↑↓ cycle",
                     duration=9999,
+                    priority=_fb.NORMAL,
+                    key=_fb.HINT_KEY_REV_SEARCH,
                 )
             except Exception:
-                pass
+                pass  # feedback service absent during startup or test teardown — hint not shown
             # Recompute mode so watch__mode handles legend/chevron
             try:
                 self._mode = self._compute_mode()  # type: ignore[attr-defined]
@@ -243,11 +246,12 @@ class _HistoryMixin:
                 self._history_idx = match_idx  # type: ignore[attr-defined]
             else:
                 self._history_idx = -1  # type: ignore[attr-defined]
-        # Cancel the persistent rev-search hint
+        # Cancel the persistent rev-search hint (key-scoped: only cancels HINT_KEY_REV_SEARCH)
         try:
-            self.app.feedback.cancel("hint-bar")  # type: ignore[attr-defined]
+            from hermes_cli.tui.services import feedback as _fb
+            self.app.feedback.cancel("hint-bar", key=_fb.HINT_KEY_REV_SEARCH)  # type: ignore[attr-defined]
         except Exception:
-            pass
+            pass  # feedback service absent during startup or test teardown — cancel skipped
         # Restore idle placeholder
         try:
             self._refresh_placeholder()  # type: ignore[attr-defined]

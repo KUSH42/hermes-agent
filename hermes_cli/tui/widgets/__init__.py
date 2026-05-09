@@ -110,7 +110,6 @@ def _clear_thinking_reserve(tw: "ThinkingWidget") -> None:
 
 from .status_bar import (  # noqa: F401
     AnimatedCounter,
-    FlashMessage,
     HintBar,
     ImageBar,
     KindOverrideChanged,

@@ -424,6 +424,44 @@ def _apply_cont_indent(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) ->
     return "\n".join(out_lines)
 
 
+def _apply_cont_indent_ansi(line: str, indent: str, width: int = _LIST_WRAP_WIDTH) -> str:
+    """Pre-wrap an ANSI-rendered list line with hanging *indent*.
+
+    Like _apply_cont_indent but uses _strip_ansi for word-width measurement so
+    ANSI escape sequences don't inflate estimates. Call this AFTER apply_block_line
+    and apply_inline_markdown, not before.
+    """
+    if not indent:
+        return line
+    visual_line_len = len(_strip_ansi(line))
+    if visual_line_len <= width:
+        return line
+    first_width = width
+    rest_width = max(width - len(indent), 20)
+    words = line.split(" ")
+    out_lines: list[str] = []
+    cur = ""
+    cur_vis = 0
+    limit = first_width
+    for word in words:
+        wlen = len(_strip_ansi(word))  # ANSI-aware visual width
+        if cur:
+            if cur_vis + 1 + wlen > limit:
+                out_lines.append(cur)
+                limit = rest_width
+                cur = indent + word
+                cur_vis = len(indent) + wlen
+            else:
+                cur += " " + word
+                cur_vis += 1 + wlen
+        else:
+            cur = word
+            cur_vis = wlen
+    if cur:
+        out_lines.append(cur)
+    return "\n".join(out_lines)
+
+
 # ---------------------------------------------------------------------------
 # _DimRichLogProxy
 # ---------------------------------------------------------------------------
@@ -698,6 +736,17 @@ class ResponseFlowEngine:
             if callable(getter)
             else self._panel.response_log
         )
+
+    def _get_prose_width(self) -> int:
+        """Return current prose log column width for pre-wrap calculations."""
+        try:
+            log = getattr(self._prose_log, "_log", self._prose_log)  # unwrap _DimRichLogProxy
+            w = log.scrollable_content_region.width
+            if w > 0:
+                return w
+        except Exception:
+            pass
+        return _LIST_WRAP_WIDTH
 
     # ------------------------------------------------------------------
     # Public API
@@ -1101,9 +1150,7 @@ class ResponseFlowEngine:
         list_ci = _detect_list_cont_indent(block_result)
         if list_ci:
             self._list_cont_indent = list_ci
-            block_ansi = apply_block_line(_apply_cont_indent(block_result, list_ci))
         else:
-            block_ansi = apply_block_line(block_result)
             stripped = block_result.strip()
             if (stripped == ""
                 or _HR_RE.match(stripped)
@@ -1112,7 +1159,12 @@ class ResponseFlowEngine:
                 self._list_cont_indent = ""
             elif self._list_cont_indent and not block_result[0:1].isspace():
                 self._list_cont_indent = ""
+        block_ansi = apply_block_line(block_result)
         inline_ansi = apply_inline_markdown(block_ansi)
+        # Pre-wrap after rendering so apply_block_line sees a single-line input.
+        # Uses ANSI-aware width measurement and adapts to actual prose log width.
+        if list_ci:
+            inline_ansi = _apply_cont_indent_ansi(inline_ansi, list_ci, self._get_prose_width())
         self._sync_prose_log()
         plain = _strip_ansi(inline_ansi)
         rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))
@@ -1635,10 +1687,7 @@ class ResponseFlowEngine:
                 list_ci = _detect_list_cont_indent(line)
                 if list_ci:
                     self._list_cont_indent = list_ci
-                    indented = _apply_cont_indent(line, list_ci)
-                    block_ansi = apply_block_line(indented)
                 else:
-                    block_ansi = apply_block_line(line)
                     stripped = line.strip()
                     if (stripped == ""
                         or _HR_RE.match(stripped)
@@ -1647,7 +1696,10 @@ class ResponseFlowEngine:
                         self._list_cont_indent = ""
                     elif self._list_cont_indent and not line[0:1].isspace():
                         self._list_cont_indent = ""
+                block_ansi = apply_block_line(line)
                 inline_ansi = apply_inline_markdown(block_ansi)
+                if list_ci:
+                    inline_ansi = _apply_cont_indent_ansi(inline_ansi, list_ci, self._get_prose_width())
                 self._sync_prose_log()
                 plain = _strip_ansi(inline_ansi)
                 rich_text = Text.from_ansi(_normalize_ansi_for_render(inline_ansi))

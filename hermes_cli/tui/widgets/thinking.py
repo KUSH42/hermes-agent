@@ -403,6 +403,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     _substate: str | None = None          # STARTED / WORKING / LONG_WAIT / ABOUT_TO_STREAM
     _activate_time: float | None = None
     _current_mode: ThinkingMode | None = None
+    _ceiling_mode: ThinkingMode | None = None
     _reserve_fallback_timer: object | None = None  # A14: 2s safety clear for --reserved
     _effects_lock: "threading.Lock | None" = None  # H10: single lock reused across _LabelLine redraws
 
@@ -418,6 +419,7 @@ _LabelLine   { height: 1;   width: 1fr; }
     _cfg_allow_intense: bool = False  # D-5: gate for intense engines
     _cfg_long_wait_engine: str | list[str] = "wave_function"
     _cfg_long_wait_effect: str | list[str] = "shimmer"
+    _cfg_progressive_reveal: bool = True
     _actual_tick_interval: float = 1.0 / 12.0
 
     # Children (created in compose)
@@ -497,6 +499,7 @@ _LabelLine   { height: 1;   width: 1fr; }
             self._cfg_allow_intense = bool(thinking.get("allow_intense", False))
             self._cfg_long_wait_engine = thinking.get("long_wait_engine", "wave_function")
             self._cfg_long_wait_effect = thinking.get("long_wait_effect", "shimmer")
+            self._cfg_progressive_reveal = bool(thinking.get("progressive_reveal", True))
         except Exception:
             _log.warning(
                 "ThinkingWidget._load_config: config read failed, using defaults",
@@ -527,11 +530,6 @@ _LabelLine   { height: 1;   width: 1fr; }
             resolved = ThinkingMode(self._cfg_mode)
         except ValueError:  # il-ex-1-exempt: swallow
             pass
-        # A4: DEEP only after extended wait — gate on elapsed since LONG_WAIT entry
-        if resolved == ThinkingMode.DEEP:
-            elapsed = time.monotonic() - getattr(self, "_substate_start", time.monotonic())
-            if elapsed < self._cfg_deep_after_s:
-                return ThinkingMode.COMPACT
         return resolved
 
     def _engine_whitelist(self, mode: ThinkingMode) -> frozenset[str]:
@@ -755,13 +753,23 @@ _LabelLine   { height: 1;   width: 1fr; }
         )
         self._resolved_engine = resolved_engine
         self._resolved_effect = resolved_effect  # D-2: stored for STARTED→WORKING swap
-        self._current_mode = resolved_mode
+        self._ceiling_mode = resolved_mode
+
+        # TW-PR: start COMPACT when progressive reveal is on and ceiling is taller
+        if (
+            self._cfg_progressive_reveal
+            and resolved_mode in (ThinkingMode.DEFAULT, ThinkingMode.DEEP)
+        ):
+            initial_mode = ThinkingMode.COMPACT
+        else:
+            initial_mode = resolved_mode
+        self._current_mode = initial_mode
 
         # Refresh colors
         self._refresh_colors()
 
         # Create and mount children
-        anim_rows = _MODE_DIMS[resolved_mode][1]
+        anim_rows = _MODE_DIMS[initial_mode][1]
         if anim_rows > 0:
             # No fixed id — avoids DuplicateIds when deactivate's 150ms fade-out
             # timer hasn't fired yet and activate() is called for the next turn.
@@ -786,7 +794,7 @@ _LabelLine   { height: 1;   width: 1fr; }
         self._apply_background_styles()
 
         # Apply CSS classes
-        mode_cls = _MODE_CSS.get(resolved_mode, "--mode-default")
+        mode_cls = _MODE_CSS.get(initial_mode, "--mode-compact")
         self.add_class("--active", mode_cls)
         self.app.add_class("thinking-active")
 
@@ -938,6 +946,13 @@ _LabelLine   { height: 1;   width: 1fr; }
                     )
                 except Exception:
                     logger.debug("ThinkingWidget: effect swap failed", exc_info=True)
+            # TW-PR: expand height if ceiling is DEFAULT or DEEP
+            if (
+                self._cfg_progressive_reveal
+                and self._ceiling_mode in (ThinkingMode.DEFAULT, ThinkingMode.DEEP)
+                and self._anim_surface is not None
+            ):
+                self.set_mode(ThinkingMode.DEFAULT)
         if self._substate == "WORKING" and elapsed >= self._cfg_long_wait_after_s:
             self._substate = "LONG_WAIT"
             self._substate_start = time.monotonic()  # A4: record when LONG_WAIT began
@@ -961,6 +976,17 @@ _LabelLine   { height: 1;   width: 1fr; }
                     )
                 except Exception:
                     logger.warning("ThinkingWidget: long_wait effect swap failed", exc_info=True)
+
+        # TW-PR: expand to DEEP once deep_after_s elapsed
+        if (
+            self._substate == "LONG_WAIT"
+            and self._ceiling_mode == ThinkingMode.DEEP
+            and self._cfg_progressive_reveal
+            and self._anim_surface is not None
+            and self._current_mode != ThinkingMode.DEEP
+            and elapsed >= self._cfg_deep_after_s
+        ):
+            self.set_mode(ThinkingMode.DEEP)
 
         # ── Label text ─────────────────────────────────────────────────────────
         label_text = self._get_label_text(elapsed)

@@ -43,7 +43,7 @@ class _ThinkingWithMockApp(ThinkingWidget):
         return self._mock_app
 
 
-# ── T1: activate() no args → has --active + --mode-default classes ─────────────
+# ── T1: activate() no args → has --active; starts COMPACT (progressive reveal on by default) ──
 
 @pytest.mark.asyncio
 async def test_T1_activate_default_mode() -> None:
@@ -53,7 +53,9 @@ async def test_T1_activate_default_mode() -> None:
         w.activate()
         await pilot.pause()
         assert w.has_class("--active")
-        assert w.has_class("--mode-default")
+        # Progressive reveal starts at COMPACT for DEFAULT ceiling
+        assert w.has_class("--mode-compact")
+        assert w._ceiling_mode == ThinkingMode.DEFAULT
 
 
 # ── T2: activate(mode=LINE) → has --mode-line ─────────────────────────────────
@@ -68,12 +70,23 @@ async def test_T2_activate_line_mode() -> None:
         assert w.has_class("--active")
 
 
-# ── T3: activate(mode=DEEP) → has --mode-deep ────────────────────────────────
+# ── T3: activate(mode=DEEP) → starts at --mode-compact (progressive reveal); --mode-deep with reveal disabled ──
 
 @pytest.mark.asyncio
 async def test_T3_activate_deep_mode() -> None:
     async with _App().run_test() as pilot:
         w = pilot.app.query_one(ThinkingWidget)
+        # With progressive reveal (default), DEEP ceiling starts at COMPACT
+        w.activate(mode=ThinkingMode.DEEP)
+        await pilot.pause()
+        assert w.has_class("--active")
+        assert w.has_class("--mode-compact")
+        assert w._ceiling_mode == ThinkingMode.DEEP
+        w.deactivate()
+        await pilot.pause(delay=0.3)
+
+        # With progressive reveal disabled, DEEP applies immediately
+        w._cfg_progressive_reveal = False
         w.activate(mode=ThinkingMode.DEEP)
         await pilot.pause()
         assert w.has_class("--mode-deep")
@@ -278,6 +291,8 @@ async def test_T13_anim_surface_uses_widget_width() -> None:
 async def test_T14_set_mode_updates_css() -> None:
     async with _App().run_test() as pilot:
         w = pilot.app.query_one(ThinkingWidget)
+        # Disable progressive reveal so activate starts at DEFAULT immediately
+        w._cfg_progressive_reveal = False
         w.activate(mode=ThinkingMode.DEFAULT)
         await pilot.pause()
         assert w.has_class("--mode-default")

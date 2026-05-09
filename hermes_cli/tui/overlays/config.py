@@ -26,6 +26,10 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Button, Checkbox, OptionList, Static
 from textual.widgets.option_list import Option
+from textual import work
+from textual.worker import WorkerState as _WorkerState
+
+_WORKER_DONE = {_WorkerState.SUCCESS, _WorkerState.ERROR, _WorkerState.CANCELLED}
 
 from hermes_cli.tui.overlays._aliases import register_config_aliases
 from hermes_cli.tui.overlays._legacy import (
@@ -117,6 +121,10 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         # Model tab state
         self._browsed_provider: str = ""  # provider currently selected in provider list
         self._provider_slugs: list[str] = []  # parallel list to co-provider-list options
+        # Model catalog cache (populated by background prefetch worker)
+        self._model_cache: dict[str, list[str] | list[dict]] = {}
+        self._provider_list_cache: list[dict] | None = None
+        self._model_prefetch_done: bool = False
         # Skin tab snapshot (for Esc revert)
         self._snap_css_vars: dict[str, str] = {}
         self._snap_component_vars: dict[str, str] = {}
@@ -217,6 +225,9 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             _log.debug("ConfigOverlay.show_overlay: app has no push_modal")
         self.add_class("--modal", "--visible")  # il-m1: owned by show_overlay (permanent widget override)
         self._refresh_active_tab()
+        running = {w.name for w in self.workers if w.state not in _WORKER_DONE}
+        if not self._model_prefetch_done and "model-catalog-prefetch" not in running:
+            self._prefetch_all_providers()
         self.call_after_refresh(self._focus_active_tab)
 
     def hide_overlay(self) -> None:
@@ -224,6 +235,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
 
     def dismiss_overlay(self) -> None:
         """Permanent-widget dismiss: hide without removing from DOM."""
+        self._model_prefetch_done = False  # allow re-run on next open
         target = self._restore_focus_to()  # capture focus target before any DOM/CSS mutation
         self._revert_skin_preview_if_any()
         self.remove_class("--visible", "--modal")  # il-m1: owned by dismiss_overlay (permanent override)
@@ -354,11 +366,16 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
         except Exception:
             _log.debug("_populate_provider_list: import failed", exc_info=True)
             return
-        try:
-            providers = list_available_providers()
-        except Exception:
-            _log.debug("_populate_provider_list: list_available_providers() failed", exc_info=True)
-            providers = []
+        providers = self._provider_list_cache
+        if providers is None:
+            # Cache miss: prefetch not done yet — fall back to synchronous call.
+            # This is intentional degraded behaviour on first open before the
+            # prefetch worker finishes; subsequent opens hit the cache.
+            try:
+                providers = list_available_providers()
+            except Exception:
+                _log.warning("_populate_provider_list: list_available_providers() failed", exc_info=True)
+                providers = []
         active_norm = normalize_provider(active_provider)
         # Ensure active provider appears even if not in list
         slugs = [p["id"] for p in providers]
@@ -387,11 +404,20 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
     ) -> None:
         models = list(configured_models or [])
         if not models:
-            try:
-                from hermes_cli.models import provider_model_ids
-                models = list(provider_model_ids(provider, force_refresh=False))
-            except Exception:
-                _log.debug("_populate_model_list: provider_model_ids(%r) failed", provider, exc_info=True)
+            cached = self._model_cache.get(provider)
+            if cached is not None:
+                models = list(cached)
+            else:
+                # Cache miss: show placeholder and kick off targeted fetch
+                models = ["⟳ loading…"]
+                worker_name = f"model-catalog-fetch-{provider}"
+                if worker_name not in {w.name for w in self.workers if w.state not in _WORKER_DONE}:
+                    _p, _m = provider, current_model
+                    self.run_worker(
+                        lambda: self._fetch_provider_models(_p, _m),
+                        name=worker_name,
+                        thread=True,
+                    )
         if current_model and current_model not in models:
             models.insert(0, current_model)
         try:
@@ -408,6 +434,44 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
                 ol.highlighted = models.index(current_model)
         except NoMatches:
             pass
+
+    # ── Background model catalog workers ─────────────────────────────────
+
+    @work(thread=True, name="model-catalog-prefetch")
+    def _prefetch_all_providers(self) -> None:
+        from hermes_cli.models import list_available_providers, provider_model_ids
+
+        try:
+            providers = list_available_providers()
+        except Exception:
+            _log.warning("_prefetch_all_providers: list_available_providers failed", exc_info=True)
+            return  # _model_prefetch_done stays False; next open will retry
+        self._provider_list_cache = providers
+        for p in providers:
+            slug = p["id"]
+            if slug in self._model_cache:
+                continue
+            try:
+                ids = list(provider_model_ids(slug, force_refresh=False))
+            except Exception:
+                _log.warning("_prefetch_all_providers: provider_model_ids(%r) failed", slug, exc_info=True)
+                continue  # Don't cache failure; targeted fetch will retry on highlight
+            self._model_cache[slug] = ids
+        self._model_prefetch_done = True  # set even if some providers failed; partial cache is valid
+
+    def _fetch_provider_models(self, provider: str, current_model: str) -> None:
+        # MUST be called via run_worker(thread=True) — not directly
+        from hermes_cli.models import provider_model_ids
+
+        try:
+            ids = list(provider_model_ids(provider, force_refresh=False))
+        except Exception:
+            _log.warning("_fetch_provider_models(%r) failed", provider, exc_info=True)
+            return  # Don't cache failure; next highlight will retry via targeted fetch
+        self._model_cache[provider] = ids
+        # Repopulate only if provider is still the one being browsed
+        if self._browsed_provider == provider:
+            self.app.call_from_thread(self._populate_model_list, provider, current_model)
 
     # ── Verbose tab ───────────────────────────────────────────────────────
 

@@ -154,6 +154,7 @@ class CompletionOverlay(Vertical):
 
     def on_mount(self) -> None:
         self._last_applied_w: int = 0
+        self._last_applied_max_h: int = -1
         self.border_subtitle = "↑↓ select  ·  Tab accept  ·  Esc close"
         # A3: apply initial --narrow class based on current app width so a
         # terminal that starts narrow doesn't need a resize event to trigger it.
@@ -171,10 +172,12 @@ class CompletionOverlay(Vertical):
         self._last_applied_w = w
         # B1: cap max-height dynamically so overlay does not clip at short terminal heights
         avail = max(4, event.size.height - 8)
-        try:
-            self.styles.max_height = avail
-        except Exception:
-            logger.debug("CompletionOverlay.on_resize: max_height set failed", exc_info=True)
+        if avail != self._last_applied_max_h:
+            try:
+                self.styles.max_height = avail
+                self._last_applied_max_h = avail
+            except Exception:
+                logger.debug("CompletionOverlay.on_resize: max_height set failed", exc_info=True)
 
     def _clear_highlighted_candidate(self) -> None:
         """Reset app.highlighted_candidate so ghost text is cleared."""

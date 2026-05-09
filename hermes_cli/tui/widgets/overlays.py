@@ -29,6 +29,7 @@ from textual.widgets import Input, Static
 
 from .renderers import CopyableRichLog
 from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
+from hermes_cli.tui.resize_utils import crosses_threshold
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
@@ -362,6 +363,10 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
     def compose(self) -> ComposeResult:
         yield Static("", id="keymap-content", markup=True)
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._last_resize_w: int = 0
+
     def on_mount(self) -> None:
         # Permanent widget: do NOT call ModalOverlayMixin.on_mount().
         # push_modal / --modal are managed per show() / action_dismiss() cycle.
@@ -372,7 +377,14 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
         pass
 
     def on_resize(self) -> None:
-        self._update_content()
+        try:
+            w = self.app.size.width
+        except Exception:
+            _log.debug("KeymapOverlay.on_resize: app size unavailable", exc_info=True)
+            return
+        if crosses_threshold(self._last_resize_w, w, 80):
+            self._update_content()
+        self._last_resize_w = w
 
     def _update_content(self) -> None:
         """Choose wide/narrow layout based on terminal width (P1-D)."""
@@ -482,6 +494,7 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
         self._shift_selected: set[int] = set()
         self._mode: str = "current"
         self._query_history: list[str] = []
+        self._last_render_w: int = 0
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search history  ↑↓ navigate · Enter jump · Esc close", id="history-search-input")
@@ -836,13 +849,21 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
                 pass
 
     def on_resize(self) -> None:
-        """Re-render results to update truncation width after terminal resize."""
-        if self.has_class("--visible"):
-            try:
-                query = self.query_one("#history-search-input", Input).value
-            except NoMatches:
-                query = ""
-            self._render_results(query)
+        if not self.has_class("--visible"):
+            return
+        try:
+            new_w = self.app.size.width
+        except Exception:
+            _log.debug("HistorySearchOverlay.on_resize: app size unavailable", exc_info=True)
+            return
+        if new_w == self._last_render_w:
+            return
+        self._last_render_w = new_w
+        try:
+            query = self.query_one("#history-search-input", Input).value
+        except NoMatches:
+            query = ""
+        self._render_results(query)
 
 
 # ---------------------------------------------------------------------------

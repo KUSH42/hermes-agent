@@ -159,6 +159,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         self._omission_bar_top_mounted: bool = False
         self._omission_bar_bottom_mounted: bool = False
         self._completed: bool = False
+        self._abandoned: bool = False  # STALL-GC-H1: set by ToolGroup._sweep_abandoned_children
         self._is_unmounted: bool = False  # PERF-4: guard timer resurrection after unmount
         self._render_timer: "Timer | None" = None  # PERF-4: pre-init; on_mount overwrites with live handle
         self._tail = ToolTail()
@@ -475,6 +476,30 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
         except Exception:  # il-ex-1-exempt: spec_for unavailable; args row is optional decoration
             pass
 
+    def _mark_abandoned(self) -> None:
+        """Reclassify this block as abandoned after group-terminal grace expires.
+
+        Called by ToolGroup._sweep_abandoned_children (STALL-GC-H2). Idempotent.
+        """
+        if self._abandoned:
+            return
+        self._abandoned = True
+        # Stop the pulse timer completely (mirrors complete() at line 430).
+        self._header._pulse_stop()
+        self._header._stall_glyph_active = False
+        # Microcopy: muted "no result" with optional category suffix.
+        try:
+            from hermes_cli.tui.tool_category import spec_for
+            spec = spec_for(self._tool_name or "")
+            cat = spec.category.value  # e.g. "search", "web", "unknown"
+            if cat and cat != "unknown":
+                self._body.set_microcopy(f"no result · {cat}")
+            else:
+                self._body.set_microcopy("no result")
+        except Exception:  # il-ex-1-exempt: spec_for optional; "no result" is a safe fallback
+            self._body.set_microcopy("no result")
+        self._microcopy_shown = True
+
     def _clear_microcopy_on_complete(self) -> None:
         self._body.clear_microcopy()
 
@@ -583,6 +608,7 @@ class StreamingToolBlock(ManagedTimerMixin, ToolBlock):
             pass
         stalled = (
             not self._completed
+            and not self._abandoned
             and self._last_line_time > 0.0
             and (time.monotonic() - self._last_line_time) > 5.0
         )

@@ -500,8 +500,11 @@ class ToolGroup(Widget):
         self._last_header_kwargs: dict = {}
         # PG-4: group-level terminal state
         self._group_state: ToolGroupState = ToolGroupState.PENDING
-        # GHF-H1: monotonic timestamp of first transition into terminal state
+        # GHF-H1 + STALL-GC: monotonic timestamp of first transition into terminal state.
+        # None means not yet terminal.
         self._group_terminal_at: float | None = None
+        # STALL-GC: True once _sweep_abandoned_children has run for this group.
+        self._group_swept: bool = False
         # TB-MED-2: group tier cap + HERO lock
         self._user_hero: bool = False
         from hermes_cli.tui.tool_panel.layout_resolver import ToolBlockLayoutResolver
@@ -904,9 +907,10 @@ class ToolGroup(Widget):
             # PG-4: compute new group state BEFORE recompute_aggregate so terminal_at
             # is captured when recompute_aggregate calls _header.update
             self._group_state = _recompute_group_state(children, current_state=self._group_state)
-            # GHF-H1: capture terminal timestamp on first transition into terminal state
+            # GHF-H1 + STALL-GC-H1/H2: capture terminal timestamp; schedule abandonment sweep.
             if self._group_state in _TERMINAL_GROUP_STATES and self._group_terminal_at is None:
                 self._group_terminal_at = time.monotonic()
+                self.set_timer(2.0, self._sweep_abandoned_children)
             self.recompute_aggregate()
             # Reflect terminal group state on the ToolGroup widget via CSS classes
             # so hermes.tcss can style border-left based on outcome.
@@ -920,6 +924,32 @@ class ToolGroup(Widget):
             self._apply_child_render_cap()
         except Exception:
             _log.exception("toolgroup: on_tool_panel_completed failed")
+
+    def _sweep_abandoned_children(self) -> None:
+        """Fire 2s after group-terminal: mark non-completed children as abandoned.
+
+        STALL-GC-H2: scheduled by on_tool_panel_completed. Idempotent via _group_swept.
+        """
+        if self._group_swept:
+            return
+        self._group_swept = True
+        try:
+            from hermes_cli.tui.tool_panel import ToolPanel as _TP
+            if self._body is None:
+                return
+            for child in list(self._body.children):
+                if not isinstance(child, _TP):
+                    continue
+                block = getattr(child, "_block", None)
+                if block is None:
+                    continue
+                if getattr(block, "_completed", True):
+                    continue  # already completed normally
+                block._mark_abandoned()
+        except Exception:
+            _log.exception(
+                "ToolGroup._sweep_abandoned_children failed (group_id=%s)", self._group_id
+            )
 
 
 # ---------------------------------------------------------------------------

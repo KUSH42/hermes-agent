@@ -238,6 +238,12 @@ class CommandsService(AppService):
                 ))
             except NoMatches:
                 pass
+            from hermes_cli.tui.widgets.inline_media import InlineImageBar as _IIB
+            try:
+                app.query_one(_IIB).clear()
+            except NoMatches:
+                # InlineImageBar not mounted — correct when image bar is disabled
+                pass
             app._flash_hint("✨  Fresh start!", 2.0)
             # W-7 / AT-Z3: restore focus to compose after /clear
             from hermes_cli.tui.input_widget import HermesInput as _HI

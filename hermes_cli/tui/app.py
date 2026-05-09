@@ -1452,13 +1452,21 @@ class HermesApp(App):
     async def on_inline_image_bar_thumbnail_clicked(self, event: Any) -> None:
         """Scroll OutputPanel to the InlineImage matching the clicked thumbnail."""
         from hermes_cli.tui.widgets import InlineImage
+        from hermes_cli.tui.services import feedback as _fb
         for widget in self.query(InlineImage):
             if getattr(widget, "_src_path", "") == event.path:
                 try:
                     self.query_one(OutputPanel).scroll_to_widget(widget, animate=True)
                 except NoMatches:
                     pass
-                break
+                widget.add_class("--highlight-pulse")
+                self.set_timer(0.6, lambda w=widget: w.remove_class("--highlight-pulse"))
+                return
+        self._flash_hint(
+            "image no longer in view — scroll back to find it",
+            1.5,
+            key=_fb.HINT_KEY_IMAGE_NOT_IN_VIEW,
+        )
 
     def _mount_inline_media_widget(self, kind: str, url: str) -> None:
         """Mount InlineMediaWidget in output panel. Event-loop only."""

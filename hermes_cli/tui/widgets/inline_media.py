@@ -26,6 +26,8 @@ from textual.widgets import Static
 
 from hermes_cli.tui.tooltip import TooltipMixin
 
+_MAX_THUMBNAILS = 40
+
 if TYPE_CHECKING:
     pass
 
@@ -243,6 +245,19 @@ class InlineImage(Widget):
         self.watch_image(img)
 
 
+class _OldnessChip(Static):
+    """Small chip at the left of InlineImageBar showing pruned image count."""
+
+    DEFAULT_CSS = """
+    _OldnessChip {
+        width: auto;
+        height: 1;
+        color: $text-muted;
+        margin: 0 1;
+    }
+    """
+
+
 class InlineThumbnail(TooltipMixin, Widget):
     """Clickable halfblock thumbnail inside InlineImageBar."""
 
@@ -267,6 +282,13 @@ class InlineThumbnail(TooltipMixin, Widget):
         self._strips: list[Strip] = []
 
     def on_mount(self) -> None:
+        cwd = Path(getattr(self.app, "get_working_directory", lambda: Path.cwd())())
+        p = Path(self._path)
+        try:
+            rel = p.relative_to(cwd)
+            self._tooltip_text = rel.as_posix()
+        except ValueError:
+            self._tooltip_text = p.as_posix()
         self._load_strips()
 
     @work(thread=True)
@@ -322,17 +344,117 @@ class InlineImageBar(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._chips_by_key: dict[tuple[str, int], InlineThumbnail] = {}
+        self._chip_order: list[tuple[str, int]] = []
+        self._evicted_count: int = 0
+        self._next_idx: int = 0
+        # _paths kept for backwards-compat attribute access; not used for cap logic.
         self._paths: list[str] = []
         self._enabled: bool = True
 
     def compose(self) -> ComposeResult:
         yield Horizontal()
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _next_index(self) -> int:
+        """Return a monotonically increasing stable ID regardless of evictions."""
+        idx = self._next_idx
+        self._next_idx += 1
+        return idx
+
+    def _dedupe_key(self, path: str) -> tuple[str, int]:
+        p = Path(path).resolve()
+        try:
+            mtime = int(p.stat().st_mtime)
+        except OSError:
+            mtime = 0
+        return (str(p), mtime)
+
+    def _highlight_existing(self, key: tuple[str, int]) -> None:
+        """Pulse the existing chip for the given key (dedupe hit)."""
+        chip = self._chips_by_key.get(key)
+        if chip is None:
+            return
+        chip.add_class("--highlight-pulse")
+        self.set_timer(0.6, lambda: chip.remove_class("--highlight-pulse"))
+
+    def _evict_oldest(self, container: Horizontal) -> None:
+        """Remove the oldest chip from the DOM and tracking structures."""
+        if not self._chip_order:
+            return
+        oldest_key = self._chip_order.pop(0)
+        chip = self._chips_by_key.pop(oldest_key, None)
+        if chip is not None:
+            chip.remove()
+        self._evicted_count += 1
+
+    def _sync_oldness_chip(self, container: Horizontal) -> None:
+        """Mount or update the +M earlier images chip at the left of the bar.
+
+        If _evicted_count == 0, remove any existing chip. Otherwise, mount
+        one the first time and update its label and tooltip on subsequent calls.
+        """
+        existing = list(container.query(_OldnessChip))
+        if self._evicted_count == 0:
+            for c in existing:
+                c.remove()
+            return
+        label = f"+{self._evicted_count} earlier images"
+        tip = f"{self._evicted_count} images pruned from the start of the bar"
+        if existing:
+            existing[0].update(label)
+            existing[0].tooltip = tip
+        else:
+            chip = _OldnessChip(label)
+            chip.tooltip = tip
+            container.mount(
+                chip,
+                before=container.children[0] if container.children else None,
+            )
+
+    def _recompute_visibility(self) -> None:
+        """Add or remove --visible based on whether any chips are mounted."""
+        has_chips = bool(self._chips_by_key)
+        if has_chips:
+            self.add_class("--visible")
+        else:
+            self.remove_class("--visible")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def add_image(self, path: str) -> None:
         """Add a thumbnail. No-op when display.image_bar is disabled."""
         if not self._enabled:
             return
+        key = self._dedupe_key(path)
+        if key in self._chips_by_key:
+            self._highlight_existing(key)
+            return
         self._paths.append(path)
-        idx = len(self._paths)
-        self.add_class("--visible")
-        self.query_one(Horizontal).mount(InlineThumbnail(path=path, index=idx))
+        container = self.query_one(Horizontal)
+        if len(self._chips_by_key) >= _MAX_THUMBNAILS:
+            self._evict_oldest(container)
+        chip = InlineThumbnail(path=path, index=self._next_index())
+        self._chips_by_key[key] = chip
+        self._chip_order.append(key)
+        container.mount(chip)
+        self._sync_oldness_chip(container)
+        self._recompute_visibility()
+
+    def clear(self) -> None:
+        """Remove all thumbnails and reset tracking state."""
+        container = self.query_one(Horizontal)
+        for chip in list(container.query(InlineThumbnail)):
+            chip.remove()
+        for chip in list(container.query(_OldnessChip)):
+            chip.remove()
+        self._chips_by_key.clear()
+        self._chip_order.clear()
+        self._evicted_count = 0
+        self._paths.clear()
+        self._recompute_visibility()

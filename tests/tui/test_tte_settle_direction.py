@@ -308,7 +308,7 @@ class TestSettleDirectionWiring:
         OUTPUT_PANEL_WIDTH_READY.clear()
 
     def test_settle_direction_extracted_for_vhstape(self, monkeypatch):
-        """Cache-miss path passes direction='VERTICAL' to _hero_ansi_with_stops."""
+        """Cache-miss path passes direction='VERTICAL' to ramp frames."""
         import cli as cli_module
 
         mock_app = _make_mock_app()
@@ -317,11 +317,12 @@ class TestSettleDirectionWiring:
 
         calls: list = []
 
-        def _mock_ansi_with_stops(plain_hero, stops, direction="DIAGONAL"):
+        def _mock_ansi_with_stops_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
             calls.append(direction)
             return "\033[0mhero\033[0m"
 
-        cli._hero_ansi_with_stops = _mock_ansi_with_stops
+        cli._hero_ansi_with_stops_at = _mock_ansi_with_stops_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
         cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
 
         iter_frames_mock = MagicMock(return_value=iter(["\033[0mfr\033[0m"]))
@@ -339,7 +340,7 @@ class TestSettleDirectionWiring:
         assert calls[-1] == "VERTICAL", f"expected VERTICAL, got {calls[-1]}"
 
     def test_settle_direction_extracted_cache_hit_path(self, monkeypatch):
-        """Cache-hit path passes direction='VERTICAL' to _hero_ansi_with_stops."""
+        """Cache-hit path passes direction='VERTICAL' to ramp frames."""
         import cli as cli_module
 
         mock_app = _make_mock_app()
@@ -348,11 +349,12 @@ class TestSettleDirectionWiring:
 
         calls: list = []
 
-        def _mock_ansi_with_stops(plain_hero, stops, direction="DIAGONAL"):
+        def _mock_ansi_with_stops_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
             calls.append(direction)
             return "\033[0mhero\033[0m"
 
-        cli._hero_ansi_with_stops = _mock_ansi_with_stops
+        cli._hero_ansi_with_stops_at = _mock_ansi_with_stops_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
         cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
 
         cached = ["\033[0mfr1\033[0m", "\033[0mfr2\033[0m"]
@@ -371,7 +373,7 @@ class TestSettleDirectionWiring:
         assert calls[-1] == "VERTICAL", f"expected VERTICAL, got {calls[-1]}"
 
     def test_settle_direction_falls_back_on_exception(self, monkeypatch):
-        """If get_effect_gradient_direction raises, settle frame uses DIAGONAL (no crash)."""
+        """If get_effect_gradient_direction raises, ramp uses DIAGONAL (no crash)."""
         import cli as cli_module
 
         mock_app = _make_mock_app()
@@ -380,11 +382,12 @@ class TestSettleDirectionWiring:
 
         calls: list = []
 
-        def _mock_ansi_with_stops(plain_hero, stops, direction="DIAGONAL"):
+        def _mock_ansi_with_stops_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
             calls.append(direction)
             return "\033[0mhero\033[0m"
 
-        cli._hero_ansi_with_stops = _mock_ansi_with_stops
+        cli._hero_ansi_with_stops_at = _mock_ansi_with_stops_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
         cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
 
         iter_frames_mock = MagicMock(return_value=iter(["\033[0mfr\033[0m"]))
@@ -404,3 +407,271 @@ class TestSettleDirectionWiring:
 
         assert calls, "settle frame never generated"
         assert calls[-1] == "DIAGONAL", f"expected DIAGONAL fallback, got {calls[-1]}"
+
+
+# ---------------------------------------------------------------------------
+# TestPostFadeRamp
+# ---------------------------------------------------------------------------
+
+def _make_cli_hero_ansi_at(stops, direction, hero, t, bg="#1e1e1e"):
+    """Call _hero_ansi_with_stops_at via a minimal mock cli bound method."""
+    import cli as cli_module
+    cli = MagicMock()
+    cli._hero_ansi_colored = MagicMock(return_value="")
+    cli._hero_ansi_with_stops = cli_module.HermesCLI._hero_ansi_with_stops.__get__(cli)
+    method = cli_module.HermesCLI._hero_ansi_with_stops_at.__get__(cli)
+    return method(hero, stops, direction, t, bg)
+
+
+class TestPostFadeRamp:
+    """SPEC-TTE-POST-FADE: _hero_ansi_with_stops_at and ramp loops."""
+
+    STOPS = ["#FFD700", "#FFBF00", "#CD7F32"]
+    HERO = "HERMES\nAGENT"
+
+    # --- _hero_ansi_with_stops_at unit tests ---
+
+    def test_t1_identical_to_hero_ansi_with_stops(self):
+        """t=1.0 must produce the same output as _hero_ansi_with_stops."""
+        import cli as cli_module
+        cli_full = MagicMock()
+        cli_full._hero_ansi_colored = MagicMock(return_value="")
+        cli_full._hero_ansi_with_stops = cli_module.HermesCLI._hero_ansi_with_stops.__get__(cli_full)
+        expected = cli_module.HermesCLI._hero_ansi_with_stops.__get__(cli_full)(
+            self.HERO, self.STOPS, "DIAGONAL"
+        )
+        result = _make_cli_hero_ansi_at(self.STOPS, "DIAGONAL", self.HERO, 1.0)
+        assert result == expected
+
+    def test_t0_all_chars_bg_color(self):
+        """t=0 → all stop colors lerped to bg → output uses bg color only."""
+        rows = _parse_ansi_rows(
+            _make_cli_hero_ansi_at(["#FF0000", "#00FF00"], "DIAGONAL", "AB\nCD", 0.0, "#000000")
+        )
+        # All chars should be black (0,0,0) since lerp(black, any, 0) = black
+        for row in rows:
+            for px in row:
+                assert px == (0, 0, 0), f"expected (0,0,0) at t=0, got {px}"
+
+    def test_t_half_mid_lerp(self):
+        """t=0.5 → colors should be between bg and full stops."""
+        full_rows = _parse_ansi_rows(
+            _make_cli_hero_ansi_at(["#FF0000", "#0000FF"], "DIAGONAL", "AB", 1.0, "#000000")
+        )
+        half_rows = _parse_ansi_rows(
+            _make_cli_hero_ansi_at(["#FF0000", "#0000FF"], "DIAGONAL", "AB", 0.5, "#000000")
+        )
+        # Every channel in half must be strictly less than in full (since bg=black, full>0)
+        for row_f, row_h in zip(full_rows, half_rows):
+            for (rf, gf, bf), (rh, gh, bh) in zip(row_f, row_h):
+                # At least one channel must be dimmer at t=0.5
+                assert (rh, gh, bh) != (rf, gf, bf), "t=0.5 should differ from t=1.0"
+
+    def test_single_stop_delegates_through(self):
+        """len(stops)<2 → delegates to _hero_ansi_colored via _hero_ansi_with_stops."""
+        import cli as cli_module
+        cli = MagicMock()
+        cli._hero_ansi_colored = MagicMock(return_value="SENTINEL")
+        cli._hero_ansi_with_stops = cli_module.HermesCLI._hero_ansi_with_stops.__get__(cli)
+        method = cli_module.HermesCLI._hero_ansi_with_stops_at.__get__(cli)
+        result = method("HELLO", ["#FFD700"], "DIAGONAL", 0.5)
+        cli._hero_ansi_colored.assert_called_once_with("HELLO")
+        assert result == "SENTINEL"
+
+    # --- Cache-miss ramp count ---
+
+    @pytest.fixture(autouse=True)
+    def _ready(self):
+        from hermes_cli.tui.widgets import OUTPUT_PANEL_WIDTH_READY, STARTUP_BANNER_READY
+        STARTUP_BANNER_READY.set()
+        OUTPUT_PANEL_WIDTH_READY.set()
+        yield
+        STARTUP_BANNER_READY.clear()
+        OUTPUT_PANEL_WIDTH_READY.clear()
+
+    def test_cache_miss_ramp_count(self):
+        """Cache-miss path appends exactly round(fps*0.42) ramp frames (≥2)."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        fade_calls: list[float] = []
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            fade_calls.append(t)
+            return "\033[0mhero\033[0m"
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        iter_frames_mock = MagicMock(return_value=iter(["\033[0mfr\033[0m"]))
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", iter_frames_mock))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=None))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=ImportError("no skin")
+            ))
+            cli._play_tte_in_output_panel(cfg, "hero text")
+
+        expected = max(2, round(24 * 0.42))  # 10
+        assert len(fade_calls) == expected, f"expected {expected} ramp frames, got {len(fade_calls)}"
+
+    def test_cache_miss_last_frame_full_brightness(self):
+        """Cache-miss ramp: last frame has t=1.0 (full brightness)."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        fade_calls: list[float] = []
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            fade_calls.append(t)
+            return "\033[0mhero\033[0m"
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", MagicMock(return_value=iter(["\033[0mfr\033[0m"]))))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=None))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=ImportError("no skin")
+            ))
+            cli._play_tte_in_output_panel(cfg, "hero text")
+
+        assert fade_calls, "no ramp frames generated"
+        assert fade_calls[-1] == pytest.approx(1.0), f"last t={fade_calls[-1]}, expected 1.0"
+
+    # --- Cache-hit ramp count ---
+
+    def test_cache_hit_ramp_count(self):
+        """Cache-hit path appends exactly round(fps*0.42) ramp frames (≥2)."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        fade_calls: list[float] = []
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            fade_calls.append(t)
+            return "\033[0mhero\033[0m"
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        cached = ["\033[0mfr1\033[0m", "\033[0mfr2\033[0m"]
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", MagicMock(return_value=iter([]))))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=cached))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=ImportError("no skin")
+            ))
+            cli._play_tte_in_output_panel(cfg, "hero text")
+
+        expected = max(2, round(24 * 0.42))  # 10
+        assert len(fade_calls) == expected, f"expected {expected} ramp frames, got {len(fade_calls)}"
+
+    def test_cache_hit_last_frame_full_brightness(self):
+        """Cache-hit ramp: last frame has t=1.0."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        fade_calls: list[float] = []
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            fade_calls.append(t)
+            return "\033[0mhero\033[0m"
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        cached = ["\033[0mfr1\033[0m", "\033[0mfr2\033[0m"]
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", MagicMock(return_value=iter([]))))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=cached))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=ImportError("no skin")
+            ))
+            cli._play_tte_in_output_panel(cfg, "hero text")
+
+        assert fade_calls, "no ramp frames generated"
+        assert fade_calls[-1] == pytest.approx(1.0), f"last t={fade_calls[-1]}, expected 1.0"
+
+    # --- _settle_bg fallback ---
+
+    def test_settle_bg_fallback_on_exception(self):
+        """get_active_skin() raises → _settle_bg falls back to '#1e1e1e'."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        captured_bg: list[str] = []
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            captured_bg.append(bg)
+            return "\033[0mhero\033[0m"
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", MagicMock(return_value=iter(["\033[0mfr\033[0m"]))))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=None))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=RuntimeError("no skin engine")
+            ))
+            cli._play_tte_in_output_panel(cfg, "hero text")
+
+        assert captured_bg, "no ramp frames — _settle_bg not passed"
+        assert all(bg == "#1e1e1e" for bg in captured_bg), f"unexpected bg values: {captured_bg}"
+
+    # --- Ramp exception guard ---
+
+    def test_ramp_exception_no_crash(self):
+        """_hero_ansi_with_stops_at raising → no crash, no frames from bad iteration."""
+        import cli as cli_module
+
+        mock_app = _make_mock_app()
+        cfg = _make_cfg(cli_module, effect_name="vhstape", fps=24)
+        cli = _make_cli_instance(cli_module, mock_app)
+
+        def _mock_ansi_at(plain_hero, stops, direction, t, bg="#1e1e1e"):
+            raise ValueError("lerp exploded")
+
+        cli._hero_ansi_with_stops_at = _mock_ansi_at
+        cli._hero_ansi_with_stops = MagicMock(return_value="\033[0mhero\033[0m")
+        cli._hero_ansi_colored = MagicMock(return_value="\033[0mhero\033[0m")
+
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(cli_module, "_hermes_app", mock_app))
+            stack.enter_context(patch("hermes_cli.tui.tte_runner.iter_frames", MagicMock(return_value=iter(["\033[0mfr\033[0m"]))))
+            stack.enter_context(patch("hermes_cli.tui._tte_cache.load_tte_frames", return_value=None))
+            stack.enter_context(patch(
+                "hermes_cli.skin_engine.get_active_skin", side_effect=ImportError("no skin")
+            ))
+            # Must not raise
+            cli._play_tte_in_output_panel(cfg, "hero text")

@@ -543,7 +543,7 @@ class TestKnownSkillsAtomic:
 
         # Pick a name that collides with a known slash command bare name
         colliding = next(iter(_KNOWN_SLASH_BARE))
-        with pytest.raises(ValueError, match="overlap"):
+        with pytest.raises(AssertionError, match="collides"):
             refresh_known_skills([colliding])
 
 

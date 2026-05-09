@@ -87,6 +87,9 @@ def _make_block():
     block._history_capped = False
     block._follow_tail = False
     block._follow_tail_dirty = False
+    # Needed by _flush_pending to count lines_written (triggers _dismiss_skeleton)
+    block._cached_body_log = MagicMock()
+    block._flush_retry = 0
     block._omission_bar_top_mounted = False
     block._omission_bar_bottom_mounted = False
     from collections import deque
@@ -150,6 +153,8 @@ class TestStreamingHintClear:
         from hermes_cli.tui.tool_blocks._header import ToolHeader
         h = ToolHeader.__new__(ToolHeader)
         h._streaming_kind_hint = with_hint_value
+        h._panel = None
+        h._remediation_hint = None
         # `is_attached` is a read-only property on Widget — set on instance
         # via subclass to avoid leaking to other tests.
         cls = _isolated_header_cls()
@@ -220,6 +225,7 @@ class TestStreamingHintClear:
         h._tool_icon = "🔧"
         h._has_affordances = False
         h._panel = None
+        h._remediation_hint = None
         colors = SkinColors.default()
         h._skin_colors_cache = colors
         h._focused_gutter_color = colors.tool_header_gutter
@@ -258,8 +264,9 @@ class TestSkeletonRow:
         block._skeleton_timer = block._register_timer(
             block.set_timer(0.1, block._maybe_mount_skeleton)
         )
-        # First chunk arrives before timer fires
+        # First chunk arrives before timer fires; dismissal happens in _flush_pending
         block.append_line("hello")
+        block._flush_pending()
         assert block._skeleton_widget is None
         assert block._skeleton_timer is None
 
@@ -279,16 +286,18 @@ class TestSkeletonRow:
         # Skeleton already mounted (timer fired)
         block._maybe_mount_skeleton()
         assert block._skeleton_widget is not None
-        # First chunk dismisses it
+        # First chunk dismisses it; dismissal happens in _flush_pending
         block.append_line("hello")
+        block._flush_pending()
         assert block._skeleton_widget is None
         assert block._skeleton_pulse_timer is None
 
     def test_skeleton_uses_streaming_kind_hint_icon(self):
         from hermes_cli.tui.tool_payload import ResultKind
         block = _make_block()
-        # view carries the hint
-        block._view = types.SimpleNamespace(streaming_kind_hint=ResultKind.DIFF)
+        # parent is a read-only Textual property; mock _best_kind_icon directly
+        # so the skeleton text is built with the DIFF glyph.
+        block._best_kind_icon = lambda: "±"
         block._maybe_mount_skeleton()
         assert block._skeleton_widget is not None
         # The Static was constructed with a Rich Text — fish out its renderable

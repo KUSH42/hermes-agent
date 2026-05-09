@@ -757,8 +757,10 @@ async def test_statusbar_browse_minimal_width():
 async def test_statusbar_normal_mode_when_not_browsing():
     """StatusBar shows normal layout when browse_mode is False."""
     app = _make_app()
-    app.status_model = "claude-test"
     async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        # Set status_model after mount so on_mount's CLI seed doesn't overwrite it.
+        app.status_model = "claude-test"
         await pilot.pause()
         assert app.browse_mode is False
 

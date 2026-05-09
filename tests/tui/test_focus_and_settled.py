@@ -53,6 +53,7 @@ def _make_header(*, focused: bool = False, is_child: bool = False,
     h._tool_icon = "🔧"
     h._has_affordances = False
     h._panel = panel
+    h._remediation_hint = None
     h._skin_colors_cache = None
 
     colors = SkinColors.default()

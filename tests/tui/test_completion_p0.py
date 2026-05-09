@@ -150,8 +150,11 @@ async def test_auto_close_fires_after_1_5s_for_long_query() -> None:
     app = HermesApp(cli=MagicMock())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
+        from hermes_cli.tui.input.widget import AssistKind
         overlay = app.query_one(CompletionOverlay)
         overlay.add_class("--visible")
+        inp = app.query_one(HermesInput)
+        inp.assist = AssistKind.OVERLAY  # required so _resolve_assist(NONE) tears down overlay
         clist = app.query_one(VirtualCompletionList)
         clist.current_query = "xzqq"  # 4 chars
         clist.items = ()
@@ -160,9 +163,8 @@ async def test_auto_close_fires_after_1_5s_for_long_query() -> None:
         clist._maybe_schedule_auto_close()
         await pilot.pause()
 
-        # Wait for the 1.5s timer
-        await asyncio.sleep(1.6)
-        await pilot.pause()
+        # Wait for the 1.5s timer using Textual-native pause
+        await pilot.pause(delay=1.6)
 
         assert not overlay.has_class("--visible"), "Overlay should be dismissed"
 

@@ -46,6 +46,7 @@ class ContextMenuService(AppService):
 
     def __init__(self, app: "HermesApp") -> None:
         super().__init__(app)
+        self._paste_done: bool = True  # sentinel; set to False before each async paste
 
     async def handle_click(self, event: Any) -> None:
         """Core logic of on_click — routes left/right button events."""
@@ -347,23 +348,42 @@ class ContextMenuService(AppService):
         self.app._svc_theme.copy_text_with_hint(text)
 
     def paste_into_input(self) -> None:
-        """Paste app clipboard content into the input and flash a paste hint."""
-        app = self.app
+        """Paste into input: app clipboard first, then OS clipboard fallback."""
+        text = self.app.clipboard
+        if text:
+            self._paste_text_into_input(text)
+            return
+        # Fall back to OS clipboard via ClipboardService (off-thread, no UI freeze).
+        # _paste_done tracks whether the callback fired before the 50 ms flicker guard.
+        self._paste_done = False
+
+        def _show_checking() -> None:
+            if not self._paste_done:
+                self.app._flash_hint("⏳ checking…", 1.0)
+
+        self.app.set_timer(0.05, _show_checking)
+        self.app._clipboard_svc.read_text(self._paste_text_into_input)
+
+    def _paste_text_into_input(self, text: str) -> None:
+        """Insert text at cursor and flash hint; focus input even on empty."""
+        self._paste_done = True
+        if not text:
+            try:
+                self.app.query_one("#input-area").focus()
+            except NoMatches:
+                pass
+            self.app._flash_hint("clipboard empty", 1.5)
+            return
         try:
-            inp = app.query_one("#input-area")
-            text = app.clipboard
-            if not text:
-                inp.focus()
-                app._flash_hint("clipboard empty", 1.5)
-                return
-            if hasattr(inp, "insert_text"):
-                inp.insert_text(text)
-            elif hasattr(inp, "value"):
-                inp.value = f"{getattr(inp, 'value', '')}{text}"
-            inp.focus()
-            app._flash_hint(f"⎘  {len(text)} chars pasted", 1.2)
+            inp = self.app.query_one("#input-area")
         except NoMatches:
-            pass
+            return
+        if hasattr(inp, "insert_text"):
+            inp.insert_text(text)
+        else:
+            inp.value = f"{getattr(inp, 'value', '')}{text}"
+        inp.focus()
+        self.app._flash_hint(f"⎘  {len(text)} chars pasted", 1.2)
 
     def clear_input(self) -> None:
         """Clear the input content."""

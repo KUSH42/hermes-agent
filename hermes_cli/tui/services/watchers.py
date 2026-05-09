@@ -95,17 +95,15 @@ class WatchersService(AppService):
             pass
         try:
             image_bar = self.app.query_one(ImageBar)
-            if h < 10:
-                image_bar.styles.display = "none"
-            elif image_bar._static_content:
-                image_bar.styles.display = "block"
+            image_bar.recompute_visibility()
         except (NoMatches, AttributeError):
-            pass
+            pass  # NoMatches: ImageBar not yet mounted during startup; AttributeError: app.size not set
         try:
             hint_bar = self.app.query_one(HintBar)
             hint_bar.display = h >= 9
         except NoMatches:
             pass
+        self._sync_status_attachment_chip()
 
     def on_compact(self, value: bool) -> None:
         # PERF-3: dedupe against last-seen value. The reactive descriptor on
@@ -224,12 +222,19 @@ class WatchersService(AppService):
     # Attached images
     # ------------------------------------------------------------------
 
+    def _sync_status_attachment_chip(self) -> None:
+        """Write status_attachment_count_hidden based on current height + count."""
+        h = getattr(self.app.size, "height", 0)
+        count = len(self.app.attached_images)
+        self.app.status_attachment_count_hidden = count if (count > 0 and h < 10) else 0
+
     def on_attached_images(self, value: list) -> None:
         from hermes_cli.tui.widgets import ImageBar
         try:
             self.app.query_one(ImageBar).update_images(value)
         except NoMatches:
             pass
+        self._sync_status_attachment_chip()
 
     def append_attached_images(self, images: list[Path]) -> None:
         """Keep TUI image state and CLI submit payload in sync."""
@@ -251,6 +256,17 @@ class WatchersService(AppService):
     # ------------------------------------------------------------------
     # Link token insertion
     # ------------------------------------------------------------------
+
+    def _insert_plain_text(self, text: str) -> None:
+        """Insert raw text at the input cursor (no link formatting)."""
+        try:
+            inp = self.app.query_one("#input-area")
+        except NoMatches:
+            return
+        if hasattr(inp, "insert_text"):
+            inp.insert_text(text)
+        elif hasattr(inp, "value"):
+            inp.value = f"{getattr(inp, 'value', '')}{text}"
 
     def insert_link_tokens(self, tokens: list[str]) -> None:
         if not tokens:
@@ -335,7 +351,7 @@ class WatchersService(AppService):
             _log.exception("handle_file_drop: inner handler raised")
             self.app._flash_hint("file drop failed — see log for details", 2.0)
 
-    def handle_file_drop_inner(self, paths: list[Path]) -> None:
+    def handle_file_drop_inner(self, paths: list[Path], remainder: str = "") -> None:
         if self._modal_active():
             self._pending_drop_queue.extend(paths)
             n = len(paths)
@@ -373,6 +389,8 @@ class WatchersService(AppService):
             self.append_attached_images(image_paths)
         if link_tokens:
             self.insert_link_tokens(link_tokens)
+        if remainder:
+            self._insert_plain_text(remainder)
 
         hint_parts: list[str] = []
         if link_tokens:

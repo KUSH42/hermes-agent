@@ -15,7 +15,7 @@ import shutil as _shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste
+from hermes_cli.file_drop import detect_file_drop_text, parse_dragged_file_paste, resolve_dropped_paths
 
 from rich.cells import cell_len
 from rich.style import Style
@@ -120,9 +120,10 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     class FilesDropped(Message):
         """Emitted when terminal drag-and-drop pastes one or more local paths."""
 
-        def __init__(self, paths: list[Path]) -> None:
+        def __init__(self, paths: list[Path], remainder_text: str = "") -> None:
             super().__init__()
             self.paths = paths
+            self.remainder_text = remainder_text
 
     def __init__(
         self,
@@ -631,11 +632,13 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
     async def _on_paste(self, event: events.Paste) -> None:
         """Intercept terminal drag-and-drop before TextArea inserts raw path text."""
         try:
-            dropped_paths = parse_dragged_file_paste(event.text)
+            resolution = resolve_dropped_paths(event.text, multi_line=True)
         except Exception:  # drag parse failed — treat paste as plain text
-            dropped_paths = None
-        if dropped_paths:
-            self.post_message(self.FilesDropped(dropped_paths))
+            resolution = None
+        if resolution is not None and resolution.paths:
+            self.post_message(
+                self.FilesDropped(resolution.paths, resolution.remainder_text)
+            )
             event._no_default_action = True
             event.stop()
             return

@@ -131,6 +131,141 @@ _MAX_FILE_DROP_CHARS = 4096  # paste payloads longer than this are prose, not fi
 _MAX_FILE_DROP_LINES = 10  # drag-and-drop rarely drops more than a handful of files
 
 
+@dataclass(frozen=True)
+class DropResolution:
+    paths: list[Path]
+    remainder_text: str = ""
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.paths
+
+
+def _resolve_single_line(text: str) -> DropResolution:
+    """Greedy-prefix path extraction for single-line inputs.
+
+    Handles quoted paths and unquoted paths with spaces via longest-match.
+    Returns DropResolution with at most one path and any remainder text.
+    """
+    if not isinstance(text, str):
+        return DropResolution(paths=[], remainder_text="")
+
+    raw = text.strip()
+    if not raw:
+        return DropResolution(paths=[], remainder_text=text)
+
+    # Handle quoted paths: "/path/to/file.py" or '/path/to/file.py'
+    if len(raw) >= 3 and raw[0] in ('"', "'"):
+        quote = raw[0]
+        end = raw.find(quote, 1)
+        if end > 0:
+            candidate = raw[1:end]
+            path = _path_from_text(candidate)
+            if path.exists():
+                remainder = raw[end + 1:].strip()
+                return DropResolution(paths=[path], remainder_text=remainder)
+
+    if not raw.startswith(("/", "file://", "~")):
+        return DropResolution(paths=[], remainder_text=text)
+
+    pos = 0
+    while pos < len(raw):
+        ch = raw[pos]
+        if ch == "\\" and pos + 1 < len(raw) and raw[pos + 1] == " ":
+            pos += 2
+        elif ch == " ":
+            break
+        else:
+            pos += 1
+
+    first_token = raw[:pos]
+    path = _path_from_text(first_token)
+    if not path.exists() or not path.is_file():
+        # Token stopped at first space; try greedily finding the longest
+        # existing prefix to handle unquoted paths with spaces (e.g. macOS
+        # screenshot names). Check the full raw string first, then each
+        # space-terminated prefix from longest to shortest.
+        candidates: list[tuple[int, str]] = [(len(raw), raw)]
+        # Bound to 12 space positions to avoid O(N) stat syscalls on long prose pastes.
+        space_positions = [i for i, c in enumerate(raw) if c == " "][:12]
+        candidates.extend((sp, raw[:sp]) for sp in reversed(space_positions))
+        found_path: Path | None = None
+        found_pos: int = pos
+        for end_pos, token in candidates:
+            candidate = _path_from_text(token)
+            if candidate.exists() and candidate.is_file():
+                found_path = candidate
+                found_pos = end_pos
+                break  # longest match wins
+        if found_path is None:
+            return DropResolution(paths=[], remainder_text=text)
+        path = found_path
+        pos = found_pos
+
+    remainder = raw[pos:].strip()
+    return DropResolution(paths=[path], remainder_text=remainder)
+
+
+def resolve_dropped_paths(text: str, *, multi_line: bool = True) -> DropResolution:
+    """Single source of truth for drag-and-drop / pasted-path detection.
+
+    multi_line=True  → split on newlines first (like parse_dragged_file_paste):
+                        each line is a candidate path token.
+    multi_line=False → treat the whole string as a single line (like
+                        detect_file_drop_text): greedy-prefix recovery only.
+
+    Returns a DropResolution with valid paths plus any leftover text that
+    was not consumed. Caller decides whether to insert remainder as text or
+    discard it.
+    """
+    if not isinstance(text, str):
+        return DropResolution(paths=[], remainder_text="")
+
+    if multi_line:
+        if len(text) > _MAX_FILE_DROP_CHARS:
+            return DropResolution(paths=[], remainder_text=text)
+
+        raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not raw_lines:
+            return DropResolution(paths=[], remainder_text=text)
+
+        tokens: list[str] = []
+        for line in raw_lines:
+            if '"' in line or "'" in line or " " in line:
+                split = _split_quoted_paths(line)
+                if len(split) > 1:
+                    tokens.extend(split)
+                else:
+                    tokens.append(split[0] if split else line)
+            else:
+                tokens.append(line)
+
+        if not tokens or len(tokens) > _MAX_FILE_DROP_LINES:
+            return DropResolution(paths=[], remainder_text=text)
+
+        paths: list[Path] = []
+        remainder_tokens: list[str] = []
+        for token in tokens:
+            path = _path_from_text(token)
+            if path.exists():
+                paths.append(path)
+            else:
+                # Token doesn't exist as-is. If it came from a single-line
+                # payload with spaces but no quotes, try the full original line.
+                if len(raw_lines) == 1 and " " in raw_lines[0]:
+                    full_path = _path_from_text(raw_lines[0])
+                    if full_path.exists():
+                        return DropResolution(paths=[full_path], remainder_text="")
+                remainder_tokens.append(token)
+
+        remainder = " ".join(remainder_tokens)
+        return DropResolution(paths=paths, remainder_text=remainder)
+
+    else:
+        # single-line mode: greedy-prefix recovery (like original detect_file_drop_text)
+        return _resolve_single_line(text)
+
+
 def _split_quoted_paths(text: str) -> list[str]:
     """Split text into path tokens, respecting single and double quotes.
 
@@ -167,128 +302,35 @@ def _split_quoted_paths(text: str) -> list[str]:
 def parse_dragged_file_paste(text: str) -> list[Path] | None:
     """Return file paths when a paste payload looks like terminal drag-and-drop.
 
-    Accepts one or more newline-separated or space-separated local file paths /
-    file:// URIs. Paths with spaces can be quoted with single or double quotes.
-    Rejects mixed prose + path payloads so normal paste keeps working.
+    Thin shim over resolve_dropped_paths(multi_line=True). Preserves nil-on-any-miss
+    semantics: returns None if any token failed to resolve (same behavior as before
+    so existing callers are backward-compatible). Partial success is only
+    accessible via resolve_dropped_paths directly.
     """
-    if not isinstance(text, str):
+    resolution = resolve_dropped_paths(text, multi_line=True)
+    if not resolution.paths:
         return None
-    # Early bail-out: long paste payloads are prose, not file drops.
-    # Without this guard, each line triggers a path.exists() syscall,
-    # hanging the TUI on multi-KB pastes.
-    if len(text) > _MAX_FILE_DROP_CHARS:
+    # Preserve nil-on-any-miss: if there are remainder tokens, some failed → return None.
+    if resolution.remainder_text:
         return None
-
-    # Split on newlines first, then on spaces (respecting quotes)
-    raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not raw_lines:
-        return None
-
-    tokens: list[str] = []
-    for line in raw_lines:
-        # Always try quote-aware splitting first. This handles:
-        # - space-separated: /a.py /b.txt → ['/a.py', '/b.txt']
-        # - quoted with spaces: "/path/file name.py" → ['/path/file name.py']
-        # - mixed: /a.py "/path with spaces/b.py" → ['/a.py', '/path with spaces/b.py']
-        if '"' in line or "'" in line or " " in line:
-            split = _split_quoted_paths(line)
-            if len(split) > 1:
-                # Multiple tokens — use split result
-                tokens.extend(split)
-            else:
-                # Single token (unquoted path with spaces, or quoted single path)
-                tokens.append(split[0] if split else line)
-        else:
-            tokens.append(line)
-
-    if not tokens or len(tokens) > _MAX_FILE_DROP_LINES:
-        return None
-
-    paths: list[Path] = []
-    for token in tokens:
-        path = _path_from_text(token)
-        if not path.exists():
-            # Token doesn't exist as-is. If it came from splitting a line
-            # with spaces but no quotes, the whole line might be one path
-            # with spaces. Try the full original line (single-line case).
-            if len(raw_lines) == 1 and " " in raw_lines[0]:
-                full_path = _path_from_text(raw_lines[0])
-                if full_path.exists():
-                    return [full_path]
-            return None
-        paths.append(path)
-
-    return paths or None
+    return resolution.paths
 
 
 def detect_file_drop_text(user_input: str) -> FileDropMatch | None:
-    """Detect a terminal-pasted file path prefix inside a prompt string."""
-    if not isinstance(user_input, str):
+    """Detect a terminal-pasted file path prefix inside a prompt string.
+
+    Thin shim over resolve_dropped_paths(multi_line=False) packed into
+    a FileDropMatch (backward-compatible return type with is_image field).
+    """
+    resolution = resolve_dropped_paths(user_input, multi_line=False)
+    if not resolution.paths:
         return None
-
-    raw = user_input.strip()
-
-    # Handle quoted paths: "/path/to/file.py" or '/path/to/file.py'
-    if len(raw) >= 3 and raw[0] in ('"', "'"):
-        quote = raw[0]
-        end = raw.find(quote, 1)
-        if end > 0:
-            candidate = raw[1:end]
-            path = _path_from_text(candidate)
-            if path.exists():
-                remainder = raw[end + 1:].strip()
-                return FileDropMatch(
-                    path=path,
-                    is_image=path.is_file() and (
-                        path.suffix.lower() in IMAGE_EXTENSIONS
-                        or (mimetypes.guess_type(str(path))[0] or "").startswith("image/")
-                    ),
-                    remainder=remainder,
-                )
-
-    if not raw.startswith(("/", "file://", "~")):
-        return None
-
-    pos = 0
-    while pos < len(raw):
-        ch = raw[pos]
-        if ch == "\\" and pos + 1 < len(raw) and raw[pos + 1] == " ":
-            pos += 2
-        elif ch == " ":
-            break
-        else:
-            pos += 1
-
-    first_token = raw[:pos]
-    path = _path_from_text(first_token)
-    if not path.exists() or not path.is_file():
-        # Token stopped at first space; try greedily finding the longest
-        # existing prefix to handle unquoted paths with spaces (e.g. macOS
-        # screenshot names). Check the full raw string first, then each
-        # space-terminated prefix from longest to shortest.
-        candidates: list[tuple[int, str]] = [(len(raw), raw)]
-        # Bound to 12 space positions to avoid O(N) stat syscalls on long prose pastes.
-        space_positions = [i for i, c in enumerate(raw) if c == " "][:12]
-        candidates.extend((sp, raw[:sp]) for sp in reversed(space_positions))
-        found_path: Path | None = None
-        found_pos: int = pos
-        for end, token in candidates:
-            candidate = _path_from_text(token)
-            if candidate.exists() and candidate.is_file():
-                found_path = candidate
-                found_pos = end
-                break  # longest match wins
-        if found_path is None:
-            return None
-        path = found_path
-        pos = found_pos
-
-    remainder = raw[pos:].strip()
+    path = resolution.paths[0]
     return FileDropMatch(
         path=path,
         is_image=path.is_file() and (
             path.suffix.lower() in IMAGE_EXTENSIONS
             or (mimetypes.guess_type(str(path))[0] or "").startswith("image/")
         ),
-        remainder=remainder,
+        remainder=resolution.remainder_text,
     )

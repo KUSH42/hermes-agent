@@ -15,7 +15,7 @@ _log = logging.getLogger(__name__)
 
 from rich.segment import Segment
 from rich.text import Text
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.message import Message
@@ -229,7 +229,7 @@ class InlineImage(Widget):
             self._emit_raw(_get_renderer().delete_sequence(self._image_id))
             self._image_id = None
 
-    def on_resize(self, event: object) -> None:
+    def on_resize(self, _event: "events.Resize") -> None:
         if self.image is not None:
             self.watch_image(self.image)
 

@@ -166,7 +166,7 @@ class CompletionOverlay(Vertical):
 
     def on_resize(self, event: events.Resize) -> None:
         w = event.size.width
-        if self._last_applied_w == 0 or crosses_threshold(self._last_applied_w, w, THRESHOLD_COMP_NARROW):
+        if crosses_threshold(self._last_applied_w, w, THRESHOLD_COMP_NARROW):
             self.set_class(w < THRESHOLD_COMP_NARROW, "--narrow")
         self._last_applied_w = w
         # B1: cap max-height dynamically so overlay does not clip at short terminal heights

@@ -20,6 +20,24 @@ THRESHOLD_PANES_WIDE       = 160   # at/above → THREE_WIDE pane layout
 THRESHOLD_PANES_MIN_HEIGHT = 20    # below → force SINGLE regardless of width
 
 
+NAMEPLATE_REFRESH_DELTA = 4  # cols; below this no canvas resize is observable
+
+INITIAL_WIDTH = 0  # use this as the initial value for _last_resize_w
+                    # to leverage crosses_threshold's first-run trigger
+
+
+def initial_resize_state() -> int:
+    """Return the canonical initial value for `_last_resize_w` fields.
+
+    Widgets that do dead-band gating with `crosses_threshold` should
+    initialise their `_last_resize_w` (or analogous) attribute via this
+    helper. Currently returns 0 — `crosses_threshold` treats old=0 as
+    "below" for any sane threshold, so the first real resize always
+    triggers.
+    """
+    return INITIAL_WIDTH
+
+
 def crosses_threshold(old: int, new: int, threshold: int, hyst: int = HYSTERESIS) -> bool:
     """Return True only when the value cleanly crosses through the dead-band zone.
 

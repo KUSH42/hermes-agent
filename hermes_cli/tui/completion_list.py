@@ -26,6 +26,7 @@ from rich.color import Color as RichColor
 from rich.console import Segment
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.geometry import Region, Size
 from textual.message import Message
 from textual.reactive import reactive
@@ -325,7 +326,7 @@ class VirtualCompletionList(ScrollView, can_focus=True):
         else:
             badge.display = False
 
-    def on_resize(self, _event: object) -> None:
+    def on_resize(self, _event: "events.Resize") -> None:
         self._update_overflow_badge()
 
     # -------------------------------------------------------------------------

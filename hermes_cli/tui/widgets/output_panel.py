@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from rich.text import Text
+from textual import events
 from textual.binding import Binding
 from textual.containers import ScrollableContainer
 from textual.css.query import NoMatches
@@ -519,7 +520,7 @@ class OutputPanel(ScrollableContainer):
             return
         self._resolve_pass(pressure2, viewport_rows2)
 
-    def on_resize(self, event: Any) -> None:
+    def on_resize(self, event: "events.Resize") -> None:
         """Anchor scroll position on resize; Textual cascades resize to children automatically."""
         self._resolve_layout()
         # Set startup banner width on first resize (size.width is 0 at on_mount in Textual 8.x).

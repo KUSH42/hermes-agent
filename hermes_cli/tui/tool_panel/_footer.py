@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from textual import work
+from textual import events, work
 from textual.timer import Timer
 
 _log = logging.getLogger(__name__)
@@ -684,8 +684,8 @@ class FooterPane(Widget):
                 )
             event.stop()
 
-    def on_resize(self, event: object) -> None:
-        width = getattr(getattr(event, "size", None), "width", 80)
+    def on_resize(self, event: "events.Resize") -> None:
+        width = event.size.width
         if crosses_threshold(self._last_resize_w, width, THRESHOLD_NARROW):
             self.set_class(width < THRESHOLD_NARROW, "compact")
         self._last_resize_w = width

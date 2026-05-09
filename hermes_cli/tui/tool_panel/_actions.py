@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from textual import events
 from textual.message import Message
 
 from hermes_cli.tui.io_boundary import safe_open_url, safe_edit_cmd
@@ -859,8 +860,8 @@ class _ToolPanelActionsMixin:
             except Exception:  # panel may be unmounting; PathFocused message is best-effort
                 pass
 
-    def on_resize(self, event: object) -> None:
-        width = getattr(getattr(event, "size", None), "width", 80)
+    def on_resize(self, event: "events.Resize") -> None:
+        width = event.size.width
         self._last_resize_w = width  # type: ignore[attr-defined]
         always_visible = self.has_class("--has-affordances")  # type: ignore[attr-defined]
         if (self._hint_visible or always_visible) and self._hint_row is not None:  # type: ignore[attr-defined]

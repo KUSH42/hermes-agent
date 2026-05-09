@@ -11,6 +11,7 @@ from typing import Any
 
 from rich.style import Style
 from rich.text import Text
+from textual import events
 from textual.widget import Widget
 
 _log = logging.getLogger(__name__)
@@ -225,13 +226,13 @@ class AssistantNameplate(Widget):
             # best-effort UI update; widget may not be mounted
             pass
 
-    def on_resize(self, event: Any) -> None:
-        new_w = getattr(getattr(event, "size", None), "width", self._canvas_width)
-        from hermes_cli.tui.resize_utils import HYSTERESIS
-        if abs(new_w - self._canvas_width) > HYSTERESIS * 2:
+    def on_resize(self, event: "events.Resize") -> None:
+        from hermes_cli.tui.resize_utils import NAMEPLATE_REFRESH_DELTA
+        new_w = event.size.width
+        if abs(new_w - self._canvas_width) >= NAMEPLATE_REFRESH_DELTA:
             self._canvas_width = new_w
             self.refresh()  # C-6: repaint after canvas-width change
-        self._last_nameplate_w = new_w
+        self._last_nameplate_w = new_w  # always track for external readers
 
     # --- public API ---
 

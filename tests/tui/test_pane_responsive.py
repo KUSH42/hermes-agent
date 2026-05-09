@@ -48,23 +48,23 @@ class TestModeTransitions:
     def test_mode_stays_single_below_120(self) -> None:
         pm = _pm()
         # Pump on_resize to set initial mode, then narrow terminal
-        pm.on_resize(100, 40)
+        pm.update_for_size(100, 40)
         assert pm._mode == LayoutMode.SINGLE
 
     def test_mode_transitions_at_120(self) -> None:
         pm = _pm()
         # Start below threshold
-        pm.on_resize(100, 40)
+        pm.update_for_size(100, 40)
         assert pm._mode == LayoutMode.SINGLE
         # Jump well past threshold — hysteresis won't block
-        changed = pm.on_resize(130, 40)
+        changed = pm.update_for_size(130, 40)
         assert changed
         assert pm._mode == LayoutMode.THREE
 
     def test_mode_three_wide_at_160(self) -> None:
         pm = _pm()
-        pm.on_resize(130, 40)  # THREE
-        changed = pm.on_resize(165, 40)  # THREE_WIDE
+        pm.update_for_size(130, 40)  # THREE
+        changed = pm.update_for_size(165, 40)  # THREE_WIDE
         assert changed
         assert pm._mode == LayoutMode.THREE_WIDE
 
@@ -78,7 +78,7 @@ class TestModeTransitions:
         """on_resize returns False when short terminal prevents mode change."""
         pm = _pm()
         # h=15 < MIN_HEIGHT: compute_mode always returns SINGLE
-        changed = pm.on_resize(200, 15)
+        changed = pm.update_for_size(200, 15)
         # Mode stays SINGLE (no change from initial) so on_resize returns False
         assert not changed
         assert pm._mode == LayoutMode.SINGLE
@@ -86,36 +86,36 @@ class TestModeTransitions:
     def test_hysteresis_prevents_flap_near_boundary(self) -> None:
         pm = _pm()
         # Get to THREE mode first with a wide terminal
-        pm.on_resize(130, 40)
+        pm.update_for_size(130, 40)
         assert pm._mode == LayoutMode.THREE
         # w=119 is just 1 below threshold — hysteresis prevents flap back to SINGLE
         # (threshold_off=120, HYSTERESIS=2 → transition blocked when w >= 118)
-        changed = pm.on_resize(119, 40)
+        changed = pm.update_for_size(119, 40)
         assert not changed
         assert pm._mode == LayoutMode.THREE
 
     def test_hysteresis_allows_transition_below_hysteresis_band(self) -> None:
         pm = _pm()
-        pm.on_resize(130, 40)
+        pm.update_for_size(130, 40)
         assert pm._mode == LayoutMode.THREE
         # w=117 is below threshold_off - HYSTERESIS = 118 → transition allowed
-        changed = pm.on_resize(117, 40)
+        changed = pm.update_for_size(117, 40)
         assert changed
         assert pm._mode == LayoutMode.SINGLE
 
     def test_on_resize_returns_true_on_mode_change(self) -> None:
         pm = _pm()
         # Start at SINGLE
-        pm.on_resize(100, 40)
+        pm.update_for_size(100, 40)
         # Wide — triggers THREE
-        result = pm.on_resize(140, 40)
+        result = pm.update_for_size(140, 40)
         assert result is True
 
     def test_on_resize_returns_false_same_mode(self) -> None:
         pm = _pm()
-        pm.on_resize(100, 40)
+        pm.update_for_size(100, 40)
         # Still narrow — no change
-        result = pm.on_resize(110, 40)
+        result = pm.update_for_size(110, 40)
         assert result is False
 
     def test_compute_layout_center_guard_fallthrough(self) -> None:
@@ -232,7 +232,7 @@ class TestCompactImpliesSingle:
 
     def test_on_resize_noop_when_disabled(self) -> None:
         pm = _pm(enabled=False)
-        changed = pm.on_resize(200, 50)
+        changed = pm.update_for_size(200, 50)
         assert changed is False
 
 
@@ -393,7 +393,7 @@ async def test_v2_flush_resize_triggers_apply_layout() -> None:
         await pilot.pause()
         # Force a mode change by calling on_resize manually
         app._pane_manager._mode = LayoutMode.SINGLE
-        changed = app._pane_manager.on_resize(140, 40)
+        changed = app._pane_manager.update_for_size(140, 40)
         if changed:
             app._pane_manager._apply_layout(app)
         await pilot.pause()

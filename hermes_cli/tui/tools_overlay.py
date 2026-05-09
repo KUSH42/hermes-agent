@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 _log = logging.getLogger(__name__)
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import Screen
@@ -442,8 +443,8 @@ ToolsScreen > #prefix-legend.--hidden {
             self._refresh_timer = None
         super().on_unmount()  # MOD-H1: pop_modal + --modal removal + focus restore
 
-    def on_resize(self) -> None:
-        w = self.app.size.width
+    def on_resize(self, event: "events.Resize") -> None:
+        w = event.size.width
         self._term_w = w
         if crosses_threshold(self._last_resize_w, w, THRESHOLD_NARROW) and w < THRESHOLD_NARROW:
             self.app._flash_hint("⚠  terminal too narrow for /tools overlay", 2.0)

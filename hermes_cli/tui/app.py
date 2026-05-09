@@ -1057,7 +1057,7 @@ class HermesApp(App):
             self.compact = True
         # R2 pane layout — recalculate mode on every resize
         if getattr(self, "_pane_manager", None) and self._pane_manager.enabled:
-            changed = self._pane_manager.on_resize(w, h)
+            changed = self._pane_manager.update_for_size(w, h)
             if changed:
                 self._pane_manager._apply_layout(self)
 

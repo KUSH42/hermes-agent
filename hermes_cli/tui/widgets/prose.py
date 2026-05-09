@@ -22,6 +22,13 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from .renderers import CopyableRichLog, _WriteOp, _apply_span_style
+from hermes_cli.tui.widgets._grapheme import suffix_grapheme_count as _suffix_grapheme_count
+
+# MSG-DEDUP Sub-fix C: max graphemes in the suffix delta for a prefix-extension rewrite.
+# Rationale: real-world trailing additions are 1–3 graphemes (space + emoji + optional
+# modifier). 6 allows space + ZWJ family (3 graphemes) + VS-16 + skin-tone with headroom,
+# while excluding genuine continuation text (>6 graphemes of regular prose).
+_PREFIX_EXTEND_MAX_GRAPHEMES: int = 6
 
 if TYPE_CHECKING:
     pass
@@ -111,6 +118,33 @@ class InlineProseLog(CopyableRichLog):
                 self._inline_emit_seen[plain],
             )
             return
+
+        # MSG-DEDUP-H1 Sub-fix C: prefix-extension dedup (producer trailing-glyph re-emit).
+        # If the immediately preceding *inline* line is a strict prefix of the new plain
+        # and the suffix delta is small (≤ _PREFIX_EXTEND_MAX_GRAPHEMES graphemes), treat
+        # the new emission as a rewrite of that prior row, not a new row.
+        # Guard: skip for any line containing an ImageSpan on either side — image identity
+        # (span_index, image key) must be preserved and cannot be inferred from plain text alone.
+        # Note: `ImageSpan` is already imported at the top of write_inline (line 94); no
+        # re-import is needed here.
+        if (
+            plain
+            and not self._replaying
+            and line_index > 0
+            and (line_index - 1) in self._inline_lines
+            and not any(isinstance(s, ImageSpan) for s in line)
+            and not any(isinstance(s, ImageSpan) for s in self._inline_lines[line_index - 1])
+        ):
+            prev_plain = self._line_to_plain(self._inline_lines[line_index - 1])
+            if (
+                prev_plain
+                and plain.startswith(prev_plain)
+                and plain != prev_plain
+                and _suffix_grapheme_count(plain[len(prev_plain):]) <= _PREFIX_EXTEND_MAX_GRAPHEMES
+            ):
+                # Rewrite the previous slot in place; _logical_count is not incremented.
+                self._rewrite_inline(line_index - 1, line, text, plain)
+                return
 
         self._inline_lines[line_index] = line
         self._inline_paint[line_index] = self._build_paint_plan(line, text)

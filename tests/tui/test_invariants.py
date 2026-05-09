@@ -2024,3 +2024,93 @@ class TestIL13NoDeadYKey:
         assert all("/tests" not in r for r in roots)
         assert all("/services" not in r for r in roots)
         assert all("/cli" not in r for r in roots)
+
+
+# ---------------------------------------------------------------------------
+# IL-MSG-1: InlineProseLog emit/source-ops symmetry (MSG-DEDUP-M1)
+# ---------------------------------------------------------------------------
+
+
+def _make_il_msg_log(width: int = 80):
+    """Create an InlineProseLog stub for IL-MSG-1 invariant tests."""
+    from textual.geometry import Region
+    from hermes_cli.tui.widgets.prose import InlineProseLog
+
+    class _StubLog(InlineProseLog):
+        _test_width: int = width
+
+        @property
+        def scrollable_content_region(self):  # type: ignore[override]
+            return Region(0, 0, self._test_width, 100)
+
+    widget = _StubLog(markup=False, highlight=False, wrap=True)
+    widget._render_width = width
+    return widget
+
+
+def _il_make_line(text_str: str):
+    from rich.text import Text
+    from hermes_cli.tui.inline_prose import TextSpan
+    return [TextSpan(text=Text(text_str))]
+
+
+class TestInvariantILMSG1:
+    """IL-MSG-1: every visible inline row has exactly one matching _source_ops entry."""
+
+    def test_invariant_il_msg_1_basic(self):
+        """10 distinct-plain writes → _logical_count==10, 10 inline ops."""
+        log = _make_il_msg_log()
+        for i in range(10):
+            log.write_inline(_il_make_line(f"distinct line {i}"))
+
+        inline_ops = [op for op in log._source_ops if op.kind == "inline"]
+        assert log._logical_count == 10
+        assert len(inline_ops) == 10
+
+    def test_invariant_il_msg_1_dedup_guard(self, caplog):
+        """5 distinct lines then 5 duplicate re-emits → _logical_count==5, 5 WARNINGs."""
+        import logging
+        log = _make_il_msg_log()
+        lines = [_il_make_line(f"line {i}") for i in range(5)]
+        for line in lines:
+            log.write_inline(line)
+
+        assert log._logical_count == 5
+
+        with caplog.at_level(logging.WARNING, logger="hermes_cli.tui.widgets.prose"):
+            for line in lines:  # same plain text → dedup guard fires
+                log.write_inline(line)
+
+        assert log._logical_count == 5
+        inline_ops = [op for op in log._source_ops if op.kind == "inline"]
+        assert len(inline_ops) == 5
+        assert caplog.text.count("duplicate plain text") == 5
+
+    def test_invariant_il_msg_1_reflow_idempotent(self):
+        """Manually replay 5 ops with _replaying=True → _logical_count==5, 5 inline ops."""
+        log = _make_il_msg_log()
+        for i in range(5):
+            log.write_inline(_il_make_line(f"replay line {i}"))
+
+        assert log._logical_count == 5
+
+        # Simulate the inline-state reset that _do_reflow performs before replay.
+        saved_ops = list(log._source_ops)
+        log._inline_lines.clear()
+        log._inline_paint.clear()
+        log._logical_count = 0
+        log._inline_emit_seen.clear()
+
+        # Replay with _replaying=True (mirrors CopyableRichLog._do_reflow).
+        log._replaying = True
+        try:
+            log._source_ops.clear()
+            for op in saved_ops:
+                if op.kind == "inline":
+                    log.write_inline(op.content)
+        finally:
+            log._replaying = False
+
+        assert log._logical_count == 5
+        inline_ops = [op for op in log._source_ops if op.kind == "inline"]
+        assert len(inline_ops) == 5

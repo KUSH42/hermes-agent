@@ -377,6 +377,8 @@ class FooterPane(Widget):
     DEFAULT_CSS = """
     FooterPane {
         height: auto;
+        /* padding-left: 1 here + ToolPanel padding-left: 1 (LP-COL-2) = $body-indent (2). */
+        /* Do not change without updating hermes.tcss ToolPanel padding-left. */
         padding: 0 1;
         display: none;
         color: $text-muted;

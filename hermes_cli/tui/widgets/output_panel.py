@@ -17,6 +17,11 @@ from ._events import OUTPUT_PANEL_WIDTH_READY
 
 _log = logging.getLogger(__name__)
 
+# LP-COL-1: canonical body indent constant — mirrors $body-indent in hermes.tcss.
+# Every top-level OutputPanel surface (UserMessagePanel, ToolPanel BodyPane,
+# ReasoningPanel, CopyableBlock) must land its first text column at this offset.
+BODY_INDENT_COLUMNS: int = 2
+
 if TYPE_CHECKING:
     pass
 

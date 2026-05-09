@@ -21,6 +21,8 @@
 /* All $var defaults live in COMPONENT_VAR_DEFAULTS (theme_manager.py).
    Local declarations here block runtime skin overrides. */
 
+/* canonical horizontal indent for top-level message content */
+$body-indent: 2;
 /* Component variable declarations — must be present for Textual to parse $var refs */
 $plan-now-fg: #ffb454;
 $plan-pending-fg: #888888;
@@ -641,12 +643,12 @@ ToolBodyContainer CopyableRichLog {
 }
 
 /* --- ExecuteCodeBlock layout ---
- * CodeSection and OutputSection body text aligned to header label column 6
- * (gutter 3 + space 1 + icon 1 + space 1 = 6 for single-cell icons).
- * ToolBodyContainer CopyableRichLog rule above sets padding-left:0 on the
- * RichLog; the padding here is on the Section widget container. */
-CodeSection { padding-left: 6; }
-OutputSection { padding-left: 6; }
+ * LP-COL-4: CodeSection and OutputSection now align to the canonical body
+ * column ($body-indent = 2) carried by BodyPane's accumulated padding-left.
+ * The former 6-col header-label alignment is achieved by the header's internal
+ * layout, not by indenting body content under it. Was: padding-left: 6. */
+CodeSection { padding-left: 0; }     /* was: 6 — body now aligns with BodyPane col 2 */
+OutputSection { padding-left: 0; }   /* was: 6 — body now aligns with BodyPane col 2 */
 
 OutputSeparator .output-sep-label {
     color: $text-muted;
@@ -757,6 +759,9 @@ FPSCounter {
 HermesApp.density-compact MessagePanel          { margin: 0; }
 HermesApp.density-compact ReasoningPanel        { margin: 0; }
 HermesApp.density-compact CopyableBlock         { margin: 0; }
+/* Compact-density override of base UserMessagePanel padding (0 2 → 0 1).
+ * Pairs with LP-COL-2 canonical indent ($body-indent: 2 → 1 in compact).
+ * When changing $body-indent, also update this rule. */
 HermesApp.density-compact UserMessagePanel         { margin: 0; padding: 0 1; }
 HermesApp.density-compact StatusBar             { padding: 0 1; }
 HermesApp.density-compact HintBar               { padding: 0 1; }
@@ -871,10 +876,27 @@ ToolPanel.tool-panel--error                  { border-left: vkey $error 80%; }
 /* --completed overrides category accent with success green; must come after category rules */
 ToolPanel.--completed.tool-panel--accent     { border-left: vkey $success 80%; }
 
+/* LP-COL-2: canonical body indent for ToolPanel.
+ * border-left: vkey is visual-only (no layout space). Explicit padding-left
+ * values ensure the rendered text column matches UserMessagePanel (padding: 0 2).
+ * ToolPanel padding-left (1) + BodyPane padding-left (1) = $body-indent (2).
+ * Do not merge into a single rule — FooterPane sibling also needs the parent's 1
+ * (see LP-COL-3 comment in _footer.py FooterPane.DEFAULT_CSS). */
+ToolPanel {
+    height: auto;
+    padding-left: 1;          /* half of $body-indent; vkey rail is visual-only */
+}
+ToolPanel BodyPane {
+    padding-left: 1;          /* + parent padding-left 1 = $body-indent (2) total */
+}
+
 /* SLR-1: multi-block rhythm contract.
    Order is load-bearing — all rules share specificity (0,1,1).
    Tier rules first; ChildPanel override second; error override LAST so it
    wins for both ToolPanel and ChildPanel. */
+/* Base margin-bottom: 0 for ToolPanel. Intentional: compact/trace tiers inherit this
+ * value; hero/default tiers override to 1 via the rules below (specificity 0,1,1
+ * wins over this rule's 0,1,0). Do not delete — removing breaks compact/trace spacing. */
 ToolPanel { margin-bottom: 0; }
 ToolPanel.tool-panel--tier-hero,
 ToolPanel.tool-panel--tier-default { margin-bottom: 1; }

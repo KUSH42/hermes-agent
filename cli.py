@@ -3070,6 +3070,11 @@ class HermesCLI:
     def _get_status_bar_fragments(self):
         if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
             return []
+        # PS-NB-2: transient hint text (e.g. "⏳ checking clipboard…") takes over
+        # the entire status bar while non-zero; cleared by _flash_pt_hint timer.
+        _hint = getattr(self, "_pt_hint_text", "")
+        if _hint:
+            return [("class:status-bar", f" {_hint} ")]
         try:
             snapshot = self._get_status_bar_snapshot()
             # Use prompt_toolkit's own terminal width when running inside the
@@ -6068,6 +6073,30 @@ class HermesCLI:
         except Exception:
             pass
 
+    def _next_clip_image_path(self) -> "Path":
+        """Return the next staging path for a clipboard image (does NOT extract)."""
+        img_dir = get_hermes_home() / "images"
+        self._image_counter += 1
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return img_dir / f"clip_{ts}_{self._image_counter}.png"
+
+    def _flash_pt_hint(self, text: str, duration: float = 2.0) -> None:
+        """Flash a transient status string in the prompt_toolkit toolbar.
+
+        Writes to ``_pt_hint_text`` which the status-bar fragment renderer
+        checks; a threading.Timer clears it after *duration* seconds.
+        Full toolbar design is out-of-scope per SPEC-PS-NONBLOCKING.
+        """
+        self._pt_hint_text = text
+        self._invalidate(min_interval=0.0)
+        if text:
+            def _clear() -> None:
+                self._pt_hint_text = ""
+                self._invalidate(min_interval=0.0)
+            t = threading.Timer(duration, _clear)
+            t.daemon = True
+            t.start()
+
     def _try_attach_clipboard_image(self) -> bool:
         """Check clipboard for an image and attach it if found.
 
@@ -6076,10 +6105,7 @@ class HermesCLI:
         """
         from hermes_cli.clipboard import save_clipboard_image
 
-        img_dir = get_hermes_home() / "images"
-        self._image_counter += 1
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        img_path = img_dir / f"clip_{ts}_{self._image_counter}.png"
+        img_path = self._next_clip_image_path()
 
         if save_clipboard_image(img_path):
             self._attached_images.append(img_path)
@@ -13242,6 +13268,14 @@ class HermesCLI:
         self._attached_images: list[Path] = []
         self._image_counter = 0
 
+        # Non-blocking clipboard service (PS-NB-1/PS-NB-2).
+        # Initialised lazily in _build_pt_keybindings once we have the asyncio
+        # event loop; _clipboard_svc is None until that point.
+        self._clipboard_svc: "Any | None" = None
+
+        # Transient hint text overlaid on the prompt_toolkit status bar (PS-NB-2).
+        self._pt_hint_text: str = ""
+
         # Voice mode state (protected by _voice_lock for cross-thread access)
         self._voice_lock = threading.Lock()
         self._voice_mode = False        # Whether voice mode is enabled
@@ -13864,8 +13898,26 @@ class HermesCLI:
             pasted_text, _had_mouse_reports = _strip_leaked_terminal_responses_with_meta(pasted_text)
             if _had_mouse_reports:
                 self._recover_terminal_input_modes(reason="mouse reports leaked into bracketed paste payload")
-            if _should_auto_attach_clipboard_image_on_paste(pasted_text) and self._try_attach_clipboard_image():
-                event.app.invalidate()
+            if _should_auto_attach_clipboard_image_on_paste(pasted_text):
+                # PS-NB-2: async extract — show marker, attach when worker resolves.
+                if self._clipboard_svc is not None:
+                    self._flash_pt_hint("⏳ checking clipboard…")
+                    img_path = self._next_clip_image_path()
+                    _bp_event_app = event.app
+
+                    def _on_bp_done(ok: bool) -> None:
+                        self._flash_pt_hint("")
+                        if ok:
+                            self._attached_images.append(img_path)
+                            _bp_event_app.invalidate()
+                        else:
+                            # No image — undo the pre-allocated counter increment
+                            self._image_counter -= 1
+
+                    self._clipboard_svc.extract(img_path, _on_bp_done)
+                elif self._try_attach_clipboard_image():
+                    # Fallback: synchronous (ClipboardService not yet initialized)
+                    event.app.invalidate()
             if pasted_text:
                 # Sanitize surrogate characters (e.g. from Word/Google Docs paste) before writing
                 from run_agent import _sanitize_surrogates
@@ -13908,9 +13960,42 @@ class HermesCLI:
             On terminals that DO intercept Ctrl+V for paste (macOS
             Terminal, iTerm2, VSCode, Windows Terminal), the bracketed
             paste handler fires instead and this binding never triggers.
+
+            PS-NB-2 / PS-NB-4: probe first; extract only when image present;
+            fall through to terminal text paste when probe returns False.
             """
-            if self._try_attach_clipboard_image():
-                event.app.invalidate()
+            if self._clipboard_svc is None:
+                # Fallback: synchronous (ClipboardService not yet initialized)
+                if self._try_attach_clipboard_image():
+                    event.app.invalidate()
+                return
+
+            self._flash_pt_hint("⏳ checking clipboard…")
+            img_path = self._next_clip_image_path()
+            _cv_event_app = event.app
+
+            def _on_image_ready(ok: bool) -> None:
+                self._flash_pt_hint("")
+                if ok:
+                    self._attached_images.append(img_path)
+                    _cv_event_app.invalidate()
+                else:
+                    self._image_counter -= 1
+                    _cv_event_app.current_buffer.paste_clipboard_data(
+                        _cv_event_app.clipboard.get_data()
+                    )
+
+            def _on_probe(has_image: bool) -> None:
+                if has_image:
+                    self._clipboard_svc.extract(img_path, _on_image_ready)
+                else:
+                    self._flash_pt_hint("")
+                    self._image_counter -= 1
+                    _cv_event_app.current_buffer.paste_clipboard_data(
+                        _cv_event_app.clipboard.get_data()
+                    )
+
+            self._clipboard_svc.probe(_on_probe)
 
         @kb.add('escape', 'v')
         def handle_alt_v(event):
@@ -13921,12 +14006,29 @@ class HermesCLI:
             paste.  This is the reliable way to attach clipboard images
             on WSL2, VSCode, and any terminal over SSH where Ctrl+V
             can't reach the application for image-only clipboard.
+
+            PS-NB-2: async extract; silent no-op when no image.
             """
-            if self._try_attach_clipboard_image():
-                event.app.invalidate()
-            else:
-                # No image found — show a hint
-                pass  # silent when no image (avoid noise on accidental press)
+            if self._clipboard_svc is None:
+                # Fallback: synchronous (ClipboardService not yet initialized)
+                if self._try_attach_clipboard_image():
+                    event.app.invalidate()
+                return
+
+            img_path = self._next_clip_image_path()
+            _av_event_app = event.app
+
+            def _on_done(ok: bool) -> None:
+                self._flash_pt_hint("")
+                if ok:
+                    self._attached_images.append(img_path)
+                    _av_event_app.invalidate()
+                else:
+                    self._image_counter -= 1
+                    # silent no-op — no text paste fallback for explicit image shortcut
+
+            self._flash_pt_hint("⏳ checking clipboard…")
+            self._clipboard_svc.extract(img_path, _on_done)
 
         # Dynamic prompt: shows Hermes symbol when agent is working,
         # or answer prompt when clarify freetext mode is active.
@@ -15183,8 +15285,12 @@ class HermesCLI:
                         import asyncio as _aio
                         _loop = _aio.get_event_loop()
                         _loop.set_exception_handler(_suppress_closed_loop_errors)
+                        # PS-NB-1: init non-blocking clipboard service with this loop
+                        from hermes_cli.tui.services.clipboard import PromptToolkitClipboardService
+                        self._clipboard_svc = PromptToolkitClipboardService(_loop)
                     except Exception:
-                        pass
+                        _log_pt_clipboard = logging.getLogger(__name__)
+                        _log_pt_clipboard.warning("ClipboardService init failed; paste will be synchronous", exc_info=True)
                     app.run()
         except (EOFError, KeyboardInterrupt, BrokenPipeError):
             pass

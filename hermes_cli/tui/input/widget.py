@@ -642,8 +642,8 @@ class HermesInput(_HistoryMixin, _AutocompleteMixin, _PathCompletionMixin, TextA
         event._no_default_action = True
         if len(event.text) > 80:
             try:
-                self.app._flash_hint(f"{ICON_COPY}  {len(event.text)} chars pasted", 1.2)
-            except Exception as exc:  # app._flash_hint unavailable — paste hint not shown
+                self.app.feedback.flash_paste(len(event.text))
+            except Exception as exc:  # feedback service unavailable — paste hint not shown
                 _log.debug("paste flash hint failed: %s", exc, exc_info=True)
             self.focus()
         await super()._on_paste(event)

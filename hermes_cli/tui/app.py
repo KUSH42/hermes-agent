@@ -3063,3 +3063,8 @@ class HermesApp(App):
         if dropped_paths:
             self._svc_watchers.handle_file_drop(dropped_paths)
             event.stop()
+            return
+        try:
+            self.feedback.flash_paste(len(event.text))
+        except Exception:  # feedback service unavailable — paste hint not shown
+            logger.debug("app on_paste: flash_paste failed", exc_info=True)

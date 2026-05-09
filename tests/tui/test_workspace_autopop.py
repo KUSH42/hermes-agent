@@ -201,3 +201,113 @@ class TestDismissLifecycle:
             await pilot.pause()
             assert app._workspace_auto_suppressed is True
             assert not ov.has_class("--visible")
+
+
+# ---------------------------------------------------------------------------
+# TestFingerprintGate — change-detection gate (no repeat pop for same state)
+# ---------------------------------------------------------------------------
+
+class TestFingerprintGate:
+    @pytest.mark.asyncio
+    async def test_no_repop_when_workspace_unchanged(self):
+        """Overlay should NOT pop on second turn end if workspace unchanged."""
+        app = _make_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            await pilot.pause()
+            tracker = _make_tracker_with_entries()
+            # Pin tracker and disable git poll so _init_workspace_tracker background
+            # worker cannot replace our test tracker between turns.
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app._workspace_auto_suppressed = False
+            # First turn: fires and stores fingerprint
+            app.agent_running = True
+            await pilot.pause()
+            # Re-pin in case background worker fired during pause
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app.agent_running = False
+            await pilot.pause()
+            ov = app.query_one(WorkspaceOverlay)
+            assert ov.has_class("--visible"), "First pop should fire"
+            stored_fp = app._workspace_last_shown_fingerprint
+            assert stored_fp is not None
+            # Dismiss and start a second turn without changing workspace
+            ov.remove_class("--visible")
+            app._workspace_auto_suppressed = False  # simulate suppression cleared by run-start
+            app.agent_running = True
+            await pilot.pause()
+            # Re-pin again
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app.agent_running = False
+            await pilot.pause()
+            assert not ov.has_class("--visible"), "Should NOT repop — workspace unchanged"
+            assert app._workspace_last_shown_fingerprint == stored_fp
+
+    @pytest.mark.asyncio
+    async def test_repop_when_workspace_changes(self):
+        """Overlay SHOULD pop again if a new file appears after the first show."""
+        app = _make_app()
+        async with app.run_test(size=(80, 30)) as pilot:
+            await pilot.pause()
+            tracker = _make_tracker_with_entries()
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app._workspace_auto_suppressed = False
+            # First turn fires
+            app.agent_running = True
+            await pilot.pause()
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app.agent_running = False
+            await pilot.pause()
+            ov = app.query_one(WorkspaceOverlay)
+            assert ov.has_class("--visible")
+            ov.remove_class("--visible")
+            # Add a new file to tracker
+            snap = _snapshot([_snap_entry(), _snap_entry("/repo/bar.py", "bar.py")])
+            tracker.apply_snapshot(snap)
+            # Second turn — workspace changed — should pop
+            app._workspace_auto_suppressed = False
+            app.agent_running = True
+            await pilot.pause()
+            app._workspace_tracker = tracker
+            app._git_poller = None
+            app.agent_running = False
+            await pilot.pause()
+            assert ov.has_class("--visible"), "Should pop — workspace changed"
+
+    def test_fingerprint_stored_on_show(self):
+        """_workspace_last_shown_fingerprint starts None and is distinct per state."""
+        t1 = _make_tracker_with_entries()
+        t2 = _make_tracker_empty()
+        assert t1.fingerprint() != t2.fingerprint()
+        assert t2.fingerprint() == t2.fingerprint()  # stable
+
+    def test_fingerprint_changes_on_new_file(self):
+        tracker = WorkspaceTracker("/repo", is_git_repo=True)
+        fp_before = tracker.fingerprint()
+        tracker.apply_snapshot(_snapshot([_snap_entry()]))
+        assert tracker.fingerprint() != fp_before
+
+    def test_fingerprint_changes_on_status_change(self):
+        tracker = _make_tracker_with_entries()
+        fp1 = tracker.fingerprint()
+        # Apply snapshot with different git_xy
+        entry = _snap_entry()
+        entry = GitSnapshotEntry(
+            path=entry.path,
+            rel_path=entry.rel_path,
+            git_xy="M ",
+            git_index_status="M",
+            git_worktree_status=" ",
+            git_status="M",
+            git_staged=True,
+            git_untracked=False,
+            git_conflicted=False,
+            git_renamed=False,
+            renamed_from=None,
+        )
+        tracker.apply_snapshot(_snapshot([entry]))
+        assert tracker.fingerprint() != fp1

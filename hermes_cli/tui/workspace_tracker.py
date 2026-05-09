@@ -12,6 +12,7 @@ Textual event loop thread. Blocking I/O (subprocess, file reads) runs in
 from __future__ import annotations
 
 import ast
+import hashlib
 import logging
 import subprocess
 import time
@@ -227,6 +228,14 @@ class WorkspaceTracker:
                 e.rel_path,
             ),
         )
+
+    def fingerprint(self) -> str:
+        """Stable 12-char hash of current workspace state for change detection."""
+        parts = sorted(
+            f"{e.rel_path}:{e.git_xy}:{e.git_added}:{e.git_removed}"
+            for e in self._entries.values()
+        )
+        return hashlib.md5("|".join(parts).encode(), usedforsecurity=False).hexdigest()[:12]
 
     def session_totals(self) -> tuple[int, int]:
         added = sum(m.session_added for m in self._session_meta.values())

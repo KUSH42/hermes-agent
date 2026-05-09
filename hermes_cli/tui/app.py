@@ -596,6 +596,7 @@ class HermesApp(App):
         self._git_poll_h: object | None = None  # textual.timer.Timer
         self._workspace_hint_shown: bool = False
         self._workspace_auto_suppressed: bool = False
+        self._workspace_last_shown_fingerprint: str | None = None
         self._workspace_tracker = None
         self._git_poller = None
         self._git_poll_in_flight: bool = False
@@ -1829,12 +1830,15 @@ class HermesApp(App):
                 and tracker.entries()
                 and not self._workspace_auto_suppressed
                 and not self._focus_blocking_overlay_visible()
+                and tracker.fingerprint() != self._workspace_last_shown_fingerprint
             ):
                 try:
                     ov = self.query_one(WorkspaceOverlay)
                     if not ov.has_class("--visible"):
+                        fp = tracker.fingerprint()
                         ov.refresh_data(tracker, self._last_git_snapshot)
                         ov.show_overlay()
+                        self._workspace_last_shown_fingerprint = fp
                         self._sync_workspace_polling_state()
                         self._trigger_git_poll()
                 except NoMatches:

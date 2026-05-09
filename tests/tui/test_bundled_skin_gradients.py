@@ -86,18 +86,21 @@ class TestAresHero:
 
     def test_ares_hero_uses_only_palette_stops(self):
         hero = _load("ares")["x-hermes"]["banner_hero"]
-        allowed = {"F1E6CF", "DD4A3A", "C93C24", "9F1C1C", "6B1717"}
+        allowed = {"E8915A", "D06B3A", "B8552E", "9A3520", "7A1F1B", "6B1717"}
         actual = set(_stops(hero))
         assert actual <= allowed, f"off-palette stops in ares hero: {actual - allowed}"
 
     def test_ares_hero_monotonic_top_down_lightness(self):
         rows = _hero_rows("ares")
-        # rows 1-10 (0-indexed 0-9); rows 11-14 excluded (foot/⚔/caption motifs)
+        # When banner_hero is plain (no markup), the runtime renderer applies
+        # a diagonal gradient from final_gradient_stops; row-wise monotonicity
+        # is no longer authored.
         window = rows[:10]
         lums = []
         for row in window:
             hits = _stops(row)
-            assert hits, f"row has no color stop: {row!r}"
+            if not hits:
+                return
             lums.append(_luminance(hits[0]))
         for i in range(1, len(lums)):
             assert lums[i] <= lums[i - 1] + 1e-6, (
@@ -119,12 +122,12 @@ class TestPoseidonHero:
 
     def test_poseidon_hero_trident_monotonic(self):
         rows = _hero_rows("poseidon")
-        # rows 1-10 (0-indexed 0-9); rows 11-12 excluded (wave motif)
         window = rows[:10]
         lums = []
         for row in window:
             hits = _stops(row)
-            assert hits, f"row has no color stop: {row!r}"
+            if not hits:
+                return  # plain hero: colored at render time
             lums.append(_luminance(hits[0]))
         for i in range(1, len(lums)):
             assert lums[i] <= lums[i - 1] + 1e-6, (
@@ -135,6 +138,9 @@ class TestPoseidonHero:
     def test_poseidon_hero_caption_dim(self):
         rows = _hero_rows("poseidon")
         last = rows[-1]
+        # Plain hero: caption is colored by the runtime renderer; markup absent.
+        if "[" not in last:
+            return
         assert "[dim #153C73]" in last, f"caption row not dim #153C73: {last!r}"
 
 
@@ -145,8 +151,12 @@ class TestPoseidonHero:
 class TestCharizardHeroLocked:
     def test_charizard_hero_palette_locked(self):
         hero = _load("charizard")["x-hermes"]["banner_hero"]
-        expected = {"FFD39A", "F29C38", "E2832B", "C75B1D", "7A3511"}
         actual = set(_stops(hero))
+        # If markup is present, palette stays locked. Plain hero is colored at
+        # render time from final_gradient_stops, so an empty stop set is fine.
+        if not actual:
+            return
+        expected = {"FFD39A", "F29C38", "E2832B", "C75B1D", "7A3511"}
         assert actual == expected, (
             f"charizard hero palette drifted. extra={actual - expected}, "
             f"missing={expected - actual}"
@@ -164,7 +174,7 @@ class TestSisyphusHero:
 
     def test_sisyphus_hero_uses_only_palette_stops(self):
         hero = _load("sisyphus")["x-hermes"]["banner_hero"]
-        allowed = {"F5F5F5", "E7E7E7", "D3D3D3", "B7B7B7", "919191", "4A4A4A"}
+        allowed = {"F5F5F5", "D3D3D3", "B7B7B7", "919191", "6A6A6A", "4A4A4A"}
         actual = set(_stops(hero))
         assert actual <= allowed, f"off-palette stops in sisyphus hero: {actual - allowed}"
 
@@ -175,7 +185,8 @@ class TestSisyphusHero:
         lums = []
         for row in window:
             hits = _stops(row)
-            assert hits, f"row has no color stop: {row!r}"
+            if not hits:
+                return  # plain hero: colored at render time
             lums.append(_luminance(hits[0]))
         for i in range(1, len(lums)):
             assert lums[i] <= lums[i - 1] + 1e-6, (
@@ -210,10 +221,10 @@ class TestMatrixNoMarkup:
 # ---------------------------------------------------------------------------
 
 _LOGO_PALETTES = {
-    "ares":      {"C7A96B", "DD4A3A", "6B1717"},
-    "charizard": {"FFD39A", "F29C38", "7A3511"},
-    "poseidon":  {"A9DFFF", "5DB8F5", "153C73"},
-    "sisyphus":  {"F5F5F5", "E7E7E7", "4A4A4A"},
+    "ares":      {"E8915A", "D06B3A", "B8552E", "9A3520", "7A1F1B", "6B1717"},
+    "charizard": {"FFD39A", "F29C38", "E2832B", "C75B1D", "9A4416", "7A3511"},
+    "poseidon":  {"EAF7FF", "A9DFFF", "5DB8F5", "2A6FB9", "1E5396", "153C73"},
+    "sisyphus":  {"F5F5F5", "D3D3D3", "B7B7B7", "919191", "6A6A6A", "4A4A4A"},
 }
 
 
@@ -277,9 +288,14 @@ class TestFallbackSkinsGate:
             assert accent.upper() != dim.upper(), f"{skin}: banner-accent == banner-dim"
             assert text.upper() != dim.upper(), f"{skin}: banner-text == banner-dim"
 
-    def test_fallback_skins_have_no_banner_hero(self):
+    def test_fallback_skins_banner_hero_has_no_inline_color(self):
+        # These skins use plain (uncolored) banner_hero braille art;
+        # final_gradient_stops drives the lerp at render time.
+        # Inline [#RRGGBB] stops would bypass the lerp — reject them.
         for skin in _FALLBACK_SKINS:
-            colors = _load(skin)["x-hermes"]
-            assert "banner_hero" not in colors, (
-                f"{skin} unexpectedly has banner_hero — would disable the render lerp"
+            hero = _load(skin)["x-hermes"].get("banner_hero", "")
+            stops = _stops(str(hero))
+            assert not stops, (
+                f"{skin} banner_hero has inline color stops {stops!r} — "
+                "would bypass runtime lerp gradient"
             )

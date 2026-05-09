@@ -121,7 +121,7 @@ def _rgb_style(
     bgcolor = None
     if background_rgb is not None:
         bgcolor = f"rgb({background_rgb[0]},{background_rgb[1]},{background_rgb[2]})"
-    return Style(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", bgcolor=bgcolor, dim=True)
+    return Style(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", bgcolor=bgcolor)
 
 
 # ── ThinkingMode ──────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ _AnimSurface {
                 # Pad/crop to widget width
                 raw = raw.ljust(width)[:width]
                 if not raw.strip():
-                    return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)
+                    return Strip([Segment(" " * width, Style(bgcolor=self._background_hex))], width)  # no dim — would darken bg
                 return self._render_gradient_line(raw, y)
         except Exception:
             # thinking content parse failed; widget shows empty content
@@ -297,24 +297,17 @@ _AnimSurface {
 
     def _render_gradient_line(self, raw: str, row: int) -> Strip:
         width = len(raw)
-        height = max(1, getattr(self.size, "height", 1))
-        t = row / (height - 1) if height > 1 else 0.0
-        ar, ag, ab = self._chroma_a_rgb
-        br, bg, bb = self._chroma_b_rgb
-        row_dim_rgb = (
-            int(ar + (br - ar) * t),
-            int(ag + (bg - ag) * t),
-            int(ab + (bb - ab) * t),
-        )
+        # Oscillate each character between chroma_a and chroma_b — no white endpoint.
+        # Row offset in phase creates a diagonal sweep effect across multi-row surfaces.
         phase_base = (self._frame_tick * 0.75) + (row * 1.35)
         segments: list[Segment] = []
         for idx, ch in enumerate(raw):
             if ch == " ":
-                segments.append(Segment(ch, Style(bgcolor=self._background_hex, dim=True)))
+                segments.append(Segment(ch, Style(bgcolor=self._background_hex)))
                 continue
             factor = (1.0 + math.sin((idx * 0.65) + phase_base)) / 2.0
             style = _rgb_style(
-                _interpolate_rgb(row_dim_rgb, self._peak_rgb, factor),
+                _interpolate_rgb(self._chroma_a_rgb, self._chroma_b_rgb, factor),
                 self._background_rgb,
             )
             segments.append(Segment(ch, style))

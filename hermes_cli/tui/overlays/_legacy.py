@@ -100,6 +100,8 @@ class _SessionResumedBanner(Widget):
 class SessionOverlay(ModalOverlayMixin, Widget):
     """Session browser overlay. Open with /sessions or Ctrl+J."""
 
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in open_sessions/dismiss_overlay
+
     DEFAULT_CSS = """
     SessionOverlay {
         display: none;
@@ -573,6 +575,8 @@ class _SessionRow(Static):
 
 class ToolPanelHelpOverlay(ModalOverlayMixin, Widget):
     """Binding reference for focused ToolPanel. Shown by F1, dismissed by Esc."""
+
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show_overlay/dismiss_overlay
 
     DEFAULT_CSS = """
     ToolPanelHelpOverlay {

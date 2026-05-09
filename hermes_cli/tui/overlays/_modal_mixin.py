@@ -51,6 +51,12 @@ class ModalOverlayMixin:
 
     _focus_caller: Widget | None = None
 
+    # Permanent widgets (never removed from DOM) set this to False so that
+    # Textual's MRO-walking dispatch doesn't push them on every app startup.
+    # Textual calls ALL on_mount handlers in the MRO — not just the subclass
+    # override — so this flag is the correct opt-out for permanent widgets.
+    _push_modal_on_mount: bool = True
+
     # ------------------------------------------------------------------
     # Focus capture helper (callable before on_mount too)
     # ------------------------------------------------------------------
@@ -69,7 +75,15 @@ class ModalOverlayMixin:
     # ------------------------------------------------------------------
 
     def on_mount(self) -> None:
-        """Capture caller, register in stack, mark CSS."""
+        """Capture caller, register in stack, mark CSS.
+
+        Skipped for permanent widgets (_push_modal_on_mount=False) because
+        Textual's MRO-walking dispatcher calls this for every class in the MRO,
+        not just the subclass override.  Permanent widgets manage push/pop in
+        their own show_overlay()/dismiss_overlay() cycle instead.
+        """
+        if not self._push_modal_on_mount:
+            return
         self._capture_focus_caller()
         try:
             self.app.push_modal(self)  # type: ignore[attr-defined]

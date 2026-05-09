@@ -460,7 +460,7 @@ class ContextMenuService(AppService):
                             exc_info=True,
                         )
                         try:
-                            widget.remove_class("--modal")
+                            widget.remove_class("--modal")  # il-m1: fallback in dismiss_all_info_overlays
                         except Exception:
                             pass
                         try:
@@ -503,7 +503,7 @@ class ContextMenuService(AppService):
                                 exc_info=True,
                             )
                             try:
-                                widget.remove_class("--modal")
+                                widget.remove_class("--modal")  # il-m1: fallback in heal_stale_modal_entries
                             except Exception:
                                 pass
                             try:

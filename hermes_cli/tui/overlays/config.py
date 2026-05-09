@@ -70,6 +70,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
     """Tabbed config overlay replacing 5 standalone picker overlays."""
 
     can_focus = True
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show_overlay/dismiss_overlay
 
     DEFAULT_CSS = """
     ConfigOverlay {

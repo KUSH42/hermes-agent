@@ -160,6 +160,8 @@ class AnimConfigPanel(ModalOverlayMixin, Widget):
     Dismissed by ``Escape``.
     """
 
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show()/action_dismiss()
+
     COMPONENT_CLASSES = {
         "anim-config-panel--field",
         "anim-config-panel--focused",
@@ -753,6 +755,8 @@ class _GalleryPreview(Widget):
 
 class AnimGalleryOverlay(ModalOverlayMixin, Widget):
     """Non-modal gallery overlay for browsing and selecting animation engines (B2)."""
+
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show()/action_dismiss()
 
     DEFAULT_CSS = """
     AnimGalleryOverlay {

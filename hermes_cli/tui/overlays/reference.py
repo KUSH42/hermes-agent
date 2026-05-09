@@ -45,6 +45,7 @@ class ReferenceModal(ModalOverlayMixin, Widget):
 
     _modal_id: str = ""
     _modal_title: str = ""
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show_overlay/dismiss_overlay
 
     DEFAULT_CSS = """
     ReferenceModal {

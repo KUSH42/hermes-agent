@@ -379,6 +379,7 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
     """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape, F1, or q."""
 
     can_focus = True
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show()/dismiss_overlay()
 
     DEFAULT_CSS = """
     KeymapOverlay {
@@ -487,6 +488,8 @@ class HistorySearchOverlay(ModalOverlayMixin, Widget):
     Shows a fuzzy-searchable list of past conversation turns. Ctrl+F opens
     it; Escape/Ctrl+F/Enter dismiss it (Enter also jumps to the selected turn).
     """
+
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in open_search()/dismiss_overlay()
 
     DEFAULT_CSS = """
     HistorySearchOverlay {

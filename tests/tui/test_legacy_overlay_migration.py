@@ -82,6 +82,7 @@ def _make_config_overlay(app=None):
     overlay._syntax_schemes = []
     overlay._last_cli = None
     overlay._focus_caller = None
+    overlay._model_prefetch_done = False
     # CSS class tracking
     overlay._classes: set[str] = set()
 

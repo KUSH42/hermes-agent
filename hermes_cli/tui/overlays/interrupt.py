@@ -153,6 +153,8 @@ _MAX_QUEUE_DEPTH = 8
 class InterruptOverlay(ModalOverlayMixin, Widget, can_focus=True):
     """Single pre-mounted overlay fan-in for all 7 interrupt kinds."""
 
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed per present/dismiss cycle
+
     DEFAULT_CSS = """
     InterruptOverlay {
         layer: interrupt;

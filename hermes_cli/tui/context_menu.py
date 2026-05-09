@@ -116,6 +116,7 @@ class ContextMenu(ModalOverlayMixin, Widget):
     """
 
     can_focus = True
+    _push_modal_on_mount: bool = False  # permanent widget; push/pop managed in show()/dismiss_overlay()
 
     DEFAULT_CSS = """
     ContextMenu {
@@ -226,7 +227,7 @@ class ContextMenu(ModalOverlayMixin, Widget):
             self.app.push_modal(self)
         except AttributeError:
             pass  # app has no push_modal — graceful degrade
-        self.add_class("--modal")
+        self.add_class("--modal")  # il-m1: owned by ContextMenu.show() (permanent widget)
 
         # Tear down previous contents (if menu was already visible); await
         # each remove so the DOM is clean before mounting new children.

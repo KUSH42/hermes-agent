@@ -742,6 +742,16 @@ class HermesApp(App):
         """Return True when at least one modal overlay is registered."""
         return bool(self._modal_stack)
 
+    def has_focus_capturing_modal(self) -> bool:
+        """True when any modal on the stack is not WorkspaceOverlay.
+
+        WorkspaceOverlay is the only overlay that intentionally leaves
+        HermesInput in focus; all others steal it.
+        """
+        # Import here to avoid circular dependency with overlays module
+        from hermes_cli.tui.overlays.reference import WorkspaceOverlay
+        return any(not isinstance(m, WorkspaceOverlay) for m in self._modal_stack)
+
     # --- Compose ---
 
     def compose(self) -> ComposeResult:
@@ -911,11 +921,12 @@ class HermesApp(App):
         if _fps_hud_enabled():
             self.fps_hud_visible = True
         # Focus the input bar so the user can type immediately
-        from hermes_cli.tui.input_widget import HermesInput as _HI
-        try:
-            self.query_one(_HI).focus()
-        except NoMatches:
-            pass
+        if not self.has_focus_capturing_modal():
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            try:
+                self.query_one(_HI).focus()
+            except NoMatches:
+                pass
         if self._startup_fn is not None:
             threading.Thread(target=self._startup_fn, daemon=True).start()
         if _os_mod.environ.get("HERMES_DENSITY", "").lower() == "compact":
@@ -1894,11 +1905,12 @@ class HermesApp(App):
         self._response_token_window.clear()
         # W-7 / AT-Z3: restore focus to compose on new turn start
         self._zones_first_entry_seen.clear()
-        from hermes_cli.tui.input_widget import HermesInput as _HI
-        try:
-            self.query_one(_HI).focus()
-        except NoMatches:  # widget not mounted (e.g. headless mode)
-            pass
+        if not self.has_focus_capturing_modal():
+            from hermes_cli.tui.input_widget import HermesInput as _HI
+            try:
+                self.query_one(_HI).focus()
+            except NoMatches:  # widget not mounted (e.g. headless mode)
+                pass
 
     def _lc_osc_progress_start(self) -> None:
         self._osc_progress_update(True)
@@ -2333,11 +2345,13 @@ class HermesApp(App):
 
     def action_focus_input_from_output(self) -> None:
         """i: move focus back to HermesInput from output area."""
+        if self.has_focus_capturing_modal():
+            return
         try:
             from hermes_cli.tui.input_widget import HermesInput
             self.query_one(HermesInput).focus()
-        except Exception:  # widget absent or not yet mounted — focus skipped
-            pass
+        except Exception:
+            logger.debug("action_focus_input_from_output: focus skipped", exc_info=True)
 
     def _recompute_auto_compact(self) -> None:
         """SVC-7: single source of truth for auto-compact state. Respects manual override."""
@@ -2424,11 +2438,12 @@ class HermesApp(App):
         self._browse_anchors = []
         self._browse_cursor = 0
         self._browse_total = 0
-        try:
-            from hermes_cli.tui.input_widget import HermesInput
-            self.query_one(HermesInput).focus()
-        except (NoMatches, ImportError):
-            pass
+        if not self.has_focus_capturing_modal():
+            try:
+                from hermes_cli.tui.input_widget import HermesInput as _HI
+                self.query_one(_HI).focus()
+            except (NoMatches, ImportError):
+                pass
         # RX4: let services reset per-session state on resume
         self.hooks.fire("on_session_resume", session_id=session_id, turn_count=turn_count)
 

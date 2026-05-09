@@ -1112,6 +1112,33 @@ class VoiceStatusBar(Widget):
 # ImageBar
 # ---------------------------------------------------------------------------
 
+_ATTACHMENT_CSS_DEFAULTS: dict[str, str] = {
+    "attachment-chip-fg":           "#a0a0a0",
+    "attachment-chip-bg":           "#1e1e2e",
+    "attachment-chip-shimmer-dim":  "#6e6e6e",
+    "attachment-chip-shimmer-peak": "#cccccc",
+    "attachment-chip-remove-fg":    "#ef5350",
+}
+
+_ATTACHMENT_REQUIRED_KEYS: frozenset[str] = frozenset(_ATTACHMENT_CSS_DEFAULTS)
+
+
+def _get_attachment_css_vars(skin_vars: dict[str, str]) -> dict[str, str]:
+    """Return all five attachment CSS-var values, falling back to hard-coded defaults."""
+    return {k: skin_vars.get(k, v) for k, v in _ATTACHMENT_CSS_DEFAULTS.items()}
+
+
+def _check_attachment_tokens(skin_vars: dict[str, str], widget_name: str) -> None:
+    """Warn once if any required attachment token is absent from the skin."""
+    missing = _ATTACHMENT_REQUIRED_KEYS - skin_vars.keys()
+    for key in sorted(missing):
+        _log.warning(
+            "%s: skin is missing attachment token %r — using fallback",
+            widget_name,
+            key,
+        )
+
+
 class ImageBar(Widget):
     """Displays attached image filenames; hidden when empty.
 
@@ -1134,6 +1161,7 @@ class ImageBar(Widget):
         self._shimmer_base: "Text | None" = None
         self._shimmer_skip: list[tuple[int, int]] = []
         self._static_content: "Text" = Text()
+        self._tokens_checked: bool = False
 
     def _shimmer_stop(self) -> None:
         """Stop shimmer. Idempotent."""
@@ -1173,16 +1201,19 @@ class ImageBar(Widget):
     def render(self) -> "RenderResult":
         if self._shimmer_base is not None and self._shimmer_timer is not None:
             try:
-                _sv = self.app.get_css_variables()
-                _sdim  = _sv.get("spinner-shimmer-dim",  "#6e6e6e")
-                _speak = _sv.get("spinner-shimmer-peak", "#cccccc")
+                _raw = self.app.get_css_variables()
+                _av = _get_attachment_css_vars(_raw)
+                if not self._tokens_checked:
+                    _check_attachment_tokens(_raw, self.__class__.__name__)
+                    self._tokens_checked = True
             except Exception:
-                _sdim, _speak = "#6e6e6e", "#cccccc"
+                _log.debug("get_css_variables failed in ImageBar.render", exc_info=True)
+                _av = dict(_ATTACHMENT_CSS_DEFAULTS)
             return shimmer_text(
                 self._shimmer_base,
                 self._shimmer_tick,
-                dim=_sdim,
-                peak=_speak,
+                dim=_av["attachment-chip-shimmer-dim"],
+                peak=_av["attachment-chip-shimmer-peak"],
                 period=15,
                 skip_ranges=self._shimmer_skip,
             )
@@ -1193,7 +1224,13 @@ class ImageBar(Widget):
         if images:
             self.display = True
             names = ", ".join(getattr(img, "name", str(img)) for img in images)
-            base_text = Text(f"📎 {names}", style="dim")
+            try:
+                _av = _get_attachment_css_vars(self.app.get_css_variables())
+            except Exception:
+                _log.debug("get_css_variables failed in ImageBar.update_images", exc_info=True)
+                _av = dict(_ATTACHMENT_CSS_DEFAULTS)
+            fg = _av["attachment-chip-fg"]
+            base_text = Text(f"📎 {names}", style=fg)
             self._static_content = base_text
             self._shimmer_once(base_text)
         else:

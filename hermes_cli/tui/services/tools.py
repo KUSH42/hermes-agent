@@ -755,6 +755,14 @@ class ToolRenderingService(AppService):
             block._renderer_output_raw = "\n".join(result_lines)
             for _line in result_lines:
                 block.append_line(_line)
+        elif not getattr(block, "_renderer_output_raw", None):
+            # Fallback: stitch from the streaming accumulator so the classifier
+            # receives untruncated text when the caller omitted result_lines.
+            for attr in ("_plain_lines", "_all_plain", "_content_lines"):
+                lines = getattr(block, attr, None)
+                if isinstance(lines, list) and lines:
+                    block._renderer_output_raw = "\n".join(lines)
+                    break
         block.complete(duration, is_error=is_error)
         panel = getattr(block, "_tool_panel", None)
         if summary is not None:

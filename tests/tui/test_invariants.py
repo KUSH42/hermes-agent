@@ -2112,3 +2112,99 @@ class TestILChip1:
     def test_il_chip_1_self_test(self):
         """Regex must catch the known anti-pattern."""
         assert self._PATTERN.search("[{action.hotkey}] foo") is not None
+
+
+# ---------------------------------------------------------------------------
+# IL-WRAP-1 (SR-RW-M2): SearchRenderer and StreamingSearchRenderer must not
+# emit lines longer than viewport_width when the line exceeds 2× viewport_width.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("line_len", [80, 160, 5000])
+def test_il_wrap_1_search_renderer(line_len):
+    """SearchRenderer.build(viewport_width=80) never produces a plain run > 80 chars
+    for lines that exceed 2× viewport_width."""
+    from hermes_cli.tui.body_renderers.search import SearchRenderer
+    from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind, ToolPayload
+    from hermes_cli.tui.tool_category import ToolCategory
+    import re
+
+    vp = 80
+    line = "a" * line_len
+    raw = f"file.py\n1:{line}\n"
+    p = ToolPayload(
+        tool_name="grep", category=ToolCategory.SEARCH, args={},
+        input_display=None, output_raw=raw, line_count=0,
+    )
+    c = ClassificationResult(ResultKind.SEARCH, 0.9)
+    renderer = SearchRenderer(p, c, app=None)
+    result = renderer.build(viewport_width=vp)
+
+    if line_len > 2 * vp:
+        long_runs = re.findall(r"a{" + str(vp + 1) + r",}", result.plain)
+        assert not long_runs, (
+            f"IL-WRAP-1: SearchRenderer left a {line_len}-char run untrunced "
+            f"(viewport_width={vp})"
+        )
+        assert "…" in result.plain
+    else:
+        # No truncation for lines ≤ 2× viewport_width
+        assert line in result.plain
+
+
+def test_il_wrap_1_streaming_search_renderer():
+    """StreamingSearchRenderer.render_stream_line truncates to app.size.width when
+    line > 2× width."""
+    from hermes_cli.tui.body_renderers.streaming import StreamingSearchRenderer
+    from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind, ToolPayload
+    from hermes_cli.tui.tool_category import ToolCategory
+    from unittest.mock import MagicMock
+    import types
+
+    vp = 80
+    line = "b" * 5000
+
+    mock_app = MagicMock()
+    mock_app.size = types.SimpleNamespace(width=vp)
+
+    p = ToolPayload(
+        tool_name="grep", category=ToolCategory.SEARCH, args={},
+        input_display=None, output_raw="", line_count=0,
+    )
+    c = ClassificationResult(ResultKind.SEARCH, 0.9)
+    renderer = StreamingSearchRenderer(p, c, app=mock_app)
+
+    result = renderer.render_stream_line(line, line)
+
+    from rich.text import Text
+    if isinstance(result, Text):
+        plain = result.plain
+    else:
+        # Group — inspect first renderable
+        from rich.console import Group
+        assert isinstance(result, Group), f"unexpected type {type(result)}"
+        plain = result.renderables[-1].plain
+
+    assert len(plain) <= vp, (
+        f"IL-WRAP-1: StreamingSearchRenderer left {len(plain)}-char line "
+        f"(viewport={vp})"
+    )
+    assert plain.endswith("…")
+
+
+def test_il_wrap_1_fallback_when_no_viewport():
+    """build(viewport_width=None) completes without error and returns a Text."""
+    from hermes_cli.tui.body_renderers.search import SearchRenderer
+    from hermes_cli.tui.tool_payload import ClassificationResult, ResultKind, ToolPayload
+    from hermes_cli.tui.tool_category import ToolCategory
+    from rich.text import Text
+
+    raw = "file.py\n1:" + "c" * 5000 + "\n"
+    p = ToolPayload(
+        tool_name="grep", category=ToolCategory.SEARCH, args={},
+        input_display=None, output_raw=raw, line_count=0,
+    )
+    c = ClassificationResult(ResultKind.SEARCH, 0.9)
+    renderer = SearchRenderer(p, c, app=None)
+    result = renderer.build(viewport_width=None)
+    assert isinstance(result, Text)
+    assert "c" * 5000 in result.plain

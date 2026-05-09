@@ -1079,6 +1079,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                 f"[{warn_dim}] — run [bold]{update_cmd}[/bold] to update[/]"
             )
             right_lines.append(
+                f"  [bold {key_color}]u[/] [dim {dim}]dismiss[/]   "
                 f"[dim {dim}]run[/] [{text}]{update_cmd}[/] [dim {dim}]to install[/]"
             )
     except Exception:

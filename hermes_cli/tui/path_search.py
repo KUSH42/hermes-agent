@@ -55,6 +55,8 @@ class SlashCandidate(Candidate):
     args_hint: str = ""                             # usage syntax e.g. "[number]"
     category: str = ""                              # from CommandDef.category
     keybind_hint: str = ""                          # shortcut hint e.g. "Ctrl+Shift+H"
+    source: str = ""                                # skill source label ("hermes" / "claude" / "plugin" / "user")
+    trigger_hint: str = ""                          # first parsed TRIGGER-when phrase (skill only)
 
 
 # ---------------------------------------------------------------------------

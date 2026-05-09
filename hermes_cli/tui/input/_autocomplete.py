@@ -91,8 +91,17 @@ class _AutocompleteMixin:
                     self._resolve_assist(AssistKind.NONE)  # type: ignore[attr-defined]
 
     def _show_slash_completions(self, fragment: str) -> None:
+        descs  = getattr(self, "_slash_descriptions",  {})
+        args_h = getattr(self, "_slash_args_hints",    {})
+        keys_h = getattr(self, "_slash_keybind_hints", {})
         items = [
-            SlashCandidate(display=c, command=c)
+            SlashCandidate(
+                display=c,
+                command=c,
+                description=descs.get(c, ""),
+                args_hint=args_h.get(c, ""),
+                keybind_hint=keys_h.get(c, ""),
+            )
             for c in self._slash_commands
             if c.startswith("/" + fragment)
         ]
@@ -104,6 +113,7 @@ class _AutocompleteMixin:
             hint = ""
             duration = 1.5
             if fragment and len(fragment) >= 2:
+                # candidates here are only used to find a command name for the hint message; description fields are unused
                 all_slash = [SlashCandidate(display=c, command=c) for c in self._slash_commands]
                 suggestions = fuzzy_rank(fragment, all_slash, limit=1)
                 if suggestions:
@@ -143,6 +153,8 @@ class _AutocompleteMixin:
                 display=c.name,
                 command="$" + c.name,
                 description=c.description,
+                source=c.source,
+                trigger_hint=(c.trigger_phrases[0] if c.trigger_phrases else ""),
             )
             for c in self._skills
             if c.enabled and c.name.startswith(fragment)

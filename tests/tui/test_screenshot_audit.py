@@ -56,9 +56,9 @@ def _make_app(**kwargs):
 # ===========================================================================
 
 class TestSS1CompletionFallback:
-    def test_completion_overlay_uses_em_dash_for_missing_description(self):
+    def test_completion_overlay_uses_fallback_for_missing_description(self):
         from hermes_cli.tui.completion_overlay import _NO_DESCRIPTION_FALLBACK
-        assert "—" in _NO_DESCRIPTION_FALLBACK
+        assert "no description" in _NO_DESCRIPTION_FALLBACK
 
     def test_completion_overlay_passes_real_description_through(self):
         from hermes_cli.tui.completion_overlay import _NO_DESCRIPTION_FALLBACK
@@ -74,7 +74,7 @@ class TestSS1CompletionFallback:
     def test_completion_overlay_empty_string_treated_as_missing(self):
         from hermes_cli.tui.completion_overlay import _NO_DESCRIPTION_FALLBACK
         result = "" or _NO_DESCRIPTION_FALLBACK
-        assert "—" in result
+        assert "no description" in result
         assert "(no description)" not in result
 
 

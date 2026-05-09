@@ -37,6 +37,8 @@ colors:
   session-border: '#6E584B'
   rule-start: '#6B1717'
   rule-end: '#2A1010'
+  status-bar-bg: '#1E1E1E'
+  status-bar-text: '#F1E6CF'
 x-hermes:
   startup_tte:
     effect: laseretch

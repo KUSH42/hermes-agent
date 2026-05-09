@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 
 from rich.style import Style
 from rich.text import Text
@@ -140,7 +139,7 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | None = None) -> list[str]:
+def _prewrap_code_line(highlighted: str, source_line: str = "", *, width: int) -> list[str]:
     """Pre-wrap an ANSI-highlighted code line, indenting continuation chunks.
 
     Continuation rows carry the same leading whitespace as *source_line*
@@ -150,13 +149,14 @@ def _prewrap_code_line(highlighted: str, source_line: str = "", width: int | Non
     Returns a list of strings — one per visual line.  Short lines return
     ``[highlighted]`` unchanged.  Long lines are split at the last space
     before *width*; ANSI colour state is re-emitted at each chunk start.
+
+    *width* is keyword-only and required (in cells). Caller must pass the
+    log's content width — fallback to host-terminal width was the original
+    bug (host width != nested log width).
     """
-    if width is None:
-        try:
-            width = shutil.get_terminal_size((80, 24)).columns - 6  # account for margins + scrollbar
-        except Exception:  # il-ex-1-exempt: swallow
-            # width probe failed; use 74-char fallback
-            width = 74
+    if width <= 0:
+        # Caller error — width must be positive. Fail loud.
+        raise ValueError("_prewrap_code_line requires positive width")
     plain = _strip_ansi(highlighted)
     if len(plain) <= width:
         return [highlighted]

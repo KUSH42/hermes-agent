@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 _log = logging.getLogger(__name__)
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -187,10 +188,15 @@ class StreamingCodeBlock(Widget):
         self._code_lines: list[str] = []
         self._resolved_lang: str | None = None
         self._log = CopyableRichLog(markup=False)
+        self._log.set_streaming(True)
         self._partial_line: str = ""
         self._collapsed = False
         self._controls_text_plain = ""
         self._complete_skin_vars: dict[str, str] = {}
+        self._pending_render: bool = False
+        self._rendered_count: int = 0
+        self._in_buffered_render: bool = False
+        self._last_resize_w: int = 0
 
     def compose(self) -> ComposeResult:
         yield self._log
@@ -203,13 +209,83 @@ class StreamingCodeBlock(Widget):
         """Called by ResponseFlowEngine for each code line during streaming."""
         plain_line = _strip_ansi(line)
         self._code_lines.append(plain_line)
-        highlighted = self._highlight_line(plain_line, self._lang)
-        # Pre-wrap long lines with continuation indent matching source indentation
-        for wrapped_line in _prewrap_code_line(highlighted, source_line=plain_line):
-            self._log.write_with_source(
-                Text.from_ansi(wrapped_line),
-                _strip_ansi(wrapped_line),
-            )
+        self._render_incremental()
+
+    def _content_width(self) -> int:
+        """Wrap target width in cells, or 0 when layout is not yet known."""
+        region = self._log.scrollable_content_region
+        w = region.width if region is not None else 0
+        return max(0, w)
+
+    def _render_incremental(self) -> None:
+        """Render any source lines past `_rendered_count` at the current
+        content width. If layout is not yet known, schedule a single
+        deferred full render."""
+        if self._state != "STREAMING":
+            return
+        if self._in_buffered_render:
+            return
+        width = self._content_width()
+        if width <= 0:
+            if not self._pending_render:
+                self._pending_render = True
+                self.call_after_refresh(self._render_all_buffered)
+            return
+        while self._rendered_count < len(self._code_lines):
+            idx = self._rendered_count
+            plain_line = self._code_lines[idx]
+            highlighted = self._highlight_line(plain_line, self._lang)
+            for wrapped_line in _prewrap_code_line(
+                highlighted, source_line=plain_line, width=width
+            ):
+                self._log.write_with_source(
+                    Text.from_ansi(wrapped_line), _strip_ansi(wrapped_line)
+                )
+            self._rendered_count += 1
+
+    def _render_all_buffered(self) -> None:
+        """Re-render every stored source line into the log at the
+        current content width. Called after layout settles and on
+        resize during STREAMING."""
+        self._pending_render = False
+        if self._state != "STREAMING":
+            return
+        width = self._content_width()
+        if width <= 0:
+            self._pending_render = True
+            self.call_after_refresh(self._render_all_buffered)
+            return
+        self._in_buffered_render = True
+        try:
+            self._log.clear()
+            self._log._source_ops.clear()
+            self._log._rendered_max_width = 0
+            idx = 0
+            while idx < len(self._code_lines):
+                plain_line = self._code_lines[idx]
+                highlighted = self._highlight_line(plain_line, self._lang)
+                for wrapped_line in _prewrap_code_line(
+                    highlighted, source_line=plain_line, width=width
+                ):
+                    self._log.write_with_source(
+                        Text.from_ansi(wrapped_line), _strip_ansi(wrapped_line)
+                    )
+                idx += 1
+            self._rendered_count = len(self._code_lines)
+        finally:
+            self._in_buffered_render = False
+
+    def on_resize(self, event: events.Resize) -> None:
+        # IL-RZ-1: delta-gate width changes via _last_resize_w sentinel.
+        w = event.size.width
+        if w == self._last_resize_w:
+            return
+        self._last_resize_w = w
+        if self._state != "STREAMING":
+            return
+        if not self._code_lines:
+            return
+        self._render_all_buffered()
 
     def _highlight_line(self, line: str, lang: str) -> str:
         """Per-line Pygments highlight — loses multi-line string context but
@@ -236,6 +312,8 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "COMPLETE"
+        self._pending_render = False
+        self._log.set_streaming(False)
         _log.debug(
             "[STREAM-CODE] fence closed lang=%r %d lines STREAMING→COMPLETE",
             self._lang,
@@ -409,6 +487,7 @@ class StreamingCodeBlock(Widget):
         if self._state != "STREAMING":
             return
         self._state = "FLUSHED"
+        self._log.set_streaming(False)
         _log.debug(
             "[STREAM-CODE] fence flushed (turn ended) lang=%r %d lines STREAMING→FLUSHED",
             self._lang,

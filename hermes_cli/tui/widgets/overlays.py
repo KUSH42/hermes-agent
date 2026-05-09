@@ -253,8 +253,127 @@ class TurnResultItem(Static):
 
 
 # ---------------------------------------------------------------------------
-# KeymapOverlay
+# KeymapOverlay — structured data + renderer
 # ---------------------------------------------------------------------------
+
+# Type aliases for the structured keymap data source.
+# Keys are plain strings — renderer wraps them in [dim]\[…][/dim] markup.
+_KMRow = tuple[str, ...]            # (description, key1[, key2, ...])
+_KMSection = tuple[str, list]       # (section_title, list[_KMRow])
+
+
+def _km_render_sections(
+    sections: list,
+    *,
+    width: int,
+) -> str:
+    """Render section list to Rich markup string.
+
+    Pure module-level function — unit-testable without mounting any widget.
+    Section titles may contain Rich markup (exception to plain-strings
+    convention) — used for the '(press ? for full menu)' dim note in the
+    Tool Panel title.
+    """
+    lines: list[str] = [
+        f"[bold]Hermes  Keyboard Reference[/bold]"
+        f"{'':>{width - 43}}[dim]\\[F1][/dim] close",
+        "─" * min(width - 4, 61),
+        "",
+    ]
+    for title, rows in sections:
+        lines.append(f"[bold $text]{title}[/bold $text]")
+        for row in rows:
+            desc = row[0]
+            keys = "  ".join(f"[dim]\\[{k}][/dim]" for k in row[1:]) if len(row) > 1 else ""
+            lines.append(f"  {desc:<36}{keys}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# Full-width layout (≥ 80 cols).
+# Title may contain Rich markup (exception to plain-strings convention).
+_KM_SECTIONS_WIDE: list = [
+    ("Input", [
+        ("Send message",                "Enter"),
+        ("Newline",                     "Shift+Enter"),
+        ("Interrupt agent",             "Ctrl+C"),
+        ("Clear input",                 "Ctrl+U"),
+        ("Paste",                       "Ctrl+V"),
+        ("Attach file / image",         "Ctrl+T"),
+        ("Undo / Redo",                 "Ctrl+Z", "Ctrl+Y"),
+    ]),
+    ("Navigation", [
+        ("Prev / next turn",            "Alt+↑", "Alt+↓"),
+        ("Scroll output",               "↑", "↓", "PgUp", "PgDn"),
+        ("Open history search",         "Ctrl+F"),
+        ("Next / prev search hit",      "n", "N"),
+        ("Cycle pane forward / backward", "F9", "Shift+F9"),
+    ]),
+    ("Overlays & Modes", [
+        ("Browse mode",                 "Ctrl+B"),
+        ("Sessions",                    "Ctrl+J"),
+        ("Workspace",                   "F4"),
+        ("Usage stats",                 "F2"),
+        ("Commands list",               "F3"),
+        ("Animation config",            "Ctrl+Shift+A"),
+    ]),
+    ("Pane Layout", [
+        ("Focus left / center / right", "F5", "F6", "F7"),
+        ("Collapse left / right pane",  "Ctrl+[", "Ctrl+]"),
+        ("Toggle center split",         "Ctrl+\\"),
+        ("Focus output / input",        "o", "i"),
+        ("Prev / next subagent",        "Ctrl+Alt+↑", "Ctrl+Alt+↓"),
+    ]),
+    # Title contains Rich markup — (press ? for full menu) dim note.
+    ("Tool Panel  [dim](press ? for full menu)[/dim]", [
+        ("Toggle collapse",             "Enter"),
+        ("Scroll body  ·  top / end",   "j", "k", "J", "K", "<", ">"),
+        ("Rerun tool",                  "r"),
+        ("Copy: plain / +color / HTML", "c", "C", "H"),
+        ("Copy: input / invocation",    "Y", "I"),
+        ("Copy: stderr / paths / URLs", "e", "p", "u"),
+        ("Copy: full path",             "P"),
+        ("Density cycle ↓ / ↑",        "D", "Shift+D"),
+        ("Render kind / revert",        "t", "T"),
+        ("Edit cmd / args",             "E", "a"),
+        ("Tail follow",                 "f"),
+        ("Dismiss error banner",        "x"),
+        ("Context menu  ·  Help",       "?", "F1"),
+    ]),
+    ("Slash Commands  (type / in composer)", [
+        ("/clear",                      ),
+        ("/model  /provider",           ),
+        ("/skin  /anim",                ),
+        ("/compact  /help",             ),
+    ]),
+]
+
+# Narrow layout (< 80 cols).
+_KM_SECTIONS_NARROW: list = [
+    ("Input", [
+        ("Send",            "Enter"),
+        ("Newline",         "Shift+Enter"),
+        ("Interrupt",       "Ctrl+C"),
+        ("Attach",          "Ctrl+T"),
+    ]),
+    ("Navigation", [
+        ("Prev / next turn",  "Alt+↑", "Alt+↓"),
+        ("History search",    "Ctrl+F"),
+        ("Cycle pane",        "F9"),
+    ]),
+    ("Overlays & Modes", [
+        ("Browse mode",       "Ctrl+B"),
+        ("Sessions",          "Ctrl+J"),
+        ("Workspace",         "F4"),
+    ]),
+    ("Tool Panel", [
+        ("Toggle collapse",   "Enter"),
+        ("Copy / Rerun",      "c", "r"),
+        ("Context menu",      "?"),
+        ("Help",              "F1"),
+    ]),
+]
+
 
 class KeymapOverlay(ModalOverlayMixin, Widget):
     """Keyboard-shortcut reference card.  Toggle with F1; dismiss with Escape, F1, or q."""
@@ -283,82 +402,6 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
         Binding("f1", "dismiss", "Close", show=False, priority=True),
         Binding("q", "dismiss", "Close", show=False, priority=True),
     ]
-
-    # Full-width layout (≥80 cols).  Width-breakpoint rendering is handled in
-    # render() on the inner Static; this constant is the ≥80 version.
-    _CONTENT_WIDE = (
-        "[bold]Hermes  Keyboard Reference[/bold]"
-        "                          [dim]\\[F1][/dim] close\n"
-        "─────────────────────────────────────────────────────────────\n"
-        "\n"
-        "[bold $text]Navigation[/bold $text]\n"
-        "  Previous / next turn            [dim]\\[Alt+↑][/dim]   [dim]\\[Alt+↓][/dim]\n"
-        "  Scroll to live edge             [dim]\\[End][/dim]\n"
-        "  Open history search             [dim]\\[Ctrl+F][/dim]  [dim]\\[Ctrl+G][/dim]\n"
-        "\n"
-        "[bold $text]Input[/bold $text]\n"
-        "  Submit message                  [dim]\\[Enter][/dim]\n"
-        "  Accept autocomplete             [dim]\\[Tab][/dim]\n"
-        "  Insert newline                  [dim]\\[Shift+Enter][/dim]\n"
-        "  Previous / next history         [dim]\\[↑][/dim]  [dim]\\[↓][/dim]\n"
-        "  Path/file reference             [dim]\\[@file][/dim]  [dim]\\[Ctrl+P][/dim]\n"
-        "\n"
-        "[bold $text]Tools[/bold $text]\n"
-        "  Expand / collapse tool block    [dim]\\[click header][/dim]\n"
-        "  Expand all / collapse all       [dim]\\[a][/dim]  [dim]\\[A][/dim]  (browse mode)\n"
-        "  Interrupt agent                 [dim]\\[Ctrl+C][/dim]  [dim]\\[Escape][/dim]\n"
-        "\n"
-        "[bold $text]Slash Commands[/bold $text]\n"
-        "  /help                           List all commands\n"
-        "  /model  /reasoning  /skin       Picker overlays\n"
-        "  /yolo   /verbose                Toggle modes\n"
-        "  /clear  /undo  /retry           Session control\n"
-        "\n"
-        "[bold $text]Panels[/bold $text]\n"
-        "  Click reasoning                 Collapse / expand\n"
-        "  Undo last turn                  [dim]\\[Alt+Z][/dim]\n"
-        "  Toggle FPS HUD                  [dim]\\[F8][/dim]\n"
-        "\n"
-        "[bold $text]Tool Panel[/bold $text]\n"
-        "  Toggle collapse                 [dim]\\[Enter][/dim]  [dim]\\[Space][/dim]\n"
-        "  Scroll body                     [dim]\\[j][/dim]  [dim]\\[k][/dim]  [dim]\\[J][/dim]  [dim]\\[K][/dim]\n"
-        "  Rerun tool                      [dim]\\[r][/dim]\n"
-        "  Copy output                     [dim]\\[c][/dim]  [dim]\\[C][/dim]  [dim]\\[H][/dim]\n"
-        "  Help overlay                    [dim]\\[?][/dim]\n"
-        "\n"
-        "[bold $text]Mouse & Right-click[/bold $text]\n"
-        "  Right-click tool header         Context menu\n"
-        "  Ctrl+click                      Open file/URL\n"
-        "  Middle-click                    Paste primary selection\n"
-        "  Scroll wheel                    Scroll output\n"
-        "\n"
-        "[bold $text]System[/bold $text]\n"
-        "  This help                       [dim]\\[F1][/dim]\n"
-        "  Plan panel                      [dim]\\[F9][/dim]\n"
-        "  Quit                            [dim]\\[Ctrl+Q][/dim]\n"
-    )
-
-    _CONTENT_NARROW = (
-        "[bold]Keyboard Reference[/bold]  [dim]\\[F1][/dim] close\n"
-        "\n"
-        "[bold $text]Navigation[/bold $text]\n"
-        "  Prev/next turn\n    [dim]\\[Alt+↑][/dim]  [dim]\\[Alt+↓][/dim]\n"
-        "  History search\n    [dim]\\[Ctrl+F][/dim]\n"
-        "\n"
-        "[bold $text]Input[/bold $text]\n"
-        "  Submit\n    [dim]\\[Enter][/dim]\n"
-        "  Autocomplete\n    [dim]\\[Tab][/dim]\n"
-        "\n"
-        "[bold $text]Tools[/bold $text]\n"
-        "  Expand/collapse\n    [dim]\\[click header][/dim]\n"
-        "  Interrupt\n    [dim]\\[Ctrl+C][/dim]\n"
-        "\n"
-        "[bold $text]Commands[/bold $text]\n"
-        "  /model /skin /yolo /clear\n"
-        "\n"
-        "[bold $text]System[/bold $text]\n"
-        "  Help  [dim]\\[F1][/dim]    Plan  [dim]\\[F9][/dim]    Quit  [dim]\\[Ctrl+Q][/dim]\n"
-    )
 
     def compose(self) -> ComposeResult:
         yield Static("", id="keymap-content", markup=True)
@@ -392,7 +435,8 @@ class KeymapOverlay(ModalOverlayMixin, Widget):
             w = self.app.size.width
         except Exception:
             w = 80
-        content = self._CONTENT_WIDE if w >= 80 else self._CONTENT_NARROW
+        sections = _KM_SECTIONS_WIDE if w >= 80 else _KM_SECTIONS_NARROW
+        content = _km_render_sections(sections, width=w)
         try:
             self.query_one("#keymap-content", Static).update(content)
         except NoMatches:

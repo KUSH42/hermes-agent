@@ -37,6 +37,8 @@ x-hermes:
         - '#B7B7B7'
         - '#919191'
         - '#4A4A4A'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   branding:
     agent_name: Sisyphus Agent

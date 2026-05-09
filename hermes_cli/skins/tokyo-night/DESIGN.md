@@ -44,6 +44,8 @@ x-hermes:
         - '#bb9af7'
         - '#7aa2f7'
         - '#3d5994'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   vars:
     preview-syntax-theme: tokyo-night

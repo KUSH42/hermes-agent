@@ -32,6 +32,8 @@ x-hermes:
         - '#00ff41'
         - '#00d849'
         - '#00a839'
+  logo_startup_tte:
+    effect: rain
   schema: 1
   branding:
     agent_name: Morpheus

@@ -45,6 +45,8 @@ x-hermes:
         - '#2aa198'
         - '#268bd2'
         - '#1a5c99'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   vars:
     preview-syntax-theme: solarized-dark

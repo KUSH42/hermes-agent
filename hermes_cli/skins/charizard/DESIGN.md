@@ -38,6 +38,8 @@ x-hermes:
         - '#7A3511'
         - '#C75B1D'
         - '#F29C38'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   branding:
     agent_name: Charizard Agent

@@ -35,6 +35,8 @@ x-hermes:
         - '#c9d1d9'
         - '#aaaaaa'
         - '#444444'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   branding:
     agent_name: Hermes Agent

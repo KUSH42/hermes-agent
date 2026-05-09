@@ -38,6 +38,8 @@ x-hermes:
         - '#153C73'
         - '#2A6FB9'
         - '#5DB8F5'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   branding:
     agent_name: Poseidon Agent

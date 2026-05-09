@@ -50,6 +50,8 @@ x-hermes:
         - '#f5c2e7'
         - '#cba6f7'
         - '#7f57b4'
+  logo_startup_tte:
+    effect: highlight
   schema: 1
   vars:
     preview-syntax-theme: catppuccin

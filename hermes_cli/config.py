@@ -842,6 +842,14 @@ DEFAULT_CONFIG = {
             "fps": 60,
             "params": {},
         },
+        "startup_logo_text_effect": {
+            "enabled": False,
+            "effect": "highlight",
+            "max_wall_s": 5.0,
+            "max_frames": 300,
+            "fps": 60,
+            "params": {},
+        },
         # TUI busy indicator style: kaomoji (default), emoji, unicode (braille
         # spinner), or ascii.  Live-swappable via `/indicator <style>`.
         "tui_status_indicator": "kaomoji",

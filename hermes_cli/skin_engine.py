@@ -636,6 +636,10 @@ class SkinConfig:
         """Return the per-skin startup TTE override block (may be empty)."""
         return self.startup_tte
 
+    def get_logo_startup_tte(self) -> Mapping[str, Any]:
+        """Return the per-skin logo startup TTE override block (may be empty)."""
+        return {}
+
     def get_ui_ext(self, key: str, fallback: Any = None) -> Any:
         """Return an extended UI style/value, falling back to _UI_EXT_DEFAULTS."""
         return self.ui_ext.get(key, _UI_EXT_DEFAULTS.get(key, fallback))
@@ -1129,6 +1133,7 @@ _X_HERMES_ALLOWED_KEYS: frozenset = frozenset({
     "schema", "semantic", "component-vars", "syntax", "diff", "markdown",
     "spinner", "branding", "tool_prefix", "tool_icons", "banner_logo",
     "banner_hero", "vars", "stream_effect", "colors", "startup_tte",
+    "logo_startup_tte",
 })
 
 _STARTUP_TTE_ALLOWED_KEYS: frozenset = frozenset({
@@ -1187,6 +1192,13 @@ class SkinPayload:
     startup_tte: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    logo_startup_tte: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def get_logo_startup_tte(self) -> Mapping[str, Any]:
+        """Return the per-skin logo startup TTE override block (may be empty)."""
+        return self.logo_startup_tte
 
     def to_loader_tuple(self) -> Tuple[Dict[str, str], Dict[str, str]]:
         """Compatibility tuple for ThemeManager._load_path()."""
@@ -1351,6 +1363,8 @@ def validate_design_md_payload(frontmatter: Dict[str, Any], *, source: str = "<D
 
     if "startup_tte" in x_hermes:
         _validate_startup_tte_block(x_hermes["startup_tte"], source=source)
+    if "logo_startup_tte" in x_hermes:
+        _validate_startup_tte_block(x_hermes["logo_startup_tte"], source=source)
 
     # Duplicate-color check (DM-G fan-out rule)
     std_colors = frontmatter.get("colors", {}) or {}
@@ -1485,6 +1499,8 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
     banner_hero = str(x_hermes.get("banner_hero", "") or "")
     raw_tte = x_hermes.get("startup_tte") or {}
     startup_tte = MappingProxyType(dict(raw_tte))
+    raw_logo_tte = x_hermes.get("logo_startup_tte") or {}
+    logo_startup_tte = MappingProxyType(dict(raw_logo_tte))
 
     return SkinPayload(
         name=name,
@@ -1503,6 +1519,7 @@ def load_design_md_payload(path: Path, *, source: Optional[str] = None) -> SkinP
         banner_logo=banner_logo,
         banner_hero=banner_hero,
         startup_tte=startup_tte,
+        logo_startup_tte=logo_startup_tte,
     )
 
 

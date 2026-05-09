@@ -38,6 +38,8 @@ x-hermes:
         - '#6B1717'
         - '#9F1C1C'
         - '#DD4A3A'
+  logo_startup_tte:
+    effect: laseretch
   schema: 1
   branding:
     agent_name: Ares Agent

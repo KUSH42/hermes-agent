@@ -635,7 +635,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          print_hero: bool = True,
                          hero_text: str = "",
                          hero_renderable=None,
-                         bg_color: str = ""):
+                         bg_color: str = "",
+                         logo_placeholder: str = ""):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
@@ -926,19 +927,29 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     term_rows = term_size.lines
     if print_logo and term_width >= 95:
         if term_rows >= 32:
-            markup_logo, _ = resolve_banner_logo_assets()
-            logo_text = render_banner_logo_text(markup_logo)
-            logo_text.no_wrap = True
-            logo_text.overflow = "ignore"
-            # Compute content width from the widest non-trailing-space line so that
-            # all rows share the same centering anchor.  justify="center" strips
-            # trailing spaces per-line before measuring, causing rows with trailing
-            # padding (e.g. rows 2-5 of the block-letter logo) to get 1 extra left-
-            # pad space compared to rows with no trailing spaces (rows 0-1).
-            from rich.cells import cell_len as _cell_len
-            _logo_lines = logo_text.split("\n", allow_blank=True)
-            _content_w = max((_cell_len(ln.plain.rstrip()) for ln in _logo_lines), default=1)
-            console.print(Align(logo_text, align="center", width=_content_w))
+            if logo_placeholder:
+                from rich.text import Text as _Text
+                logo_renderable = _Text(logo_placeholder)
+                logo_renderable.no_wrap = True
+                logo_renderable.overflow = "ignore"
+                from rich.cells import cell_len as _cell_len
+                _logo_lines = logo_renderable.split("\n", allow_blank=True)
+                _content_w = max((_cell_len(ln.plain.rstrip()) for ln in _logo_lines), default=1)
+                console.print(Align(logo_renderable, align="center", width=_content_w))
+            else:
+                markup_logo, _ = resolve_banner_logo_assets()
+                logo_text = render_banner_logo_text(markup_logo)
+                logo_text.no_wrap = True
+                logo_text.overflow = "ignore"
+                # Compute content width from the widest non-trailing-space line so that
+                # all rows share the same centering anchor.  justify="center" strips
+                # trailing spaces per-line before measuring, causing rows with trailing
+                # padding (e.g. rows 2-5 of the block-letter logo) to get 1 extra left-
+                # pad space compared to rows with no trailing spaces (rows 0-1).
+                from rich.cells import cell_len as _cell_len
+                _logo_lines = logo_text.split("\n", allow_blank=True)
+                _content_w = max((_cell_len(ln.plain.rstrip()) for ln in _logo_lines), default=1)
+                console.print(Align(logo_text, align="center", width=_content_w))
         else:
             wordmark = f"[bold {title_color}]{agent_name.upper()}[/]"
             console.print(Align.center(Text.from_markup(wordmark)))

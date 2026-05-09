@@ -200,6 +200,7 @@ _TITLE_SAFE_STYLES: frozenset[str] = frozenset({
 
 _TEMPLATE_FAILED = object()
 _STARTUP_BANNER_PLACEHOLDER_MARKER = "\uE000"
+_STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER = "\uE001"  # PUA, distinct from hero marker
 
 _ANSI_SGR_RE = re.compile(r"\033\[([0-9;]*)m")
 
@@ -2684,6 +2685,7 @@ class HermesCLI:
         self._startup_banner_static = None
         self._prelaunch_artefacts_pending: bool = False
         self._prelaunch_tte_state: tuple | None = None
+        self._prelaunch_logo_frames: tuple | None = None
         self._first_input_seen = threading.Event()
         self._artefacts_lock = threading.Lock()
         self._artefacts_built_event: threading.Event | None = None
@@ -4612,6 +4614,106 @@ class HermesCLI:
             fps=int(_clamp(raw_fps, 1, 240, "fps")),
         )
 
+    def _get_startup_logo_tte_config(self) -> _StartupTteConfig | None:
+        """Return configured startup logo text effect, or None when disabled/invalid."""
+        _cfg = getattr(self, "config", {}) or {}
+        if _cfg.get("tui", {}).get("reduced_motion"):
+            return None
+        if os.environ.get("HERMES_REDUCED_MOTION"):
+            return None
+
+        config = getattr(self, "config", CLI_CONFIG)
+        display_cfg = (config.get("display") or {}) if isinstance(config, dict) else {}
+        effect_cfg = display_cfg.get("startup_logo_text_effect") or {}
+        if not isinstance(effect_cfg, dict) or not effect_cfg.get("enabled", False):
+            return None
+
+        skin_tte: dict = {}
+        try:
+            from hermes_cli.skin_engine import get_active_skin, get_active_skin_name
+            _skin = get_active_skin()
+            skin_tte = dict(_skin.get_logo_startup_tte() or {})
+            _skin_name = get_active_skin_name()
+        except Exception:
+            logger.debug("logo_startup_tte: skin lookup failed", exc_info=True)
+            skin_tte = {}
+            _skin_name = ""
+
+        effect_name = str(effect_cfg.get("effect", "highlight")).strip().lower()
+        params = effect_cfg.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+
+        if skin_tte and skin_tte.get("effect"):
+            skin_effect = str(skin_tte["effect"]).strip().lower()
+            try:
+                from hermes_cli.tui.tte_runner import EFFECT_MAP
+                _known = frozenset(EFFECT_MAP)
+            except Exception:
+                _known = frozenset()
+            if skin_effect in _known:
+                effect_name = skin_effect
+                if "params" in skin_tte and isinstance(skin_tte["params"], dict):
+                    params = dict(skin_tte["params"])
+                elif "params" not in skin_tte:
+                    params = {}
+            else:
+                pair = (_skin_name, skin_effect)
+                if pair not in _warned_unknown_skin_effects:
+                    logger.warning(
+                        "logo_startup_tte: skin %r declares unknown effect %r; "
+                        "falling back to config effect",
+                        _skin_name, skin_effect,
+                    )
+                    _warned_unknown_skin_effects.add(pair)
+
+        if not effect_name:
+            return None
+
+        def _clamp(value: float | int, lo: float | int, hi: float | int, key: str):
+            if not (lo <= value <= hi):
+                logger.warning(
+                    "Logo TTE config: %s=%r out of range [%s, %s]; clamping",
+                    key, value, lo, hi,
+                )
+                return max(lo, min(hi, value))
+            return value
+
+        def _coerce_float(raw: object, default: float, key: str) -> float:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                logger.warning("Logo TTE config: %s=%r invalid; using default %s", key, raw, default)
+                return default
+
+        def _coerce_int(raw: object, default: int, key: str) -> int:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                logger.warning("Logo TTE config: %s=%r invalid; using default %s", key, raw, default)
+                return default
+
+        _wall_default = effect_cfg.get("max_wall_s", 5.0)
+        _frames_default = effect_cfg.get("max_frames", 300)
+        _fps_default = effect_cfg.get("fps", 60)
+        if skin_tte and effect_name == str(skin_tte.get("effect", "")).strip().lower():
+            if "max_wall_s" in skin_tte:
+                _wall_default = skin_tte["max_wall_s"]
+            if "max_frames" in skin_tte:
+                _frames_default = skin_tte["max_frames"]
+            if "fps" in skin_tte:
+                _fps_default = skin_tte["fps"]
+        raw_wall_s = _coerce_float(_wall_default, 5.0, "max_wall_s")
+        raw_frames = _coerce_int(_frames_default, 300, "max_frames")
+        raw_fps = _coerce_int(_fps_default, 60, "fps")
+        return _StartupTteConfig(
+            effect_name=effect_name,
+            params=dict(params),
+            max_wall_s=float(_clamp(raw_wall_s, 1.0, 600.0, "max_wall_s")),
+            max_frames=int(_clamp(raw_frames, 100, 100_000, "max_frames")),
+            fps=int(_clamp(raw_fps, 1, 240, "fps")),
+        )
+
     def _play_startup_text_effect(self, tui: bool = False) -> bool:
         """Play configured startup text effect on the caduceus hero art.
 
@@ -4631,7 +4733,8 @@ class HermesCLI:
             return False
 
         if tui:
-            return self._play_tte_in_output_panel(effect_cfg, plain_hero)
+            logo_tte_cfg = self._get_startup_logo_tte_config()
+            return self._play_tte_in_output_panel(effect_cfg, plain_hero, logo_cfg=logo_tte_cfg)
 
         # Raw stdout playback cannot preserve the startup banner's two-column
         # layout for multiline hero art, so keep the static banner intact.
@@ -4679,6 +4782,7 @@ class HermesCLI:
         *,
         print_hero: bool = True,
         hero_text: str | None = None,
+        logo_text: str | None = None,
     ):
         """Render the startup banner into a Rich Text blob for TUI in-place updates."""
         from rich.console import Console as _Console
@@ -4747,6 +4851,7 @@ class HermesCLI:
             print_hero=print_hero if hero_renderable is None else False,
             print_logo=True,
             hero_renderable=hero_renderable,
+            logo_placeholder=logo_text or "",
         )
         logger.info("RENDER-BANNER: build_welcome +%.0fms", (time.monotonic() - _bw_t0) * 1000)
         _ex_t0 = time.monotonic()
@@ -4800,10 +4905,23 @@ class HermesCLI:
         _geo_key = geo_cache_key(panel_w, skin_name, wide_layout, tall_layout)
         cached_geo = load_geo(_geo_key)
 
+        # Compute logo placeholder dimensions from the plain logo text.
+        from hermes_cli.banner import resolve_banner_logo_assets
+        _, plain_logo = resolve_banner_logo_assets()
+        logo_lines_raw = plain_logo.splitlines() or [plain_logo]
+        logo_width = max((_cell_len(ln) for ln in logo_lines_raw), default=1)
+        logo_height = len(logo_lines_raw)
+        logo_placeholder_lines = [_STARTUP_BANNER_LOGO_PLACEHOLDER_MARKER * logo_width
+                                   for _ in range(logo_height)]
+        logo_placeholder_text = "\n".join(logo_placeholder_lines)
+
         # Always render the template (needed for TTE background lines).
         placeholder_lines = [_STARTUP_BANNER_PLACEHOLDER_MARKER * hero_width for _ in range(hero_height)]
         placeholder_text = "\n".join(placeholder_lines)
-        template = self._render_startup_banner_text(hero_text=placeholder_text)
+        template = self._render_startup_banner_text(
+            hero_text=placeholder_text,
+            logo_text=logo_placeholder_text,
+        )
         template_lines = list(template.split("\n", allow_blank=True))
 
         if cached_geo is not None:
@@ -4815,9 +4933,13 @@ class HermesCLI:
                 "hero_col": cached_geo["hero_col"],
                 "hero_width": hero_width,
                 "hero_height": hero_height,
+                "logo_row": cached_geo.get("logo_row"),
+                "logo_col": cached_geo.get("logo_col", 0),
+                "logo_width": logo_width,
+                "logo_height": logo_height,
             }
 
-        # Cache miss: scan for placeholder position.
+        # Cache miss: scan for hero placeholder position.
         start_row = start_col = None
         for row, line in enumerate(template_lines):
             idx = line.plain.find(placeholder_lines[0])
@@ -4828,7 +4950,21 @@ class HermesCLI:
         if start_row is None or start_col is None:
             return None
 
-        geo = {"hero_row": start_row, "hero_col": start_col}
+        # Scan for logo placeholder position (may be absent on compact/narrow banners).
+        logo_start_row = logo_start_col = None
+        if logo_placeholder_lines:
+            for row, line in enumerate(template_lines):
+                idx = line.plain.find(logo_placeholder_lines[0])
+                if idx != -1:
+                    logo_start_row, logo_start_col = row, idx
+                    break
+
+        geo = {
+            "hero_row": start_row,
+            "hero_col": start_col,
+            "logo_row": logo_start_row,
+            "logo_col": logo_start_col,
+        }
         save_geo(_geo_key, geo)
         threading.Thread(target=gc_geo_cache, daemon=True).start()
 
@@ -4838,6 +4974,10 @@ class HermesCLI:
             "hero_col": start_col,
             "hero_width": hero_width,
             "hero_height": hero_height,
+            "logo_row": logo_start_row,
+            "logo_col": logo_start_col,
+            "logo_width": logo_width,
+            "logo_height": logo_height,
         }
 
     def _ensure_startup_banner_artefacts(self, plain_hero: str) -> None:
@@ -4880,6 +5020,18 @@ class HermesCLI:
             # Wait for the claiming thread.  After this returns, template is either
             # a dict (success) or _TEMPLATE_FAILED (build failed); never None.
             self._artefacts_built_event.wait(timeout=10.0)
+
+    def _logo_ansi_settle(self, plain_logo: str) -> str:  # noqa: ARG002 — kept for call-site symmetry
+        """Return static ANSI-colored logo text after logo TTE completes."""
+        from io import StringIO
+        from rich.console import Console as _RichConsole
+        from hermes_cli.banner import render_banner_logo_text, resolve_banner_logo_assets
+        markup_logo, _ = resolve_banner_logo_assets()
+        logo_rich = render_banner_logo_text(markup_logo)
+        buf = StringIO()
+        _c = _RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=200)
+        _c.print(logo_rich, end="")
+        return buf.getvalue()
 
     def _hero_ansi_colored(self, plain_hero: str) -> str:
         """Return ANSI-colored hero text suitable for _splice_startup_banner_frame.
@@ -4969,8 +5121,13 @@ class HermesCLI:
         con.print(out, end="", highlight=False)
         return buf.getvalue()
 
-    def _splice_startup_banner_frame(self, template: dict[str, object], frame_text: str):
-        """Return banner Text with the animated hero frame spliced in."""
+    def _splice_startup_banner_frame(
+        self,
+        template: dict[str, object],
+        frame_text: str,
+        logo_frame_text: str | None = None,
+    ):
+        """Return banner Text with the animated hero (and optionally logo) frame spliced in."""
         from rich.text import Text
 
         base_lines = template["lines"]
@@ -4978,7 +5135,13 @@ class HermesCLI:
         hero_col = int(template["hero_col"])
         hero_width = int(template["hero_width"])
         hero_height = int(template["hero_height"])
+        logo_row = template.get("logo_row")
+        logo_col = int(template.get("logo_col") or 0)
+        logo_width = int(template.get("logo_width") or 0)
+        logo_height = int(template.get("logo_height") or 0)
+
         frame_lines = frame_text.splitlines()
+        logo_lines = logo_frame_text.splitlines() if logo_frame_text else []
 
         out = Text()
         total_lines = len(base_lines)
@@ -4991,6 +5154,18 @@ class HermesCLI:
                 hero_line.overflow = "ignore"
                 hero_line = _fit_hero_line(hero_line, hero_width)
                 composed = base_line[:hero_col] + hero_line + base_line[hero_col + hero_width :]
+            elif (
+                logo_row is not None
+                and logo_lines
+                and logo_row <= row < logo_row + logo_height
+            ):
+                rel = row - logo_row
+                ll = logo_lines[rel] if rel < len(logo_lines) else ""
+                logo_line = Text.from_ansi(ll)
+                logo_line.no_wrap = True
+                logo_line.overflow = "ignore"
+                logo_line = _fit_hero_line(logo_line, logo_width)
+                composed = base_line[:logo_col] + logo_line + base_line[logo_col + logo_width :]
             else:
                 composed = base_line.copy()
             out.append_text(composed)
@@ -5021,7 +5196,8 @@ class HermesCLI:
         logger.warning("TTE frame error: %s", exc, exc_info=True)
 
     def _play_tte_in_output_panel(
-        self, cfg: _StartupTteConfig, plain_hero: str
+        self, cfg: _StartupTteConfig, plain_hero: str,
+        logo_cfg: _StartupTteConfig | None = None,
     ) -> bool:
         """Play TTE animation via loop-driven set_interval (approach C).
 
@@ -5219,6 +5395,105 @@ class HermesCLI:
                 _effect_name_norm, MAX_FRAMES, MAX_WALL_S,
             )
 
+        # Logo TTE producer (optional, parallel to hero producer).
+        # Thread is deferred until after the prelaunch join (mirrors hero pattern).
+        _logo_raw_frames: list[str] = []
+        _logo_done = threading.Event()
+        _logo_cell: list = [None]  # settled ANSI text after logo TTE exhausts
+        _logo_prelaunch_gen: object = None
+        _logo_prelaunch_start_i: int = 0
+
+        if logo_cfg is None:
+            _logo_done.set()  # immediately settled when no logo TTE
+
+        # Logo cache key + cached frames resolved when logo_cfg is set.
+        _logo_cache_key: str | None = None
+        _logo_cached_ansi: list[str] | None = None
+        _plain_logo: str = ""
+        if logo_cfg is not None:
+            try:
+                from hermes_cli.banner import resolve_banner_logo_assets as _resolve_logo
+                from rich.text import Text as _LogoText
+                _, _plain_logo_markup = _resolve_logo()
+                try:
+                    _plain_logo = _LogoText.from_markup(_plain_logo_markup).plain
+                except Exception:
+                    _plain_logo = _plain_logo_markup
+                try:
+                    from hermes_cli.tui._tte_cache import (
+                        tte_cache_key as _logo_tte_cache_key,
+                        load_tte_frames as _load_logo,
+                    )
+                    _logo_cache_key = "logo-" + _logo_tte_cache_key(
+                        logo_cfg.effect_name.strip().lower(),
+                        _plain_logo,
+                        _render_w,
+                        _skin_colors,
+                        logo_cfg.params,
+                    )
+                    _logo_cached_ansi = _load_logo(_logo_cache_key)
+                except Exception:
+                    logger.debug("Logo TTE cache lookup failed", exc_info=True)
+            except Exception:
+                logger.debug("Logo TTE plain_logo resolution failed", exc_info=True)
+
+        _logo_produce_raised: list[bool] = [False]
+        _logo_app_stopped_early: list[bool] = [False]
+
+        def _produce_logo() -> None:
+            """Logo frame producer — mirrors hero _produce(). Deferred start."""
+            if logo_cfg is None:
+                return
+            try:
+                if _logo_cached_ansi is not None:
+                    for raw in _logo_cached_ansi[:logo_cfg.max_frames]:
+                        if STARTUP_TTE_SKIP.is_set():
+                            break
+                        _logo_raw_frames.append(raw)
+                    return
+                from hermes_cli.tui.tte_runner import iter_frames as _logo_iter_frames
+                _logo_gen = (
+                    _logo_prelaunch_gen
+                    if _logo_prelaunch_gen is not None
+                    else _logo_iter_frames(logo_cfg.effect_name, _plain_logo, params=logo_cfg.params)
+                )
+                _logo_raw_ansi: list[str] = []
+                t0 = time.monotonic()
+                for j, raw in enumerate(_logo_gen):
+                    i = _logo_prelaunch_start_i + j
+                    if not getattr(app, "is_running", True):
+                        _logo_app_stopped_early[0] = True
+                        break
+                    if STARTUP_TTE_SKIP.is_set():
+                        break
+                    if i >= logo_cfg.max_frames:
+                        break
+                    if time.monotonic() - t0 > logo_cfg.max_wall_s:
+                        break
+                    _logo_raw_frames.append(raw)
+                    _logo_raw_ansi.append(raw)
+                if (
+                    _logo_raw_ansi
+                    and _logo_cache_key is not None
+                    and not STARTUP_TTE_SKIP.is_set()
+                    and not _logo_app_stopped_early[0]
+                    and not _logo_produce_raised[0]
+                ):
+                    def _write_logo() -> None:
+                        try:
+                            from hermes_cli.tui._tte_cache import save_tte_frames as _save_logo
+                            _save_logo(_logo_cache_key, _logo_raw_ansi)
+                        except Exception:
+                            logger.debug("Logo TTE cache write-back failed", exc_info=True)
+                    threading.Thread(
+                        target=_write_logo, daemon=True, name="hermes-logo-tte-cache"
+                    ).start()
+            except Exception:
+                _logo_produce_raised[0] = True
+                logger.warning("Logo TTE producer error", exc_info=True)
+            finally:
+                _logo_done.set()
+
         # Outer slots populated below if a prelaunch-pre-produced generator is
         # present and matches.  _produce reads them when it starts.
         _prelaunch_gen: object = None
@@ -5244,8 +5519,21 @@ class HermesCLI:
                         break
                     raw_frame = _strip_ansi_bg(raw_frame)
                     _raw_for_cache.append(raw_frame)
+                    # Determine logo frame for this composite
+                    _logo_frame_for_splice: str | None = None
+                    if logo_cfg is not None:
+                        _logo_idx = len(anim_frames)
+                        if _logo_idx < len(_logo_raw_frames):
+                            _logo_frame_for_splice = _logo_raw_frames[_logo_idx]
+                        elif _logo_done.is_set():
+                            if _logo_cell[0] is None:
+                                _logo_cell[0] = self._logo_ansi_settle("")
+                            _logo_frame_for_splice = _logo_cell[0]
                     rich_frame = (
-                        self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                        self._splice_startup_banner_frame(
+                            template_cell[0], raw_frame,
+                            logo_frame_text=_logo_frame_for_splice,
+                        )
                         if template_cell[0] is not None
                         else Text.from_ansi(raw_frame)
                     )
@@ -5343,10 +5631,12 @@ class HermesCLI:
         # Used by both the cache-hit prefetch+bg path here and the cache-miss
         # producer thread.  Pulled out so the two paths apply identical
         # splicing/wrapping behaviour against the now-populated template.
-        def _process_raw_frame(raw_frame: str):
+        def _process_raw_frame(raw_frame: str, logo_frame: str | None = None):
             raw_frame = _strip_ansi_bg(raw_frame)
             rich_frame = (
-                self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                self._splice_startup_banner_frame(
+                    template_cell[0], raw_frame, logo_frame_text=logo_frame
+                )
                 if template_cell[0] is not None
                 else Text.from_ansi(raw_frame)
             )
@@ -5372,12 +5662,24 @@ class HermesCLI:
         # immediately, then defer the rest of the cached frames + the static
         # terminal frame to a background thread.  This eliminates the multi-
         # second blocking wait that processing all 608 frames upfront caused.
+        def _get_logo_frame_at(idx: int) -> str | None:
+            """Return logo raw ANSI for composite at *idx*, or None if no logo TTE."""
+            if logo_cfg is None:
+                return None
+            if idx < len(_logo_raw_frames):
+                return _logo_raw_frames[idx]
+            if _logo_done.is_set():
+                if _logo_cell[0] is None:
+                    _logo_cell[0] = self._logo_ansi_settle("")
+                return _logo_cell[0]
+            return None
+
         if _cache_hit:
             _cache_t0 = time.monotonic()
             _cap = min(MAX_FRAMES, len(_cached_ansi))
             _prefetch_n = min(_PREFETCH_FRAMES, _cap)
-            for raw_frame in _cached_ansi[:_prefetch_n]:
-                anim_frames.append(_process_raw_frame(raw_frame))
+            for _ci, raw_frame in enumerate(_cached_ansi[:_prefetch_n]):
+                anim_frames.append(_process_raw_frame(raw_frame, _get_logo_frame_at(_ci)))
             if anim_frames:
                 rendered_any_flag[0] = True
             prefetch_ready.set()
@@ -5388,17 +5690,18 @@ class HermesCLI:
 
             def _process_remaining_cache_frames() -> None:
                 try:
-                    for raw_frame in _cached_ansi[_prefetch_n:_cap]:
+                    for _ci2, raw_frame in enumerate(_cached_ansi[_prefetch_n:_cap], start=_prefetch_n):
                         if not getattr(app, "is_running", True):
                             break
                         if STARTUP_TTE_SKIP.is_set():
                             break
-                        anim_frames.append(_process_raw_frame(raw_frame))
+                        anim_frames.append(_process_raw_frame(raw_frame, _get_logo_frame_at(_ci2)))
                     # Gradient settle frame — same as cache-miss path; use _settle_stops
                     # so colors match TTE's final frame exactly (no snap on transition).
                     try:
                         anim_frames.append(_process_raw_frame(
-                            self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction)
+                            self._hero_ansi_with_stops(plain_hero, _settle_stops, _settle_direction),
+                            _get_logo_frame_at(_cap),
                         ))
                     except Exception:
                         logger.debug("TTE cache: gradient settle frame failed", exc_info=True)
@@ -5451,8 +5754,12 @@ class HermesCLI:
                         break
                     raw_frame = _strip_ansi_bg(raw_frame)
                     _raw_for_cache.append(raw_frame)
+                    _logo_frame_drain = _get_logo_frame_at(len(anim_frames))
                     rich_frame = (
-                        self._splice_startup_banner_frame(template_cell[0], raw_frame)
+                        self._splice_startup_banner_frame(
+                            template_cell[0], raw_frame,
+                            logo_frame_text=_logo_frame_drain,
+                        )
                         if template_cell[0] is not None
                         else Text.from_ansi(raw_frame)
                     )
@@ -5486,6 +5793,27 @@ class HermesCLI:
                     len(anim_frames), _prefetch_was_set, _prelaunch_start_i,
                 )
 
+        # Step B.2 — drain prelaunch logo frames (mirrors Step B.1 for hero).
+        if not _cache_hit and logo_cfg is not None and _logo_cached_ansi is None:
+            _logo_ps = getattr(self, "_prelaunch_logo_frames", None)
+            self._prelaunch_logo_frames = None  # one-shot consume
+            _logo_match = (
+                _logo_ps is not None
+                and _logo_ps[0] == logo_cfg.effect_name
+                and _logo_ps[1] == _plain_logo
+                and _logo_ps[2] == logo_cfg.params
+            )
+            if _logo_match:
+                _, _, _, _logo_pre_raw, _logo_pre_gen = _logo_ps
+                for raw in _logo_pre_raw:
+                    _logo_raw_frames.append(raw)
+                _logo_prelaunch_gen = _logo_pre_gen
+                _logo_prelaunch_start_i = len(_logo_pre_raw)
+                logger.info(
+                    "PLAY-TTE: logo drain done frames=%d start_i=%d",
+                    len(_logo_raw_frames), _logo_prelaunch_start_i,
+                )
+
         # Step C — start producer thread.  Uses the prelaunch generator if
         # available so iteration continues from frame N rather than restarting.
         if not _cache_hit:
@@ -5493,6 +5821,10 @@ class HermesCLI:
                 target=_produce, daemon=True, name="hermes-tte-producer"
             )
             producer_thread.start()
+            if logo_cfg is not None:
+                _threading.Thread(
+                    target=_produce_logo, daemon=True, name="hermes-logo-tte"
+                ).start()
 
         # Wait for the first batch before handing off to the event loop.
         if not _cache_hit:
@@ -5644,22 +5976,51 @@ class HermesCLI:
         PRELAUNCH_FRAMES = 4
         try:
             cfg = self._get_startup_text_effect_config()
-            if cfg is None:
-                return
-            from hermes_cli.tui.tte_runner import iter_frames
-            gen = iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
-            raw_frames: list[str] = []
-            for raw in gen:
-                raw_frames.append(raw)
-                if len(raw_frames) >= PRELAUNCH_FRAMES:
-                    break
-            if not raw_frames:
-                return
-            self._prelaunch_tte_state = (
-                cfg.effect_name, plain_hero, dict(cfg.params), raw_frames, gen
-            )
+            if cfg is not None:
+                from hermes_cli.tui.tte_runner import iter_frames
+                gen = iter_frames(cfg.effect_name, plain_hero, params=cfg.params)
+                raw_frames: list[str] = []
+                for raw in gen:
+                    raw_frames.append(raw)
+                    if len(raw_frames) >= PRELAUNCH_FRAMES:
+                        break
+                if raw_frames:
+                    self._prelaunch_tte_state = (
+                        cfg.effect_name, plain_hero, dict(cfg.params), raw_frames, gen
+                    )
         except Exception:
             logger.debug("prelaunch TTE pre-produce failed", exc_info=True)
+
+        # Logo TTE pre-produce (L1): mirrors hero pre-produce.
+        self._prelaunch_logo_frames = None
+        try:
+            logo_cfg = self._get_startup_logo_tte_config()
+            if not isinstance(logo_cfg, _StartupTteConfig):
+                return
+            from hermes_cli.banner import resolve_banner_logo_assets as _rla
+            from rich.text import Text as _RichText
+            _, _plain_logo_markup = _rla()
+            try:
+                _plain_logo = _RichText.from_markup(_plain_logo_markup).plain
+            except Exception:
+                _plain_logo = _plain_logo_markup
+            from hermes_cli.tui.tte_runner import iter_frames as _iter_frames_logo
+            logo_gen = _iter_frames_logo(logo_cfg.effect_name, _plain_logo, params=logo_cfg.params)
+            _logo_prefetch: list[str] = []
+            t0 = time.monotonic()
+            for i, raw in enumerate(logo_gen):
+                if i >= PRELAUNCH_FRAMES:
+                    break
+                if time.monotonic() - t0 > 2.0:
+                    break
+                _logo_prefetch.append(raw)
+            if _logo_prefetch:
+                self._prelaunch_logo_frames = (
+                    logo_cfg.effect_name, _plain_logo,
+                    dict(logo_cfg.params), _logo_prefetch, logo_gen,
+                )
+        except Exception:
+            logger.debug("prelaunch logo TTE pre-produce failed", exc_info=True)
 
     def show_banner_with_startup_effect(self, tui: bool = False) -> None:
         """Render startup effect then the static banner.

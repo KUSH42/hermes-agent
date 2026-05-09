@@ -131,7 +131,7 @@ class ToolRenderingService(AppService):
         try:
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
             self.app.query_one(_DO).signal("reasoning")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: overlay absent during startup; signal is optional
             pass
 
     def append_reasoning(self, delta: str) -> None:
@@ -149,7 +149,7 @@ class ToolRenderingService(AppService):
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("thinking")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: overlay absent during startup; signal is optional
                 pass
 
     # ------------------------------------------------------------------
@@ -223,7 +223,7 @@ class ToolRenderingService(AppService):
                 self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
         except Exception as e:
-            logger.warning("open_execute_code_block failed for idx=%d: %s", idx, e)
+            logger.warning("open_execute_code_block failed for idx=%d", idx, exc_info=True)
             return None
 
     def open_write_file_block(self, idx: int, path: str) -> "Any | None":
@@ -244,7 +244,7 @@ class ToolRenderingService(AppService):
                 self.app.call_after_refresh(output.scroll_end, animate=False)
             return block
         except Exception as e:
-            logger.warning("open_write_file_block failed idx=%d: %s", idx, e)
+            logger.warning("open_write_file_block failed idx=%d", idx, exc_info=True)
             return None
 
     def open_streaming_tool_block(
@@ -263,7 +263,7 @@ class ToolRenderingService(AppService):
             try:
                 self.app.query_one(f"#{base_panel_id}")
                 panel_id: "str | None" = None
-            except Exception:
+            except Exception:  # il-ex-1-exempt: NoMatches expected when panel not yet mounted; fallback to base_panel_id
                 panel_id = base_panel_id
             _turn_count = getattr(self.app, "_current_turn_tool_count", 0) + 1
             self.app._current_turn_tool_count = _turn_count
@@ -279,7 +279,7 @@ class ToolRenderingService(AppService):
             try:
                 cat_enum = classify_tool(tool_name or "")
                 cat = cat_enum.value
-            except Exception:
+            except Exception:  # il-ex-1-exempt: classify_tool unavailable; fallback to "unknown" is correct
                 cat_enum = None
                 cat = "unknown"
 
@@ -322,7 +322,7 @@ class ToolRenderingService(AppService):
                         ancestor_panel._body.mount(
                             _Static("… further nesting suppressed (depth limit reached)", classes="--depth-warning")
                         )
-                    except Exception:
+                    except Exception:  # il-ex-1-exempt: best-effort depth warning; ancestor panel may not be mounted
                         pass
 
             block = msg.open_streaming_tool_block(
@@ -339,7 +339,7 @@ class ToolRenderingService(AppService):
                 panel = getattr(block, "_tool_panel", None)
                 if panel is not None:
                     panel.add_class("--streaming")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: best-effort class addition; panel may not be attached
                 pass
             # A1: increment open tool count and set TOOL_EXEC phase
             self._open_tool_count += 1
@@ -348,7 +348,7 @@ class ToolRenderingService(AppService):
             try:
                 from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay as _DO
                 self.app.query_one(_DO).signal("tool")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: overlay absent during startup; signal is optional
                 pass
             self.app._svc_commands.update_anim_hint()
             msg.refresh(layout=True)
@@ -409,7 +409,7 @@ class ToolRenderingService(AppService):
                     rec.dur_ms = int(float(ds[:-2]))
                 elif ds.endswith("s"):
                     rec.dur_ms = int(float(ds[:-1]) * 1000)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: malformed duration string; dur_ms stays at current value
                 pass
             rec.is_error = is_error
         panel = self._get_output_panel()
@@ -419,7 +419,7 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: overlay absent; signal is optional
             pass
 
     def close_streaming_tool_block_with_diff(
@@ -460,7 +460,7 @@ class ToolRenderingService(AppService):
                     rec.dur_ms = int(float(ds[:-2]))
                 elif ds.endswith("s"):
                     rec.dur_ms = int(float(ds[:-1]) * 1000)
-            except Exception:
+            except Exception:  # il-ex-1-exempt: malformed duration string; dur_ms stays at current value
                 pass
             rec.is_error = is_error
         panel = self._get_output_panel()
@@ -470,7 +470,7 @@ class ToolRenderingService(AppService):
             from hermes_cli.tui.drawbraille_overlay import DrawbrailleOverlay
             ov = self.app.query_one(DrawbrailleOverlay)
             ov.signal("error" if is_error else "thinking")
-        except Exception:
+        except Exception:  # il-ex-1-exempt: overlay absent; signal is optional
             pass
 
     def remove_streaming_tool_block(self, tool_call_id: str) -> None:
@@ -487,7 +487,7 @@ class ToolRenderingService(AppService):
                 tool_panel.remove()
             else:
                 block.remove()
-        except Exception:
+        except Exception:  # il-ex-1-exempt: block may already be removed; removal failure is safe to skip
             pass
 
     # ------------------------------------------------------------------
@@ -505,12 +505,12 @@ class ToolRenderingService(AppService):
                 import json as _json
                 raw = _json.dumps(args, ensure_ascii=False)
                 preview = raw[:60] + ("…" if len(raw) > 60 else "")
-            except Exception:
+            except Exception:  # il-ex-1-exempt: args serialization failure; preview stays empty
                 preview = ""
             try:
                 from hermes_cli.tui.tool_category import classify_tool
                 cat = classify_tool(tool_name).value
-            except Exception:
+            except Exception:  # il-ex-1-exempt: classify_tool unavailable; fallback to "unknown" is correct
                 cat = "unknown"
             new_entries.append(PlannedCall(
                 tool_call_id=tool_call_id,

@@ -148,6 +148,7 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         self._sessions: list[dict] = []
         self._selected_idx: int = 0
         self._pending_delete_idx: int | None = None
+        self._last_resize_w: int = 0
         cfg = _cfg_read_raw_config()
         self._heavy_threshold: int = (
             cfg.get("tui", {}).get("session_overlay", {}).get("tokens_heavy", 200_000)
@@ -170,9 +171,13 @@ class SessionOverlay(ModalOverlayMixin, Widget):
         # be called here — stack/focus cleanup is owned by dismiss_overlay(), not lifecycle hooks.
         pass
 
-    def on_resize(self, _event) -> None:
+    def on_resize(self, event) -> None:
         if not self.has_class("--visible") or not self._sessions:
             return
+        new_w = getattr(getattr(event, "size", None), "width", 0)
+        if new_w == self._last_resize_w:
+            return
+        self._last_resize_w = new_w
         self._render_rows(self._sessions, preserve_idx=self._selected_idx)
 
     def open_sessions(self) -> None:

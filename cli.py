@@ -5590,7 +5590,13 @@ class HermesCLI:
                             _logo_frame_for_splice = _logo_raw_frames[_logo_idx]
                         elif _logo_done.is_set():
                             if _logo_cell[0] is None:
-                                _logo_cell[0] = self._logo_ansi_settle("")
+                                # Freeze the last actual TTE frame so the gradient matches
+                                # instead of re-rendering via render_banner_logo_text.
+                                _logo_cell[0] = (
+                                    _logo_raw_frames[-1]
+                                    if _logo_raw_frames
+                                    else self._logo_ansi_settle("")
+                                )
                             _logo_frame_for_splice = _logo_cell[0]
                     rich_frame = (
                         self._splice_startup_banner_frame(
@@ -5740,13 +5746,15 @@ class HermesCLI:
                 return None
             if idx < len(_logo_raw_frames):
                 return _logo_raw_frames[idx]
-            # Fallback to settled wordmark whenever no raw frame is available,
-            # not only after _logo_done is set. Without this, slow-start logo
-            # producers leave LOGO_PLACEHOLDER_MARKER chars (rendered as ●) in
-            # composited frames during the prefetch / ramp window, and any
-            # missed _logo_done.set call leaves placeholders permanently.
+            # Fallback whenever no raw frame is available — logo producer not yet
+            # started, slow start, or missed _logo_done.set.  Prefer last TTE frame
+            # over re-rendering so gradient stays identical to animation final frame.
             if _logo_cell[0] is None:
-                _logo_cell[0] = self._logo_ansi_settle("")
+                _logo_cell[0] = (
+                    _logo_raw_frames[-1]
+                    if _logo_raw_frames
+                    else self._logo_ansi_settle("")
+                )
             return _logo_cell[0]
 
         if _cache_hit:

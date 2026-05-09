@@ -803,7 +803,7 @@ class ConfigOverlay(ModalOverlayMixin, Widget):
             provider_changed = normalize_provider(browsed) != normalize_provider(config_provider)
         except Exception:
             provider_changed = browsed != config_provider
-        cmd_args = f"{value} --provider {browsed}" if provider_changed else value
+        cmd_args = f"{value} --provider {browsed} --global" if provider_changed else f"{value} --global"
         try:
             from hermes_cli.tui.input_widget import HermesInput
             inp = self.app.query_one(HermesInput)

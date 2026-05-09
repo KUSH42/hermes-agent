@@ -86,7 +86,8 @@ _INLINE_CODE_LABEL_RE = re.compile(
 )
 
 # Same pattern as rich_output._MD_HR_RE — standalone HR line
-_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
+# Also matches Unicode box-drawing ─{3,} separators emitted by LLMs
+_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,}|─{3,})$")
 _ASSIGN_LIKE_RE = re.compile(r'^\s*\w+\s*=\s*\S')
 
 # Footnote definition line — [^N]: text — collected and suppressed in NORMAL state

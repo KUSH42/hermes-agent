@@ -1344,7 +1344,7 @@ def apply_speculative_inline_md(
 # ---------------------------------------------------------------------------
 
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)")
-_MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,})$")
+_MD_HR_RE = re.compile(r"^(-{3,}|\*{3,}|_{3,}|─{3,})$")
 _MD_BLOCKQUOTE_RE = re.compile(r"^>+\s?(.*)")
 _MD_BQ_LEVEL_RE = re.compile(r"^((?:>\s*)+)(.*)")
 _MD_UL_RE = re.compile(r"^(\s*)([-*+])\s+(.+)")

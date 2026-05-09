@@ -331,7 +331,6 @@ CopyableBlock {
     height: auto;
     margin: 0;
     padding: 0 1;
-    border-left: vkey $accent 60%;   /* $accent: existing skin var, no new declaration */
 }
 """
     _content_type: str = "prose"

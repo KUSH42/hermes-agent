@@ -1,6 +1,6 @@
 """Inline media display widgets for the Hermes TUI.
 
-Contains: InlineImage, InlineThumbnail, InlineImageBar,
+Contains: AttachmentBar, InlineImage, InlineThumbnail, InlineImageBar,
           ChipPlan, OverflowChip, _render_attachment_thumb,
           _layout_chips, _size_suffix, _size_str_for_path.
 """
@@ -12,7 +12,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 _log = logging.getLogger(__name__)
 
@@ -450,43 +450,53 @@ class InlineThumbnail(TooltipMixin, Widget):
         self.post_message(InlineImageBar.ThumbnailClicked(self._path, self._index))
 
 
-class InlineImageBar(Widget):
-    """Horizontal strip of image thumbnails for inline images. Hidden when empty."""
+class AttachmentBar(Widget):
+    """Unified attachment bar — outgoing (ImageBar) or inbound (InlineImageBar) direction.
 
-    class ThumbnailClicked(Message):
-        def __init__(self, path: str, index: int) -> None:
-            super().__init__()
-            self.path = path
-            self.index = index
+    X-CON-1: Shared container, visibility resolver, dedupe key, and LRU eviction.
+    Chip primitives differ by direction and are preserved:
+      outgoing → AttachmentChip (text shimmer, status_bar.py)
+      inbound  → InlineThumbnail (PIL half-block, inline_media.py)
+    """
 
+    # H-FIX-1: outgoing needs auto height for chip row; inbound fixed 7 rows.
     DEFAULT_CSS = """
-    InlineImageBar {
-        height: 7;
+    AttachmentBar {
         width: 100%;
         display: none;
         overflow-x: scroll;
         overflow-y: hidden;
         background: $panel;
-        border-top: solid $panel-lighten-1;
         padding: 0 1;
     }
-    InlineImageBar.--visible {
-        display: block;
+    AttachmentBar.--visible { display: block; }
+    AttachmentBar.--outgoing {
+        height: auto;
+        border-bottom: solid $panel-lighten-1;
     }
+    AttachmentBar.--inbound {
+        height: 7;
+        border-top: solid $panel-lighten-1;
+    }
+    AttachmentBar.--compact { height: 5; }
     """
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, *, direction: Literal["outgoing", "inbound"], **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._chips_by_key: dict[tuple[str, int], InlineThumbnail] = {}
+        self._direction = direction
+        self.add_class(f"--{direction}")
+        # H-FIX-1: common type is Widget; outgoing → AttachmentChip, inbound → InlineThumbnail.
+        self._chips_by_key: dict[tuple[str, int], Widget] = {}
         self._chip_order: list[tuple[str, int]] = []
         self._evicted_count: int = 0
         self._next_idx: int = 0
-        # _paths kept for backwards-compat attribute access; not used for cap logic.
+        # backwards-compat attribute; not used for cap or dedupe logic.
         self._paths: list[str] = []
         self._enabled: bool = True
 
-    def compose(self) -> ComposeResult:
-        yield Horizontal()
+    @property
+    def direction(self) -> str:
+        return self._direction
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -506,16 +516,10 @@ class InlineImageBar(Widget):
             mtime = 0
         return (str(p), mtime)
 
-    def _highlight_existing(self, key: tuple[str, int]) -> None:
-        """Pulse the existing chip for the given key (dedupe hit)."""
-        chip = self._chips_by_key.get(key)
-        if chip is None:
-            return
-        chip.add_class("--highlight-pulse")
-        self.set_timer(0.6, lambda: chip.remove_class("--highlight-pulse"))
-
     def _evict_oldest(self, container: Horizontal) -> None:
-        """Remove the oldest chip from the DOM and tracking structures."""
+        """Remove the oldest chip from the DOM and tracking structures (inbound only)."""
+        if self._direction == "outgoing":
+            return  # defensive no-op; outgoing has no cap
         if not self._chip_order:
             return
         oldest_key = self._chip_order.pop(0)
@@ -524,12 +528,141 @@ class InlineImageBar(Widget):
             chip.remove()
         self._evicted_count += 1
 
-    def _sync_oldness_chip(self, container: Horizontal) -> None:
-        """Mount or update the +M earlier images chip at the left of the bar.
+    def _recompute_visibility(self) -> None:
+        """Toggle --visible class based on current chip state; no reactive writes."""
+        if self._direction == "outgoing":
+            from hermes_cli.tui.widgets.status_bar import AttachmentChip
+            has_chips = bool(list(self.query(AttachmentChip)))
+        else:
+            has_chips = bool(self._chips_by_key)
+        if has_chips:
+            self.add_class("--visible")
+        else:
+            self.remove_class("--visible")
 
-        If _evicted_count == 0, remove any existing chip. Otherwise, mount
-        one the first time and update its label and tooltip on subsequent calls.
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def recompute_visibility(self) -> None:
+        """Update visibility class; outgoing also writes app.status_attachment_count_hidden."""
+        if self._direction == "outgoing":
+            if not hasattr(self.app, "attached_images"):
+                # Non-HermesApp test context — fall back to DOM-based toggle only.
+                self._recompute_visibility()
+                return
+            count = len(self.app.attached_images)
+            h = self.app.size.height
+            if count == 0 or h < 10:
+                self.remove_class("--visible")
+                self.app.status_attachment_count_hidden = count if count > 0 else 0
+            else:
+                self.add_class("--visible")
+                self.app.status_attachment_count_hidden = 0
+        else:
+            self._recompute_visibility()
+
+    def add_image(self, path: str) -> None:
+        """Add a chip. No-op when display.image_bar is disabled."""
+        if not self._enabled:
+            return
+        key = self._dedupe_key(path)
+        if key in self._chips_by_key:
+            if self._direction == "inbound":
+                self._highlight_existing(key)  # defined on InlineImageBar subclass
+            return
+        self._paths.append(path)
+        if self._direction == "inbound":
+            container = self.query_one(Horizontal)
+            if len(self._chips_by_key) >= _MAX_THUMBNAILS:
+                self._evict_oldest(container)
+            chip: Widget = InlineThumbnail(path=path, index=self._next_index())
+            self._chips_by_key[key] = chip
+            self._chip_order.append(key)
+            container.mount(chip)
+            self._sync_oldness_chip(container)  # defined on InlineImageBar subclass
+        else:
+            from hermes_cli.tui.widgets.status_bar import AttachmentChip as _AC
+            chip = _AC(path=Path(path), index=self._next_index())
+            self._chips_by_key[key] = chip
+            self._chip_order.append(key)
+            self.mount(chip)
+        self._recompute_visibility()
+
+    def remove_image(self, path: "Path") -> None:
+        """Remove an outgoing chip by path."""
+        if self._direction == "inbound":
+            raise ValueError("remove_image is not supported for inbound direction")
+        from hermes_cli.tui.widgets.status_bar import AttachmentChip
+        for chip in list(self.query(AttachmentChip)):
+            if chip._path == path:
+                chip.remove()
+                break
+        self._recompute_visibility()
+
+    def clear(self) -> None:
+        """Remove all chips and reset tracking state."""
+        if self._direction == "inbound":
+            container = self.query_one(Horizontal)
+            for chip in list(container.query(InlineThumbnail)):
+                chip.remove()
+            for chip in list(container.query(_OldnessChip)):
+                chip.remove()
+        else:
+            from hermes_cli.tui.widgets.status_bar import AttachmentChip
+            for chip in list(self.query(AttachmentChip)):
+                chip.remove()
+        self._chips_by_key.clear()
+        self._chip_order.clear()
+        self._evicted_count = 0
+        self._paths.clear()
+        self._recompute_visibility()
+        if self._direction == "outgoing":
+            self.recompute_visibility()
+
+    def compose(self) -> ComposeResult:
+        if self._direction == "inbound":
+            yield Horizontal()
+
+
+class InlineImageBar(AttachmentBar):
+    """Attachment bar for agent-output thumbnails (inbound direction).
+
+    ThumbnailClicked is defined here (not on AttachmentBar) so its __qualname__
+    remains InlineImageBar.ThumbnailClicked. Textual resolves handler names from
+    __qualname__, so handler on_inline_image_bar_thumbnail_clicked (app.py:~1458)
+    stays valid. Moving this class to another module would break the handler.
+    """
+
+    class ThumbnailClicked(Message):
+        """Bubble posted by InlineThumbnail.on_click (inline_media.py:450).
+
+        WARNING: Do NOT move to AttachmentBar or any other module.
+        __qualname__ must be InlineImageBar.ThumbnailClicked so Textual routes
+        to handler on_inline_image_bar_thumbnail_clicked (app.py:~1458).
         """
+        def __init__(self, path: str, index: int) -> None:
+            super().__init__()
+            self.path = path
+            self.index = index
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(direction="inbound", **kwargs)
+
+    # ------------------------------------------------------------------
+    # Inbound-only helpers (not yet direction-agnostic)
+    # ------------------------------------------------------------------
+
+    def _highlight_existing(self, key: tuple[str, int]) -> None:
+        """Pulse the existing chip for the given key (dedupe hit)."""
+        chip = self._chips_by_key.get(key)
+        if chip is None:
+            return
+        chip.add_class("--highlight-pulse")
+        self.set_timer(0.6, lambda: chip.remove_class("--highlight-pulse"))
+
+    def _sync_oldness_chip(self, container: Horizontal) -> None:
+        """Mount or update the +M earlier images chip at the left of the bar."""
         existing = list(container.query(_OldnessChip))
         if self._evicted_count == 0:
             for c in existing:
@@ -547,47 +680,3 @@ class InlineImageBar(Widget):
                 chip,
                 before=container.children[0] if container.children else None,
             )
-
-    def _recompute_visibility(self) -> None:
-        """Add or remove --visible based on whether any chips are mounted."""
-        has_chips = bool(self._chips_by_key)
-        if has_chips:
-            self.add_class("--visible")
-        else:
-            self.remove_class("--visible")
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def add_image(self, path: str) -> None:
-        """Add a thumbnail. No-op when display.image_bar is disabled."""
-        if not self._enabled:
-            return
-        key = self._dedupe_key(path)
-        if key in self._chips_by_key:
-            self._highlight_existing(key)
-            return
-        self._paths.append(path)
-        container = self.query_one(Horizontal)
-        if len(self._chips_by_key) >= _MAX_THUMBNAILS:
-            self._evict_oldest(container)
-        chip = InlineThumbnail(path=path, index=self._next_index())
-        self._chips_by_key[key] = chip
-        self._chip_order.append(key)
-        container.mount(chip)
-        self._sync_oldness_chip(container)
-        self._recompute_visibility()
-
-    def clear(self) -> None:
-        """Remove all thumbnails and reset tracking state."""
-        container = self.query_one(Horizontal)
-        for chip in list(container.query(InlineThumbnail)):
-            chip.remove()
-        for chip in list(container.query(_OldnessChip)):
-            chip.remove()
-        self._chips_by_key.clear()
-        self._chip_order.clear()
-        self._evicted_count = 0
-        self._paths.clear()
-        self._recompute_visibility()

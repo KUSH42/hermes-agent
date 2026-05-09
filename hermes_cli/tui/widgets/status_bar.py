@@ -1,6 +1,6 @@
 """Status/bottom-bar classes for the Hermes TUI.
 
-Contains: HintBar, StatusBar, AnimatedCounter, VoiceStatusBar, ImageBar,
+Contains: HintBar, StatusBar, AnimatedCounter, VoiceStatusBar, AttachmentChip,
 SourcesBar, plus their helper functions and cache variables.
 """
 
@@ -1129,7 +1129,7 @@ class VoiceStatusBar(Widget):
 
 
 # ---------------------------------------------------------------------------
-# ImageBar
+# AttachmentChip skin token helpers (used by AttachmentBar/ImageBar shim in __init__.py)
 # ---------------------------------------------------------------------------
 
 _ATTACHMENT_CSS_DEFAULTS: dict[str, str] = {
@@ -1285,129 +1285,6 @@ class AttachmentChip(Static, can_focus=True):
             # #input-area may not be mounted yet during startup; focus loss is
             # acceptable in that edge case.
             pass
-
-
-class ImageBar(Widget):
-    """Displays attached image filenames; hidden when empty.
-
-    Converted from Static to Widget to support render() override and
-    one-pass shimmer animation on image attach (Phase 4).
-    """
-
-    DEFAULT_CSS = """
-    ImageBar {
-        display: none;
-        height: auto;
-    }
-    ImageBar.--visible {
-        display: block;
-    }
-    """
-
-    _shimmer_tick: reactive[int] = reactive(0, repaint=True)
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self._shimmer_timer: object | None = None
-        self._shimmer_base: "Text | None" = None
-        self._shimmer_skip: list[tuple[int, int]] = []
-        self._static_content: "Text" = Text()
-        self._tokens_checked: bool = False
-
-    def recompute_visibility(self) -> None:
-        """Single authority for --visible class. Call after any state change."""
-        h = self.app.size.height
-        count = len(self.app.attached_images)
-        if count == 0 or h < 10:
-            self.remove_class("--visible")
-        else:
-            self.add_class("--visible")
-
-    def _shimmer_stop(self) -> None:
-        """Stop shimmer. Idempotent."""
-        if self._shimmer_timer is not None:
-            self._shimmer_timer.stop()
-            self._shimmer_timer = None
-        self._shimmer_base = None
-        self._shimmer_skip = []
-        self._shimmer_tick = 0
-
-    def _shimmer_once(self, base_text: "Text", fps: int = 15, period: int = 15) -> None:
-        """Run one shimmer pass then settle to static. Used on image attach."""
-        if not getattr(self.app, "_animations_enabled", True):
-            self._static_content = base_text
-            self.refresh()
-            return
-
-        self._shimmer_base = base_text
-        self._shimmer_skip = []
-        self._shimmer_tick = 0
-        _ticks_remaining = [period]  # mutable cell for closure
-
-        def _step() -> None:
-            if not self.is_mounted:
-                return
-            self._shimmer_tick += 1
-            _ticks_remaining[0] -= 1
-            if _ticks_remaining[0] <= 0:
-                self._shimmer_stop()
-                self._static_content = base_text
-                self.refresh()
-
-        if self._shimmer_timer is not None:
-            self._shimmer_timer.stop()
-        self._shimmer_timer = self.set_interval(1 / fps, _step)
-
-    def render(self) -> "RenderResult":
-        if self._shimmer_base is not None and self._shimmer_timer is not None:
-            try:
-                _raw = self.app.get_css_variables()
-                _av = _get_attachment_css_vars(_raw)
-                if not self._tokens_checked:
-                    _check_attachment_tokens(_raw, self.__class__.__name__)
-                    self._tokens_checked = True
-            except Exception:
-                _log.debug("get_css_variables failed in ImageBar.render", exc_info=True)
-                _av = dict(_ATTACHMENT_CSS_DEFAULTS)
-            return shimmer_text(
-                self._shimmer_base,
-                self._shimmer_tick,
-                dim=_av["attachment-chip-shimmer-dim"],
-                peak=_av["attachment-chip-shimmer-peak"],
-                period=15,
-                skip_ranges=self._shimmer_skip,
-            )
-        return self._static_content
-
-    def update_images(self, images: list) -> None:
-        """Diff-mount AttachmentChips for each path; remove stale chips."""
-        # Snapshot before any mutation so the mount loop can detect existing chips.
-        current = {chip._path: chip for chip in self.query(AttachmentChip)}
-        desired = list(images)
-        desired_set = set(desired)
-
-        # Remove chips no longer present.
-        for path, chip in current.items():
-            if path not in desired_set:
-                chip.remove()
-
-        # Mount new chips, preserving order via mount(before=...).
-        for i, path in enumerate(desired):
-            if path in current:
-                current[path]._index = i
-                continue
-            live = self.query(AttachmentChip)
-            anchor = live[i] if i < len(live) else None
-            chip = AttachmentChip(path=path, index=i)
-            if anchor:
-                self.mount(chip, before=anchor)
-            else:
-                self.mount(chip)
-        self._recompute_visibility()
-
-    def _recompute_visibility(self) -> None:
-        """Show ImageBar when any chip is mounted; hide when empty."""
-        self.display = bool(self.query(AttachmentChip))
 
 
 # ---------------------------------------------------------------------------

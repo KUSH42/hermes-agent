@@ -103,7 +103,6 @@ class WatchersService(AppService):
             hint_bar.display = h >= 9
         except NoMatches:
             pass
-        self._sync_status_attachment_chip()
 
     def on_compact(self, value: bool) -> None:
         # PERF-3: dedupe against last-seen value. The reactive descriptor on
@@ -222,19 +221,12 @@ class WatchersService(AppService):
     # Attached images
     # ------------------------------------------------------------------
 
-    def _sync_status_attachment_chip(self) -> None:
-        """Write status_attachment_count_hidden based on current height + count."""
-        h = getattr(self.app.size, "height", 0)
-        count = len(self.app.attached_images)
-        self.app.status_attachment_count_hidden = count if (count > 0 and h < 10) else 0
-
     def on_attached_images(self, value: list) -> None:
         from hermes_cli.tui.widgets import ImageBar
         try:
             self.app.query_one(ImageBar).update_images(value)
         except NoMatches:
             pass
-        self._sync_status_attachment_chip()
 
     def append_attached_images(self, images: list[Path]) -> None:
         """Keep TUI image state and CLI submit payload in sync."""

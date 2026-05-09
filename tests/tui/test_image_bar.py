@@ -16,8 +16,13 @@ from hermes_cli.tui.widgets import InlineImageBar, InlineThumbnail
 
 def _make_bar(enabled: bool = True) -> InlineImageBar:
     bar = object.__new__(InlineImageBar)
-    Widget = InlineImageBar.__bases__[0]
+    from textual.widget import Widget
     Widget.__init__(bar)
+    bar._direction = "inbound"
+    bar._chips_by_key = {}
+    bar._chip_order = []
+    bar._evicted_count = 0
+    bar._next_idx = 0
     bar._paths = []
     bar._enabled = enabled
     return bar

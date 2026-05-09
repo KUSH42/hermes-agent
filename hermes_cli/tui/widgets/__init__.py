@@ -16,7 +16,8 @@ This module is now a re-export shim: the actual implementations live in:
   - message_panel.py  — MessagePanel, ThinkingWidget, _EchoBullet,
                         UserMessagePanel, ReasoningPanel
   - status_bar.py     — HintBar, StatusBar, AnimatedCounter,
-                        VoiceStatusBar, ImageBar, AttachmentChip (+ hint helpers)
+                        VoiceStatusBar, AttachmentChip (+ hint helpers)
+  - __init__.py       — ImageBar shim (AttachmentBar subclass, outgoing direction)
   - overlays.py       — TurnCandidate, TurnResultItem, KeymapOverlay,
                         HistorySearchOverlay (+ search helpers)
 
@@ -32,7 +33,7 @@ Split sub-modules (all re-exported here):
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ from .code_blocks import (  # noqa: F401
 )
 
 from .inline_media import (  # noqa: F401
+    AttachmentBar,
     ChipPlan,
     InlineImage,
     InlineImageBar,
@@ -118,7 +120,6 @@ from .status_bar import (  # noqa: F401
     AnimatedCounter,
     AttachmentChip,
     HintBar,
-    ImageBar,
     KindOverrideChanged,
     KindOverrideChip,
     StatusBar,
@@ -185,7 +186,123 @@ from hermes_cli.tui.overlays._aliases import (  # noqa: F401,E402
 )
 
 from .status_bar import SourcesBar, _extract_domain, _truncate  # noqa: F401
+from .status_bar import (  # noqa: F401
+    _ATTACHMENT_CSS_DEFAULTS,
+    _check_attachment_tokens,
+    _get_attachment_css_vars,
+)
 
+
+# ---------------------------------------------------------------------------
+# X-CON-3 Part A: ImageBar shim (outgoing direction)
+# ---------------------------------------------------------------------------
+
+from hermes_cli.tui.animation import shimmer_text as _shimmer_text  # noqa: E402
+from textual.reactive import reactive as _reactive  # noqa: E402
+from rich.text import Text as _Text  # noqa: E402
+
+
+class ImageBar(AttachmentBar):
+    """Shim for outgoing (input attachments) direction.
+
+    Owns outgoing-specific behaviour NOT ported to AttachmentBar:
+      - update_images() diff-mount (primary entry point for watchers.py:234)
+      - render() shimmer animation
+      - _shimmer_once(), _shimmer_stop() helpers
+
+    Backwards-compat alias — callers and query_one(ImageBar) continue to work.
+    """
+
+    _shimmer_tick: _reactive[int] = _reactive(0, repaint=True)  # type: ignore[assignment]
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(direction="outgoing", **kwargs)
+        self._shimmer_timer: object | None = None
+        self._shimmer_base: "_Text | None" = None
+        self._shimmer_skip: list[tuple[int, int]] = []
+        self._static_content: "_Text" = _Text()
+        self._tokens_checked: bool = False
+
+    def _shimmer_stop(self) -> None:
+        """Stop shimmer. Idempotent."""
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()  # type: ignore[union-attr]
+            self._shimmer_timer = None
+        self._shimmer_base = None
+        self._shimmer_skip = []
+        self._shimmer_tick = 0
+
+    def _shimmer_once(self, base_text: "_Text", fps: int = 15, period: int = 15) -> None:
+        """Run one shimmer pass then settle to static. Used on image attach."""
+        if not getattr(self.app, "_animations_enabled", True):
+            self._static_content = base_text
+            self.refresh()
+            return
+
+        self._shimmer_base = base_text
+        self._shimmer_skip = []
+        self._shimmer_tick = 0
+        _ticks_remaining = [period]
+
+        def _step() -> None:
+            if not self.is_mounted:
+                return
+            self._shimmer_tick += 1
+            _ticks_remaining[0] -= 1
+            if _ticks_remaining[0] <= 0:
+                self._shimmer_stop()
+                self._static_content = base_text
+                self.refresh()
+
+        if self._shimmer_timer is not None:
+            self._shimmer_timer.stop()  # type: ignore[union-attr]
+        self._shimmer_timer = self.set_interval(1 / fps, _step)
+
+    def render(self) -> "RenderResult":
+        if self._shimmer_base is not None and self._shimmer_timer is not None:
+            try:
+                _raw = self.app.get_css_variables()
+                _av = _get_attachment_css_vars(_raw)
+                if not self._tokens_checked:
+                    _check_attachment_tokens(_raw, self.__class__.__name__)
+                    self._tokens_checked = True
+            except Exception:
+                _log.debug("get_css_variables failed in ImageBar.render", exc_info=True)
+                _av = dict(_ATTACHMENT_CSS_DEFAULTS)
+            return _shimmer_text(
+                self._shimmer_base,
+                self._shimmer_tick,
+                dim=_av["attachment-chip-shimmer-dim"],
+                peak=_av["attachment-chip-shimmer-peak"],
+                period=15,
+                skip_ranges=self._shimmer_skip,
+            )
+        return self._static_content
+
+    def update_images(self, images: list) -> None:
+        """Diff-mount AttachmentChips for each path; remove stale chips."""
+        current = {chip._path: chip for chip in self.query(AttachmentChip)}
+        desired = list(images)
+        desired_set = set(desired)
+
+        for path, chip in current.items():
+            if path not in desired_set:
+                chip.remove()
+
+        for i, path in enumerate(desired):
+            if path in current:
+                current[path]._index = i
+                continue
+            live = self.query(AttachmentChip)
+            anchor = live[i] if i < len(live) else None
+            chip = AttachmentChip(path=path, index=i)
+            if anchor:
+                self.mount(chip, before=anchor)
+            else:
+                self.mount(chip)
+        # Dual-call: private toggles CSS; public writes app.status_attachment_count_hidden.
+        self._recompute_visibility()
+        self.recompute_visibility()
 
 
 def _stream_effect_cfg() -> dict:
@@ -246,6 +363,7 @@ def _stream_effect_cfg() -> dict:
 
 if TYPE_CHECKING:
     from hermes_cli.tui.app import HermesApp
+    from textual.app import RenderResult
 
 _LOG = logging.getLogger(__name__)
 

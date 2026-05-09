@@ -11,7 +11,8 @@ from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from hermes_cli.tui.widgets.status_bar import AttachmentChip, ImageBar
+from hermes_cli.tui.widgets.status_bar import AttachmentChip
+from hermes_cli.tui.widgets import ImageBar
 
 
 # ---------------------------------------------------------------------------

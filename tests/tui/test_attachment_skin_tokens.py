@@ -59,7 +59,7 @@ def _restore_app(cls: type, original: Any) -> None:
 def _make_image_bar() -> Any:
     """Construct an ImageBar without mounting it in a real app."""
     from rich.text import Text
-    from hermes_cli.tui.widgets.status_bar import ImageBar
+    from hermes_cli.tui.widgets import ImageBar
 
     widget = ImageBar.__new__(ImageBar)
     widget._shimmer_timer = None
@@ -127,7 +127,7 @@ class TestDefaultCssTokenUsage:
 
     def test_image_bar_render_uses_attachment_shimmer_tokens(self) -> None:
         from rich.text import Text
-        from hermes_cli.tui.widgets.status_bar import ImageBar
+        from hermes_cli.tui.widgets import ImageBar
 
         widget = _make_image_bar()
         mock_app = _make_mock_app({
@@ -148,7 +148,7 @@ class TestDefaultCssTokenUsage:
                 return text
 
             with patch(
-                "hermes_cli.tui.widgets.status_bar.shimmer_text",
+                "hermes_cli.tui.widgets._shimmer_text",
                 side_effect=_fake_shimmer,
             ):
                 widget.render()
@@ -164,7 +164,8 @@ class TestDefaultCssTokenUsage:
 
     def test_image_bar_render_falls_back_when_no_attachment_tokens(self) -> None:
         from rich.text import Text
-        from hermes_cli.tui.widgets.status_bar import ImageBar, _ATTACHMENT_CSS_DEFAULTS
+        from hermes_cli.tui.widgets import ImageBar
+        from hermes_cli.tui.widgets.status_bar import _ATTACHMENT_CSS_DEFAULTS
 
         widget = _make_image_bar()
         mock_app = _make_mock_app({})  # no attachment tokens
@@ -182,7 +183,7 @@ class TestDefaultCssTokenUsage:
                 return text
 
             with patch(
-                "hermes_cli.tui.widgets.status_bar.shimmer_text",
+                "hermes_cli.tui.widgets._shimmer_text",
                 side_effect=_fake_shimmer,
             ):
                 widget.render()

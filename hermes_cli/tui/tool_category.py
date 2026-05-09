@@ -519,6 +519,12 @@ _SEED_SPECS: list[ToolSpec] = [
     ToolSpec(name="vision_analyze",     category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
     ToolSpec(name="view_image",         category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
     ToolSpec(name="analyze_image",      category=_VISION, primary_arg="image_path",  primary_result="lines",   streaming=False),
+    ToolSpec(name="browser_navigate", category=_WEB, primary_arg="url",  primary_result="status", streaming=False),
+    ToolSpec(name="browser_click",    category=_WEB, primary_arg=None,   primary_result="done",   streaming=False),
+    ToolSpec(name="browser_type",     category=_WEB, primary_arg=None,   primary_result="done",   streaming=False),
+    ToolSpec(name="browser_scroll",   category=_WEB, primary_arg=None,   primary_result="done",   streaming=False),
+    ToolSpec(name="browser_press",    category=_WEB, primary_arg=None,   primary_result="done",   streaming=False),
+    ToolSpec(name="browser_back",     category=_WEB, primary_arg=None,   primary_result="status", streaming=False),
 ]
 
 

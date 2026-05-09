@@ -499,7 +499,10 @@ class StreamingSearchRenderer(BodyRenderer):
 
     @classmethod
     def can_render(cls, cls_result: object, payload: object) -> bool:
+        from hermes_cli.tui.tool_payload import ResultKind
         from hermes_cli.tui.tool_category import ToolCategory
+        if getattr(cls_result, "kind", None) == ResultKind.JSON:
+            return False
         return getattr(payload, "category", None) == ToolCategory.SEARCH
 
     def __init__(self, payload: object = None, cls_result: object = None, *, app: object = None) -> None:
@@ -523,7 +526,14 @@ class StreamingSearchRenderer(BodyRenderer):
                 lines.append(header)
                 self._last_emitted_path = path
 
-        lines.append(Text.from_ansi(raw))
+        raw_t = Text.from_ansi(raw)
+        _app_size = getattr(getattr(self, "_app", None), "size", None)
+        if _app_size is not None:
+            _w = _app_size.width
+            if len(raw_t.plain) > 2 * _w:
+                raw_t = raw_t.copy()
+                raw_t.truncate(_w, overflow="ellipsis")
+        lines.append(raw_t)
         if len(lines) == 1:
             return lines[0]
         from rich.console import Group

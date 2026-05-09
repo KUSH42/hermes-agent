@@ -453,9 +453,11 @@ class SearchRenderer(BodyRenderer):
     @classmethod
     def can_render(cls, cls_result: "ClassificationResult", payload: "ToolPayload") -> bool:
         from hermes_cli.tui.tool_payload import ResultKind
+        if cls_result.kind == ResultKind.JSON:
+            return False
         return cls_result.kind == ResultKind.SEARCH
 
-    def build(self):
+    def build(self, viewport_width: "int | None" = None):
         """Build Rich Text with grammar path headers and hit/context distinction. R-Sr1/R-Sr2."""
         from rich.style import Style
         from hermes_cli.tui.body_renderers._grammar import build_rule
@@ -503,6 +505,9 @@ class SearchRenderer(BodyRenderer):
                                 pass
                 else:
                     content_t = Text(str(content), style=Style(color=colors.muted, italic=True))
+                if viewport_width is not None and len(content_t.plain) > 2 * viewport_width:
+                    content_t = content_t.copy()
+                    content_t.truncate(viewport_width, overflow="ellipsis")
                 line_t.append_text(content_t)
                 line_t.append("\n")
                 result.append_text(line_t)
@@ -599,8 +604,10 @@ class SearchRenderer(BodyRenderer):
             body_widget = VirtualSearchList(lines=lines)
         else:
             from hermes_cli.tui.widgets import CopyableRichLog
+            _app_size = getattr(getattr(self, "_app", None), "size", None)
+            _vp_width = _app_size.width if _app_size is not None else None
             rl = CopyableRichLog(highlight=False, markup=False)
-            rl.write(self.build())
+            rl.write(self.build(viewport_width=_vp_width))
             body_widget = rl
 
         return BodyFrame(

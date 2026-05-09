@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+import traceback
 from typing import TYPE_CHECKING, Any
 
 _log = logging.getLogger(__name__)
@@ -294,6 +295,19 @@ class _ToolPanelCompletionMixin:
             self._body_pane._block = old_block  # type: ignore[attr-defined]
         else:
             # Fallback: no ToolBlock wrapper present — mount directly and update refs.
+            existing = [
+                c for c in self._body_pane.children  # type: ignore[attr-defined]
+                if not getattr(c, "_is_placeholder", False)
+            ]
+            if existing:
+                _log.warning(
+                    "_swap_renderer: body_pane already has %d child(ren) before mount; "
+                    "previous renderer was not cleaned up. stack:\n%s",
+                    len(existing),
+                    "".join(traceback.format_stack()),
+                )
+                for _child in existing:
+                    _child.remove()
             self._body_pane.mount(new_widget)  # type: ignore[attr-defined]
             self._block = new_widget  # type: ignore[attr-defined]
             self._body_pane._block = new_widget  # type: ignore[attr-defined]

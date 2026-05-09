@@ -550,6 +550,12 @@ DEFAULT_CONFIG = {
             "scramble_frames": 14,   # decrypt: frames before word resolves
             "period": 0.75,          # breathe: oscillation period in seconds
         },
+        "typewriter": {
+            "enabled": True,           # character-by-character reveal during streaming
+            "speed": 60,               # chars per second
+            "burst_threshold": 128,    # chars before skipping to flush
+            "cursor": True,            # show blinking cursor at write head
+        },
         # Lines scrolled per mouse wheel tick (valid range 1–20; default 3).
         "scroll_lines": 3,
         # Directories to skip during path completion (@file / ./path triggers).

@@ -472,6 +472,14 @@ async def test_paste_into_input_empty_clipboard_shows_hint_without_edit():
         inp.value = "unchanged"
         app._clipboard = ""
 
+        # Prevent OS clipboard fallback from reading real system clipboard.
+        # When app._clipboard is empty, paste_into_input falls through to
+        # _clipboard_svc.read_text(); mock it to call the callback with "".
+        def _empty_os_clipboard(callback, timeout=3.0):
+            callback("")
+
+        app._clipboard_svc.read_text = _empty_os_clipboard
+
         app._paste_into_input()
         await pilot.pause()
 

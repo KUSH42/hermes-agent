@@ -38,12 +38,20 @@ x-hermes:
   startup_tte:
     effect: matrix
     max_wall_s: 10.0
-    max_frames: 250
-    fps: 25
+    max_frames: 700
+    fps: 90
     params:
-      _frame_rate: 25
-      rain_time: 3
-      resolve_delay: 2
+      _frame_rate: 90
+      rain_time: 2
+      resolve_delay: 1
+      symbol_swap_chance: 0.05
+      color_swap_chance: 0.01
+      rain_fall_delay_range:
+        - 1
+        - 6
+      rain_column_delay_range:
+        - 1
+        - 4
       rain_color_gradient:
         - '#aaffc8'
         - '#00ff41'
@@ -57,13 +65,21 @@ x-hermes:
         - '#006622'
   logo_startup_tte:
     effect: matrix
-    max_wall_s: 8.0
-    max_frames: 150
-    fps: 25
+    max_wall_s: 6.0
+    max_frames: 250
+    fps: 60
     params:
-      _frame_rate: 25
-      rain_time: 2
-      resolve_delay: 2
+      _frame_rate: 60
+      rain_time: 1
+      resolve_delay: 1
+      symbol_swap_chance: 0.05
+      color_swap_chance: 0.01
+      rain_fall_delay_range:
+        - 1
+        - 6
+      rain_column_delay_range:
+        - 1
+        - 4
       rain_color_gradient:
         - '#aaffc8'
         - '#00ff41'

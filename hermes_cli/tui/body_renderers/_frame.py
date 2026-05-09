@@ -24,9 +24,9 @@ class BodyFrame(Widget):
     """Canonical body container: header slot + body slot + footer slot.
 
     header and footer are Rich renderables wrapped in Static children.
-    body may be either a RenderableType (wrapped in Static) or a pre-built
-    Widget (mounted directly) to accommodate renderers that produce complex
-    Textual widget trees (DiffRenderer, SearchRenderer, JsonRenderer).
+    body may be a RenderableType (wrapped in Static), a pre-built Widget
+    (mounted directly) for renderers producing complex Textual trees, or
+    None for header-only frames (concept §161 EMPTY suppression).
     """
 
     DEFAULT_CSS = """
@@ -37,14 +37,13 @@ BodyFrame {
 BodyFrame > .body-frame--header { height: auto; }
 BodyFrame > .body-frame--body   { height: auto; width: 1fr; }
 BodyFrame > .body-frame--footer { height: 1; }
-BodyFrame.body-frame--compact > BodyFooter { display: none; }
 BodyFrame.body-frame--default { margin-bottom: 1; }
 """
 
     def __init__(
         self,
         header: "RenderableType | None",
-        body: "RenderableType | Widget",
+        body: "RenderableType | Widget | None",
         footer: "BodyFooter | None",
         *,
         density: "DensityTier | None" = None,
@@ -62,10 +61,11 @@ BodyFrame.body-frame--default { margin-bottom: 1; }
     def compose(self) -> ComposeResult:
         if self._header is not None:
             yield Static(self._header, classes="body-frame--header")
-        if isinstance(self._body, Widget):
-            self._body.add_class("body-frame--body")
-            yield self._body
-        else:
-            yield Static(self._body, classes="body-frame--body")
+        if self._body is not None:
+            if isinstance(self._body, Widget):
+                self._body.add_class("body-frame--body")
+                yield self._body
+            else:
+                yield Static(self._body, classes="body-frame--body")
         if self._footer is not None:
             yield self._footer

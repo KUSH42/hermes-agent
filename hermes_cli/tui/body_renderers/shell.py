@@ -86,7 +86,7 @@ class ShellOutputRenderer(BodyRenderer):
 
     def build_widget(self, density=None, clamp_rows=None):
         from hermes_cli.tui.cwd_strip import strip_cwd
-        from hermes_cli.tui.body_renderers._grammar import build_path_header, BodyFooter
+        from hermes_cli.tui.body_renderers._grammar import build_path_header
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         raw = self.payload.output_raw or ""
@@ -100,7 +100,7 @@ class ShellOutputRenderer(BodyRenderer):
         return BodyFrame(
             header=header,
             body=self._build_body(cleaned),
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=density,
         )
 

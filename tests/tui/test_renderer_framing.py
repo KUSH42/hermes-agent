@@ -61,7 +61,7 @@ class TestRF1BodyFrame:
         """compose yields header Static, body Static, footer BodyFooter; 3 children."""
         header = Text("hdr")
         body = Text("body")
-        footer = BodyFooter(("y", "copy"))
+        footer = BodyFooter("x")
         frame = BodyFrame(header=header, body=body, footer=footer)
         children = list(frame.compose())
         assert len(children) == 3
@@ -72,7 +72,7 @@ class TestRF1BodyFrame:
     def test_frame_omits_header_when_none(self):
         """header=None: compose yields body + footer only; no .body-frame--header."""
         body = Text("body")
-        footer = BodyFooter(("y", "copy"))
+        footer = BodyFooter("x")
         frame = BodyFrame(header=None, body=body, footer=footer)
         children = list(frame.compose())
         assert len(children) == 2
@@ -131,11 +131,10 @@ class TestRF2CodeDiffSearch:
         assert len(header_children) == 1
 
     def test_code_frame_has_copy_footer(self):
+        # TBV-H1: BodyFooter retired from renderers; FooterPane owns [c]opy.
         r = self._code_renderer()
         frame = r.build_widget()
-        assert isinstance(frame._footer, BodyFooter)
-        rendered = frame._footer.render()
-        assert "[y]" in _plain(rendered)
+        assert frame._footer is None
 
     def _diff_renderer(self):
         raw = (
@@ -243,6 +242,7 @@ class TestRF3ShellJsonTableLog:
         assert "4 cols" in header_plain
 
     def test_log_renderer_frame_with_level_counts(self):
+        # TBV-H4: stats moved from BodyFooter to header rule.
         from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult
         raw = "2024-01-01 00:00:00 INFO msg1\n2024-01-01 00:00:01 INFO msg2\n2024-01-01 00:00:02 WARN wmsg\n"
         payload = _make_payload(output_raw=raw)
@@ -250,10 +250,11 @@ class TestRF3ShellJsonTableLog:
         r = LogRenderer(payload, cls_result)
         frame = r.build_widget()
         assert isinstance(frame, BodyFrame)
-        footer_text = _plain(frame._footer.render())
-        assert "INFO 2" in footer_text
-        assert "WARN 1" in footer_text
-        assert "ERROR 0" in footer_text
+        assert frame._footer is None
+        header_text = _plain(frame._header)
+        assert "INFO 2" in header_text
+        assert "WARN 1" in header_text
+        assert "ERROR 0" in header_text
 
     def test_log_renderer_level_counts_match_body(self):
         from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult
@@ -353,20 +354,7 @@ class TestRF4LogLevels:
 # ---------------------------------------------------------------------------
 
 class TestRF5BodyFooter:
-    def test_body_footer_single_entry(self):
-        footer = BodyFooter(("y", "copy"))
-        rendered = footer.render()
-        plain = _plain(rendered)
-        assert plain == "[y] copy"
-
-    def test_body_footer_multi_entry_separator(self):
-        footer = BodyFooter(("y", "copy"), ("c", "csv"))
-        rendered = footer.render()
-        plain = _plain(rendered)
-        assert "[y] copy" in plain
-        assert "[c] csv" in plain
-        assert "·" in plain
-
+    # TBV-H3: tuple entries are no longer accepted; BodyFooter is str-only.
     def test_body_footer_plain_string_entry(self):
         footer = BodyFooter("INFO 2", "WARN 1")
         rendered = footer.render()
@@ -374,17 +362,15 @@ class TestRF5BodyFooter:
         assert "INFO 2" in plain
         assert "WARN 1" in plain
         assert "·" in plain
-        # No brackets around plain string entries
         assert "[INFO 2]" not in plain
 
     def test_renderer_no_footer_when_entries_empty(self):
-        """Renderer with footer_entries=() should produce BodyFrame with _footer=None."""
+        """Renderer that doesn't pass footer should produce BodyFrame with _footer=None."""
         from hermes_cli.tui.body_renderers.base import BodyRenderer
         from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult
 
         class _NullRenderer(BodyRenderer):
             kind = None
-            footer_entries = ()
 
             @classmethod
             def can_render(cls, cls_result, payload):
@@ -394,11 +380,10 @@ class TestRF5BodyFooter:
                 return Text("body")
 
             def build_widget(self, density=None):
-                footer = BodyFooter(*self.footer_entries) if self.footer_entries else None
                 return BodyFrame(
                     header=None,
                     body=self.build(),
-                    footer=footer,
+                    footer=None,
                     density=density,
                 )
 
@@ -419,7 +404,7 @@ class TestRF6TierAware:
         frame = BodyFrame(
             header=Text("hdr"),
             body=Text("body"),
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=DensityTier.COMPACT,
         )
         assert "body-frame--compact" in frame.classes
@@ -428,7 +413,7 @@ class TestRF6TierAware:
         frame = BodyFrame(
             header=Text("hdr"),
             body=Text("body"),
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=DensityTier.HERO,
         )
         assert "body-frame--hero" in frame.classes
@@ -437,7 +422,7 @@ class TestRF6TierAware:
         frame = BodyFrame(
             header=Text("hdr"),
             body=Text("body"),
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=DensityTier.TRACE,
         )
         assert "body-frame--trace" in frame.classes

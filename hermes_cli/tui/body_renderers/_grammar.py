@@ -342,7 +342,7 @@ BodyFooter {
 
     def __init__(
         self,
-        *entries: "str | tuple[str, str]",
+        *entries: str,
         **kwargs,
     ) -> None:
         super().__init__("", **kwargs)
@@ -364,12 +364,13 @@ BodyFooter {
         for i, entry in enumerate(self._entries):
             if i:
                 t.append(sep, style=Style(color=colors.separator_dim))
-            if isinstance(entry, tuple):
-                key, label = entry
-                t.append(f"[{key}]", style=Style(color=colors.muted, bold=True))
-                t.append(f" {label}", style=Style(color=colors.muted))
-            else:
-                t.append(entry, style=Style(color=colors.muted))
+            if not isinstance(entry, str):
+                raise TypeError(
+                    f"BodyFooter accepts only str entries; got {type(entry).__name__}. "
+                    "Per concept §879, key affordances belong on FooterPane (resolver-driven), "
+                    "not BodyFooter."
+                )
+            t.append(entry, style=Style(color=colors.muted))
         return t
 
 

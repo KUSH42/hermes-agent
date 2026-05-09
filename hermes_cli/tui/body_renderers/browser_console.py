@@ -30,7 +30,6 @@ class BrowserConsoleRenderer(BodyRenderer):
     kind: ClassVar
     kind_icon: ClassVar[str] = "⬛"
     supports_streaming: ClassVar[bool] = False
-    footer_entries: ClassVar[tuple] = (("y", "copy"),)
     truncation_bias: ClassVar[str] = "tail"
 
     @classmethod

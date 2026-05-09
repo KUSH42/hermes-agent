@@ -407,7 +407,6 @@ class TestM2ReplaceBodyAtomic:
     def test_replace_body_widget_preserves_bookkeeping(self):
         """Call once with plain_text; check all state fields set correctly."""
         from hermes_cli.tui.widgets import CopyableRichLog
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
 
         block = self._make_tool_block()
         new_widget = MagicMock()
@@ -425,7 +424,6 @@ class TestM2ReplaceBodyAtomic:
     def test_replace_body_widget_idempotent_double_call(self):
         """Second call removes first widget; body has only the second widget."""
         from hermes_cli.tui.widgets import CopyableRichLog
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
 
         block = self._make_tool_block()
         widget_a = MagicMock()

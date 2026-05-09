@@ -244,6 +244,7 @@ class BodyPane(Widget):
 
     def _render_compact_body(self) -> None:
         from hermes_cli.tui.tool_panel.layout_resolver import DensityTier
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
         self.query("*").remove()
         summary = self._renderer.summary_line(
             density=DensityTier.COMPACT,
@@ -257,7 +258,14 @@ class BodyPane(Widget):
                 if isinstance(lines, list) and lines:
                     summary = f"({len(lines)} rows)"
                     break
-        self.mount(Static(summary, classes="compact-summary"))
+        self.mount(
+            BodyFrame(
+                header=None,
+                body=Static(summary, classes="compact-summary"),
+                footer=None,
+                density=DensityTier.COMPACT,
+            )
+        )
 
     def _make_slow_placeholder(self, icon: str) -> Widget:
         w = Static(f"{icon}  rendering…")

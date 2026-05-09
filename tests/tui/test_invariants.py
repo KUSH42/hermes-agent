@@ -1910,3 +1910,117 @@ class TestIL11PressureGates:
         assert tier == DensityTier.DEFAULT, (
             f"IL-11: ERR blocks must bypass cascade; got tier={tier}"
         )
+
+
+# ---------------------------------------------------------------------------
+# IL-12 (TBV-H2): no module under body_renderers/ imports BodyFooter except
+# _grammar.py (defines it) and _frame.py (TYPE_CHECKING forward-reference).
+# ---------------------------------------------------------------------------
+
+class TestIL12NoBodyFooterImportInRenderers:
+    _BODY_RENDERERS = _TUI_ROOT / "body_renderers"
+    _EXEMPT = {"_grammar.py", "_frame.py"}
+
+    def _files(self):
+        return [
+            p for p in self._BODY_RENDERERS.glob("*.py")
+            if p.name not in self._EXEMPT
+        ]
+
+    def _imports_body_footer(self, src: str) -> bool:
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "BodyFooter":
+                        return True
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if "BodyFooter" in alias.name:
+                        return True
+        return False
+
+    def test_il12_no_body_footer_imports_in_renderers(self):
+        offenders = []
+        for f in self._files():
+            if self._imports_body_footer(f.read_text()):
+                offenders.append(str(f.relative_to(_REPO_ROOT)))
+        assert not offenders, (
+            f"IL-12: body renderers must not import BodyFooter (concept §879). "
+            f"Offenders: {offenders}"
+        )
+
+    def test_il12_known_violation_caught(self, tmp_path):
+        bad = tmp_path / "bad.py"
+        bad.write_text(
+            "from hermes_cli.tui.body_renderers._grammar import BodyFooter\n"
+        )
+        assert self._imports_body_footer(bad.read_text())
+
+    def test_il12_exempt_modules_not_flagged(self):
+        for name in self._EXEMPT:
+            f = self._BODY_RENDERERS / name
+            if f.exists():
+                # Either has the import (allowed) or doesn't — gate must not include it.
+                assert f not in self._files()
+
+
+# ---------------------------------------------------------------------------
+# IL-13 (TBV-M4): no `[y]` rendered literal or `("y", "copy")` source tuple
+# in TUI chrome owner paths (excludes services/ key tables and CLI yes/no
+# prompts).
+# ---------------------------------------------------------------------------
+
+class TestIL13NoDeadYKey:
+    _CHROME_ROOTS = (
+        _TUI_ROOT / "body_renderers",
+        _TUI_ROOT / "tool_blocks",
+        _TUI_ROOT / "tool_panel",
+    )
+    _Y_BRACKET = re.compile(r"\[y\]")
+    _Y_COPY_TUPLE = re.compile(r'\(\s*"y"\s*,\s*"copy"\s*\)')
+
+    def _scan_paths(self):
+        for root in self._CHROME_ROOTS:
+            if not root.exists():
+                continue
+            for p in root.rglob("*.py"):
+                yield p
+
+    def test_il13_no_y_bracket_in_owner_paths(self):
+        offenders = []
+        for f in self._scan_paths():
+            for n, line in enumerate(f.read_text().splitlines(), start=1):
+                if self._Y_BRACKET.search(line):
+                    offenders.append(f"{f.relative_to(_REPO_ROOT)}:{n}")
+        assert not offenders, (
+            f"IL-13: rendered '[y]' literal found in chrome paths "
+            f"(no Binding('y', ...) exists; concept §997). Offenders: {offenders}"
+        )
+
+    def test_il13_no_y_copy_tuple_in_chrome_paths(self):
+        offenders = []
+        for f in self._scan_paths():
+            for n, line in enumerate(f.read_text().splitlines(), start=1):
+                if self._Y_COPY_TUPLE.search(line):
+                    offenders.append(f"{f.relative_to(_REPO_ROOT)}:{n}")
+        assert not offenders, (
+            f"IL-13: source-tuple ('y', 'copy') found in chrome paths "
+            f"(dead key, concept §997). Offenders: {offenders}"
+        )
+
+    def test_il13_yes_no_prompts_not_flagged(self, tmp_path):
+        # Meta-test: regex must require label "copy" so yes/no prompts are safe.
+        sample = '("y", "yes")\n("y", "enter")\n'
+        assert not self._Y_COPY_TUPLE.search(sample)
+
+    def test_il13_known_violations_caught(self):
+        assert self._Y_BRACKET.search("[y] copy")
+        assert self._Y_COPY_TUPLE.search('footer=BodyFooter(("y", "copy"))')
+
+    def test_il13_test_files_and_non_chrome_paths_exempt(self):
+        # Roots are explicit; tests/ + services/ + cli/ excluded by construction.
+        roots = [str(r) for r in self._CHROME_ROOTS]
+        assert all("/tests" not in r for r in roots)
+        assert all("/services" not in r for r in roots)
+        assert all("/cli" not in r for r in roots)

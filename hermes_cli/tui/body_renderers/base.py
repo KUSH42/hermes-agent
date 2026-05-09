@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 class BodyRenderer(ABC):
     kind: ClassVar["ResultKind"]
     supports_streaming: ClassVar[bool] = False  # only ShellOutputRenderer = True
-    footer_entries: ClassVar[tuple] = (("y", "copy"),)
     truncation_bias: ClassVar[Literal["head", "tail", "priority", "hunk-aware"]] = "tail"
     kind_icon: ClassVar[str] = "⬜"
 

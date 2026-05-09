@@ -62,10 +62,16 @@ class EmptyStateRenderer(BodyRenderer):
         return Text(msg, style="dim")
 
     def build_widget(self, density=None, clamp_rows=None):
-        """Return a Static widget for empty state."""
-        from textual.widgets import Static
+        """Return a header-only BodyFrame (concept §161 — body suppressed)."""
+        from hermes_cli.tui.body_renderers._grammar import build_rule
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
         msg = self._build_message()
-        return Static(msg, classes="empty-state")
+        return BodyFrame(
+            header=build_rule(msg, colors=self.colors),
+            body=None,
+            footer=None,
+            density=density,
+        )
 
 
 def _set_kind() -> None:

@@ -131,8 +131,15 @@ class _ToolPanelCompletionMixin:
     # ------------------------------------------------------------------
 
     def _schedule_age_ticks(self) -> None:
-        for delay in (10.0, 60.0, 300.0):
-            self.set_timer(delay, self._tick_age)  # type: ignore[attr-defined]
+        # Cancel any prior chain so re-completion / re-mount doesn't spawn
+        # parallel timer chains that all fire forever.
+        prior = getattr(self, "_age_timer", None)
+        if prior is not None:
+            try:
+                prior.stop()
+            except Exception:
+                _log.debug("age tick prior-timer stop failed", exc_info=True)
+        self._age_timer = self.set_timer(10.0, self._tick_age)  # type: ignore[attr-defined]
 
     def _tick_age(self) -> None:
         if not self.is_mounted:  # type: ignore[attr-defined]
@@ -147,6 +154,18 @@ class _ToolPanelCompletionMixin:
         if hasattr(block, "set_age_microcopy"):
             from ._footer import _format_age
             block.set_age_microcopy(_format_age(elapsed))
+
+        # Reschedule cadence matches display granularity:
+        #   <60s  → 10s   (matches "Ns ago")
+        #   <1h   → 30s   (matches "Nm ago")
+        #   ≥1h   → 600s  (matches "Nh ago")
+        if elapsed < 60:
+            next_delay = 10.0
+        elif elapsed < 3600:
+            next_delay = 30.0
+        else:
+            next_delay = 600.0
+        self._age_timer = self.set_timer(next_delay, self._tick_age)  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Tool args

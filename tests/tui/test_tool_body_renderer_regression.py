@@ -432,48 +432,6 @@ class TestShellSelectionPolicy:
 
 
 # ---------------------------------------------------------------------------
-# TestRendererLocalFooter — 1 test
-# ---------------------------------------------------------------------------
-
-class TestRendererLocalFooter:
-
-    @pytest.mark.asyncio
-    async def test_body_footer_mounts_inside_tool_body_after_renderer_swap(self):
-        """After a JSON swap, BodyFooter's parent is the block body, not BodyPane."""
-        from hermes_cli.tui.tool_panel import ToolPanel
-        from hermes_cli.tui.widgets import OutputPanel
-        from hermes_cli.tui.body_renderers.json import JsonRenderer
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-
-        app = _make_app()
-        async with app.run_test(size=(100, 40)) as pilot:
-            await _pause(pilot)
-            app.agent_running = True
-            await _pause(pilot)
-            app.mount_tool_block(
-                "bash", ['{"z": 99}'], ['{"z": 99}'], tool_name="bash"
-            )
-            await _pause(pilot, 5)
-
-            output = app.query_one(OutputPanel)
-            panel = output.query_one(ToolPanel)
-
-            payload = _payload('{"z": 99}', category=ToolCategory.SHELL)
-            cls_result = _cls(ResultKind.JSON, 0.95)
-            panel._swap_renderer(JsonRenderer, payload, cls_result)
-            await _pause(pilot, 3)
-
-            # BodyFooter should be a descendant of panel._block._body, not BodyPane
-            body = panel._block._body
-            footers = list(body.query(BodyFooter))
-            assert len(footers) > 0, "BodyFooter not mounted inside block body"
-            # BodyFooter is inside BodyFrame which is inside body — check ancestor chain
-            footer = footers[0]
-            parent = footer.parent
-            found = False
-            while parent is not None:
-                if parent is body:
-                    found = True
-                    break
-                parent = parent.parent
-            assert found, "BodyFooter must be a descendant of block body"
+# TestRendererLocalFooter removed (TBV-H1): renderers no longer mount
+# BodyFooter; the inverse property (no BodyFooter mounts) is covered by
+# test_tool_body_footer_hygiene.py::TestTBVH1NoFooterInBodyRenderers.

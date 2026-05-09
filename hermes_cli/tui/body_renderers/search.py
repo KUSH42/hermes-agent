@@ -588,7 +588,6 @@ class SearchRenderer(BodyRenderer):
 
     def build_widget(self, density=None, clamp_rows=None):
         """Return BodyFrame wrapping VirtualSearchList (>100 hits) or CopyableRichLog."""
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         hit_count = 0
@@ -607,7 +606,7 @@ class SearchRenderer(BodyRenderer):
         return BodyFrame(
             header=None,
             body=body_widget,
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=density,
         )
 

@@ -558,7 +558,6 @@ class DiffRenderer(BodyRenderer):
         return f"{files} file(s) · +{plus} −{minus}"
 
     def build_widget(self, density=None, clamp_rows=None) -> Widget:
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
         from hermes_cli.tui.body_renderers._frame import BodyFrame
 
         raw = self.payload.output_raw or ""
@@ -574,7 +573,7 @@ class DiffRenderer(BodyRenderer):
         return BodyFrame(
             header=header,
             body=body_widget,
-            footer=BodyFooter(("y", "copy")),
+            footer=None,
             density=density,
         )
 

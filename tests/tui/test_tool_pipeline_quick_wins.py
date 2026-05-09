@@ -307,30 +307,8 @@ class TestQW05DropOrderKeepsExit:
         assert len(_DROP_ORDER) >= 8
 
 
-# ---------------------------------------------------------------------------
-# QW-06 — BodyFooter text
-# ---------------------------------------------------------------------------
-
-class TestQW06BodyFooterText:
-    def _render_footer(self):
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter, SkinColors
-        # BodyFooter now requires entries passed to __init__; use the standard (y, copy) entry
-        footer = BodyFooter(("y", "copy"))
-        footer._colors = SkinColors.default()
-        result = footer.render()
-        return result.plain if hasattr(result, "plain") else str(result)
-
-    def test_body_footer_advertises_y_copy_only(self):
-        text = self._render_footer()
-        assert "[y]" in text
-        assert "copy" in text
-
-    def test_body_footer_no_editor_string(self):
-        text = self._render_footer()
-        assert "$EDITOR" not in text
-        assert "open in" not in text
-        assert "[c]" not in text
-
+# QW-06 (BodyFooter text) removed by TBV-H1: BodyFooter retired from
+# renderers; the [c]opy affordance is owned by FooterPane.
 
 # ---------------------------------------------------------------------------
 # QW-07 — Delete _hide_duration carve-out

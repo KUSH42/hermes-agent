@@ -207,9 +207,19 @@ class TestBuildWidgetCollapse:
             "delete the override and let the base handle it"
         )
 
-    def test_fallback_renderer_no_build_widget_override(self):
+    def test_fallback_renderer_build_widget_override_returns_body_frame(self):
+        # TBV-H4: FallbackRenderer now overrides build_widget to wrap the
+        # body in a BodyFrame with the unclassified rule on the header
+        # (concept §161 normalisation — rule moves out of body Text).
         from hermes_cli.tui.body_renderers.fallback import FallbackRenderer
-        assert "build_widget" not in FallbackRenderer.__dict__
+        from hermes_cli.tui.body_renderers._frame import BodyFrame
+        from hermes_cli.tui.tool_payload import ResultKind, ClassificationResult
+        from unittest.mock import MagicMock
+        payload = MagicMock()
+        payload.output_raw = "raw\n"
+        cls_result = ClassificationResult(kind=ResultKind.TEXT, confidence=0.3)
+        r = FallbackRenderer(payload, cls_result)
+        assert isinstance(r.build_widget(), BodyFrame)
 
     def test_search_renderer_le_100_uses_base(self):
         """For <=100 hits, SearchRenderer wraps CopyableRichLog (not VirtualSearchList) in BodyFrame."""
@@ -264,129 +274,6 @@ class TestBuildWidgetCollapse:
 
 
 # ---------------------------------------------------------------------------
-# G-4 — TestBodyFooter
+# G-4 — TestBodyFooter removed (TBV-H1/H2/H3): BodyFooter has zero live
+# callers in body renderers; FooterPane owns key affordances.
 # ---------------------------------------------------------------------------
-
-
-class TestBodyFooter:
-    def test_body_footer_renders_keys(self, monkeypatch):
-        monkeypatch.delenv("HERMES_NO_UNICODE", raising=False)
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-        from rich.text import Text
-
-        footer = BodyFooter(("c", "copy"), ("o", "open in $EDITOR"))
-        rendered = footer.render()
-        if hasattr(rendered, "plain"):
-            plain = rendered.plain
-        else:
-            plain = str(rendered)
-        assert "[c]" in plain
-        assert "copy" in plain
-        assert "·" in plain
-        assert "[o]" in plain
-        assert "open in $EDITOR" in plain
-
-    def test_body_footer_accessibility_ascii(self, monkeypatch):
-        monkeypatch.setenv("HERMES_NO_UNICODE", "1")
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-
-        footer = BodyFooter(("c", "copy"), ("o", "open"))
-        rendered = footer.render()
-        plain = rendered.plain if hasattr(rendered, "plain") else str(rendered)
-        assert "-" in plain
-        assert "·" not in plain
-
-    @pytest.mark.asyncio
-    async def test_body_footer_hidden_when_streaming(self):
-        from textual.app import App, ComposeResult
-        from textual.containers import Vertical
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-
-        class _App(App):
-            CSS = "#container.--streaming BodyFooter { display: none; }"
-
-            def compose(self) -> ComposeResult:
-                yield Vertical(id="container")
-
-        async with _App().run_test(size=(80, 24)) as pilot:
-            container = pilot.app.query_one("#container")
-            container.add_class("--streaming")
-            footer = BodyFooter()
-            await container.mount(footer)
-            await pilot.pause()
-            assert footer.styles.display == "none"
-
-    @pytest.mark.asyncio
-    async def test_body_footer_visible_after_complete(self):
-        """CSS rule .--streaming BodyFooter {display:none} lifts when class removed."""
-        from textual.app import App, ComposeResult
-        from textual.containers import Vertical
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-
-        class _App(App):
-            CSS = "#container.--streaming BodyFooter { display: none; }"
-
-            def compose(self) -> ComposeResult:
-                yield Vertical(id="container")
-
-        async with _App().run_test(size=(80, 24)) as pilot:
-            container = pilot.app.query_one("#container")
-            container.add_class("--streaming")
-            footer = BodyFooter()
-            await container.mount(footer)
-            await pilot.pause()
-            assert footer.styles.display == "none"
-            container.remove_class("--streaming")
-            await pilot.pause()
-            assert footer.styles.display != "none"
-
-    @pytest.mark.asyncio
-    async def test_body_footer_hidden_compact(self):
-        from textual.app import App, ComposeResult
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-
-        class _App(App):
-            CSS = "App.density-compact BodyFooter { display: none; }"
-
-            def compose(self) -> ComposeResult:
-                yield BodyFooter()
-
-        async with _App().run_test(size=(80, 24)) as pilot:
-            footer = pilot.app.query_one(BodyFooter)
-            pilot.app.add_class("density-compact")
-            await pilot.pause()
-            assert footer.styles.display == "none"
-
-    def test_body_footer_not_mounted_empty_category(self):
-        """_swap_renderer should not mount BodyFooter when cls_result.kind == EMPTY."""
-        from hermes_cli.tui.tool_panel._completion import _ToolPanelCompletionMixin
-        from hermes_cli.tui.body_renderers._grammar import BodyFooter
-        from hermes_cli.tui.tool_payload import ResultKind
-
-        mounted_widgets: list = []
-
-        mock_body_pane = MagicMock()
-        mock_body_pane.mount.side_effect = lambda w: mounted_widgets.append(w)
-        mock_body_pane.query.return_value = []
-
-        panel = types.SimpleNamespace()
-        panel._body_pane = mock_body_pane
-        panel._block = None
-        panel.app = MagicMock()
-        panel._emit_diff_stat_for_renderer = MagicMock()
-
-        payload = types.SimpleNamespace(output_raw="")
-
-        mock_renderer_cls = MagicMock()
-        mock_renderer_cls.return_value.build_widget.return_value = MagicMock()
-        mock_renderer_cls.return_value.build_widget.return_value.is_attached = False
-        # Ensure diff_lines is not present on the mock renderer so _emit_diff_stat is skipped
-        del mock_renderer_cls.return_value.diff_lines
-
-        _ToolPanelCompletionMixin._swap_renderer(
-            panel, mock_renderer_cls, payload,
-            types.SimpleNamespace(kind=ResultKind.EMPTY, confidence=1.0, metadata=None),
-        )
-
-        footer_mounts = [w for w in mounted_widgets if isinstance(w, BodyFooter)]
-        assert len(footer_mounts) == 0

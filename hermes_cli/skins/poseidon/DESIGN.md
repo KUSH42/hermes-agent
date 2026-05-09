@@ -4,6 +4,19 @@ name: poseidon
 description: Deep ocean blue with cyan highlights
 stream_effect: cascade
 colors:
+  foreground: '#EAF7FF'
+  background: '#1E1E1E'
+  accent: '#5DB8F5'
+  accent-dim: '#153C73'
+  success: '#4caf50'
+  warning: '#ffa726'
+  error: '#ef5350'
+  muted: '#555555'
+  border: '#333333'
+  selection: '#153C73'
+  glass-tint: '#1E1E1E'
+  glass-border: '#2A6FB9'
+  glass-edge: '#5DB8F5'
   banner-border: '#2A6FB9'
   banner-title: '#A9DFFF'
   banner-accent: '#5DB8F5'

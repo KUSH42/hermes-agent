@@ -20,7 +20,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.widget import Widget
-from textual.widgets import Button, ContentSwitcher, Input, Static
+from textual.widgets import Input, Static
 from textual.widgets.option_list import Option
 
 from hermes_cli.tui.overlays._modal_mixin import ModalOverlayMixin
@@ -627,9 +627,6 @@ class WorkspaceOverlay(ReferenceModal):
         border-subtitle-color: $text-muted;
     }
     WorkspaceOverlay.--visible { display: block; }
-    WorkspaceOverlay #ws-tab-bar { height: 1; }
-    WorkspaceOverlay #ws-tab-bar > Button { width: auto; min-width: 14; }
-    WorkspaceOverlay #ws-tab-bar .--tab-active { background: $primary 20%; color: $accent; }
     WorkspaceOverlay #ws-git-pane { height: auto; }
     WorkspaceOverlay #ws-scroll { height: auto; max-height: 14; overflow-y: auto; }
     WorkspaceOverlay .ws-file { color: $text; }
@@ -647,43 +644,16 @@ class WorkspaceOverlay(ReferenceModal):
     ]
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="ws-tab-bar"):
-            yield Button("[ Git Status ]", id="ws-tab-git", classes="--tab-active")
-        with ContentSwitcher(initial="ws-git-pane", id="ws-switcher"):
-            with Vertical(id="ws-git-pane"):
-                yield Static("", id="ws-header")
-                yield Static("", id="ws-summary")
-                with ScrollableContainer(id="ws-scroll"):
-                    yield Vertical(id="ws-files")
-                    yield Vertical(id="ws-complexity")
+        with Vertical(id="ws-git-pane"):
+            yield Static("", id="ws-header")
+            yield Static("", id="ws-summary")
+            with ScrollableContainer(id="ws-scroll"):
+                yield Vertical(id="ws-files")
+                yield Vertical(id="ws-complexity")
         yield Static("[dim]w / esc to close[/dim]", id="ws-footer")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        btn_id = event.button.id or ""
-        if btn_id == "ws-tab-git":
-            event.stop()
-            self._switch_tab("ws-git-pane")
-
-    def _switch_tab(self, pane_id: str) -> None:
-        try:
-            sw = self.query_one("#ws-switcher", ContentSwitcher)
-            sw.current = pane_id
-        except Exception:
-            _log.debug("workspace tab switch to %r failed", pane_id, exc_info=True)
-        # Update tab button active class
-        try:
-            git_btn = self.query_one("#ws-tab-git", Button)
-            git_btn.add_class("--tab-active")
-        except Exception:
-            pass  # tab button not yet in DOM or already removed; styling update is best-effort
 
     def show_overlay(self) -> None:
         super().show_overlay()  # capture caller, push_modal, add --modal, add --visible
-        # C4: focus first tab button so keyboard tab-through works from the start
-        try:
-            self.query_one("#ws-tab-git", Button).focus()
-        except NoMatches:
-            pass
 
     def action_dismiss(self) -> None:
         try:

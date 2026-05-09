@@ -4,6 +4,19 @@ name: ares
 description: War-room bronze on charcoal
 stream_effect: flash
 colors:
+  foreground: '#F1E6CF'
+  background: '#1E1E1E'
+  accent: '#DD4A3A'
+  accent-dim: '#6B1717'
+  success: '#4caf50'
+  warning: '#FFA726'
+  error: '#ef5350'
+  muted: '#555555'
+  border: '#333333'
+  selection: '#3A5A8C'
+  glass-tint: '#1E1E1E'
+  glass-border: '#333333'
+  glass-edge: '#DD4A3A'
   banner-border: '#9F1C1C'
   banner-title: '#C7A96B'
   banner-accent: '#DD4A3A'

@@ -4,6 +4,19 @@ name: slate
 description: Cool blue-grey with steel highlights
 stream_effect: gradient_tail
 colors:
+  foreground: '#c9d1d9'
+  background: '#1E1E1E'
+  accent: '#7eb8f6'
+  accent-dim: '#4b5563'
+  success: '#63D0A6'
+  warning: '#e6a855'
+  error: '#F7A072'
+  muted: '#555555'
+  border: '#4b5563'
+  selection: '#2d3748'
+  glass-tint: '#1E1E1E'
+  glass-border: '#4b5563'
+  glass-edge: '#7eb8f6'
   banner-border: '#4169e1'
   banner-title: '#7eb8f6'
   banner-accent: '#8EA8FF'

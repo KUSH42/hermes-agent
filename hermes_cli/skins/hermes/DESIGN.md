@@ -4,6 +4,19 @@ name: hermes
 description: Hermes — gold accent on near-black
 stream_effect: decrypt
 colors:
+  foreground: '#FFF8DC'
+  background: '#1E1E1E'
+  accent: '#FFBF00'
+  accent-dim: '#B8860B'
+  success: '#4caf50'
+  warning: '#FFA726'
+  error: '#ef5350'
+  muted: '#555555'
+  border: '#333333'
+  selection: '#3A5A8C'
+  glass-tint: '#1E1E1E'
+  glass-border: '#333333'
+  glass-edge: '#FFBF00'
   banner-border: '#CD7F32'
   banner-title: '#FFD700'
   banner-accent: '#FFBF00'

@@ -4,6 +4,19 @@ name: charizard
 description: Volcanic orange on black
 stream_effect: glow_settle
 colors:
+  foreground: '#FFF0D4'
+  background: '#1E1E1E'
+  accent: '#F29C38'
+  accent-dim: '#7A3511'
+  success: '#4caf50'
+  warning: '#ffa726'
+  error: '#ef5350'
+  muted: '#555555'
+  border: '#333333'
+  selection: '#3A5A8C'
+  glass-tint: '#1E1E1E'
+  glass-border: '#333333'
+  glass-edge: '#F29C38'
   banner-border: '#C75B1D'
   banner-title: '#FFD39A'
   banner-accent: '#F29C38'

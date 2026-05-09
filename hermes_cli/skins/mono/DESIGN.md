@@ -4,6 +4,19 @@ name: mono
 description: Pure greyscale — no chromatic accent
 stream_effect: none
 colors:
+  foreground: '#c9d1d9'
+  background: '#1E1E1E'
+  accent: '#aaaaaa'
+  accent-dim: '#444444'
+  success: '#888888'
+  warning: '#999999'
+  error: '#cccccc'
+  muted: '#555555'
+  border: '#555555'
+  selection: '#3A3A3A'
+  glass-tint: '#1E1E1E'
+  glass-border: '#555555'
+  glass-edge: '#aaaaaa'
   banner-border: '#555555'
   banner-title: '#e6edf3'
   banner-accent: '#aaaaaa'

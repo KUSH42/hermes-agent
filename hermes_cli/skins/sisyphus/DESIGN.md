@@ -4,6 +4,19 @@ name: sisyphus
 description: Stone-grey monochrome with a single warm tier accent
 stream_effect: generator
 colors:
+  foreground: '#F5F5F5'
+  background: '#1E1E1E'
+  accent: '#E7E7E7'
+  accent-dim: '#4A4A4A'
+  success: '#919191'
+  warning: '#B7B7B7'
+  error: '#E7E7E7'
+  muted: '#656565'
+  border: '#4A4A4A'
+  selection: '#3A3A3A'
+  glass-tint: '#1E1E1E'
+  glass-border: '#656565'
+  glass-edge: '#B7B7B7'
   banner-border: '#B7B7B7'
   banner-title: '#F5F5F5'
   banner-accent: '#E7E7E7'

@@ -4,6 +4,19 @@ name: matrix
 description: The Matrix — dark void and hacker green phosphor
 stream_effect: glitch_morph
 colors:
+  foreground: '#aaffc8'
+  background: '#0a0f0a'
+  accent: '#00ff41'
+  accent-dim: '#00a839'
+  success: '#00ff41'
+  warning: '#ffb000'
+  error: '#ff3333'
+  muted: '#1a4a1a'
+  border: '#003311'
+  selection: '#004d15'
+  glass-tint: '#0a0f0a'
+  glass-border: '#00a839'
+  glass-edge: '#00ff41'
   banner-accent: '#00ff41'
   banner-border: '#00a839'
   banner-dim: '#00a839'
